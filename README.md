@@ -234,3 +234,9 @@ And writes:
 
 The repository-local `skill/codex-change-trace` skill has been copied into the Codex skills directory.
 Restart Codex to pick it up in a new session.
+
+## Handoff
+
+If you want to continue development and testing on a Linux server, see:
+
+- `docs/HANDOFF-LINUX.md`

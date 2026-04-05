@@ -9,7 +9,7 @@ services:
       - "${MC_NETPROBE_WEBUI_PORT:-8765}:8765"
     environment:
       MC_NETPROBE_WEBUI_HOST: "0.0.0.0"
-      MC_NETPROBE_WEBUI_PORT: "28765"
+      MC_NETPROBE_WEBUI_PORT: "8765"
       TZ: "${TZ:-Asia/Hong_Kong}"
       PYTHONUNBUFFERED: "1"
     volumes:
