@@ -1,48 +1,58 @@
 # Linux Handoff
 
-本文档用于把 `mc-netprobe` 从当前 Windows 开发机切换到 Linux 服务器，继续开发、联调和测试。
+本文档面向当前的 `Panel + Agent` 架构，不再以 SSH 编排为主路径。
 
-## 1. 当前状态
+## 1. 当前交付形态
 
-当前仓库已经具备以下能力：
+当前仓库已经切换为持续监控架构：
 
-- CLI 主入口：`python main.py --topology ... --thresholds ... --scenarios ...`
-- 三角色自动化链路测试：`client / relay / server`
-- 跨平台 probe：Windows / macOS / Linux `ping` 解析、TCP connect、`iperf3` 吞吐、系统快照
-- SSH 编排：通过 `controller/ssh_exec.py` 从控制端联动远端节点
-- 导出结果：`raw.json`、`summary.csv`、`report.html`
-- 内置 Web UI：配置三台机器并后台发起测试
-- Docker 化 Web UI：`docker compose up --build -d`
-- 面向小白的角色脚本：
-  - `bin/start_server_mac.sh`
-  - `bin/start_relay_linux.sh`
-  - `bin/start_client_windows.ps1`
+- 中央 `Panel`
+  - `FastAPI + SQLite`
+  - 后台调度
+  - 节点配对
+  - 历史指标
+  - 告警与报告导出
+- 节点 `Agent`
+  - 常驻 HTTP 服务
+  - 本地执行 probe
+  - 通过 heartbeat 主动上报
+  - 支持 panel 直连下发作业
+
+角色部署约定：
+
+- `relay`: Linux Docker Agent
+- `server`: macOS 原生 Agent
+- `client`: Windows 原生 Agent
 
 ## 2. 仓库内关键入口
 
-- `main.py`
-  直接执行一次完整测试。
 - `controller/webui.py`
-  启动内置 Web UI。
-- `controller/pipeline.py`
-  CLI 和 Web UI 共用的执行管线。
+  中央 Panel 入口。
+- `agents/service.py`
+  常驻 Agent 服务入口。
 - `docker-compose.yml`
-  Docker 一键启动 Web UI。
-- `config/topology.example.yaml`
-- `config/thresholds.example.yaml`
-- `config/scenarios.example.yaml`
-  三份基础配置示例。
+  Panel 的 Docker 启动方式。
+- `docker/relay-agent.compose.yml`
+  Linux relay Agent 的 Docker Compose 模板。
+- `bin/install_server_agent_launchd.sh`
+  macOS server Agent 安装脚本。
+- `bin/install_client_agent.ps1`
+  Windows client Agent 安装脚本。
+- `bin/start_agent_tmux.sh`
+  macOS 原生 Agent 的轻量 fallback。
 
-## 3. 建议迁移内容
+## 3. Linux 服务器建议迁移内容
 
-切到 Linux 服务器时，建议一并带上：
+建议一起迁移：
 
 - 整个仓库
 - `.git/`
-- `config/webui/`
-  如果你希望保留当前 Web UI 上已经填写过的节点配置
+- `data/`
+  Panel 的 SQLite 数据库和 panel secret
+- `config/agent/`
+  已配对节点的本地 agent 配置
 - `results/`
-  如果你希望保留历史测试产物
+- `logs/`
 
 不建议迁移：
 
@@ -52,29 +62,22 @@
 
 ## 4. Linux 原生开发方式
 
-### 4.1 准备环境
+### 4.1 依赖
 
-建议 Linux 服务器至少具备：
-
-- `python3.11+`
-- `openssh-client`
-- `iperf3`
-- `git`
-
-如果缺包，可以先按发行版执行：
+Ubuntu / Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip openssh-client iperf3 git
+sudo apt-get install -y python3 python3-venv python3-pip iperf3 git
 ```
 
-或在 Rocky / RHEL / CentOS 这类系统上执行：
+Rocky / RHEL / CentOS:
 
 ```bash
-sudo dnf install -y python3 python3-pip openssh-clients iperf3 git iputils
+sudo dnf install -y python3 python3-pip iperf3 git iputils
 ```
 
-### 4.2 初始化项目
+### 4.2 初始化
 
 ```bash
 cd /path/to/Frp-network-evaluation
@@ -83,22 +86,14 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-### 4.3 跑测试和开发校验
+### 4.3 测试
 
 ```bash
 source .venv/bin/activate
 python -m pytest -q
-python main.py \
-  --topology config/topology.example.yaml \
-  --thresholds config/thresholds.example.yaml \
-  --scenarios config/scenarios.example.yaml
 ```
 
-说明：
-
-- 当节点配置为 `local: true` 时，控制端现在会自动按当前 Linux 宿主机平台执行本地 probe，不会再误用示例 YAML 里的其他 `os` 值。
-
-### 4.4 启动 Web UI
+### 4.4 启动 Panel
 
 ```bash
 source .venv/bin/activate
@@ -111,130 +106,102 @@ bash bin/start_webui.sh
 http://127.0.0.1:8765
 ```
 
-如果 Linux 服务器是远程机器，通常这样访问：
+远程 Linux 服务器建议通过本地端口转发访问：
 
 ```bash
 ssh -L 8765:127.0.0.1:8765 <user>@<linux-host>
 ```
 
-然后在本机浏览器打开 `http://127.0.0.1:8765`。
-
 ## 5. Linux Docker 方式
 
-### 5.1 前置条件
-
-Linux 服务器需要：
-
-- Docker Engine
-- Docker Compose Plugin
-
-典型检查命令：
-
-```bash
-docker --version
-docker compose version
-```
-
-### 5.2 启动
+### 5.1 Panel
 
 ```bash
 cd /path/to/Frp-network-evaluation
-export MC_NETPROBE_SSH_DIR="$HOME/.ssh"
 export MC_NETPROBE_WEBUI_PORT=8765
 bash bin/start_webui_docker.sh
 ```
 
-或直接：
+或者：
 
 ```bash
 docker compose up --build -d
 ```
 
-### 5.3 验证
+验证：
 
 ```bash
 docker compose ps
-curl http://127.0.0.1:8765/api/state
-docker compose logs -f webui
+curl http://127.0.0.1:8765/api/v1/dashboard
+docker compose logs -f panel
 ```
 
-### 5.4 Docker 持久化目录
+Panel 的持久化目录：
 
-Compose 已经挂载以下目录：
-
-- `./config/webui -> /app/config/webui`
+- `./data -> /app/data`
+- `./config/agent -> /app/config/agent`
 - `./results -> /app/results`
 - `./logs -> /app/logs`
-- `${MC_NETPROBE_SSH_DIR:-./docker/ssh} -> /home/app/.ssh`
 
-因此：
+### 5.2 Relay Agent
 
-- Web UI 上填写过的三节点配置会保留
-- 每次测试的结果会保留
-- 容器可复用宿主机的 SSH key 访问远端节点
-
-## 6. SSH 与三机联动要求
-
-当前控制端可以是 Linux 服务器本机，也可以是 Docker 容器里的 Web UI 进程。无论哪种方式，都需要它能 SSH 到远端节点。
-
-至少确认以下几点：
-
-- Linux 控制端能 SSH 到 `relay`
-- Linux 控制端能 SSH 到 `server`
-- 如果 `client` 不是本机执行，也要能 SSH 到 `client`
-- 远端节点上的 `project_root` 已存在当前仓库副本
-- 远端节点上的 `python_bin` 可直接运行
-
-建议先手工验证：
+relay 节点的推荐方式是 Docker Agent：
 
 ```bash
-ssh <user>@<relay-host> "cd <project_root> && <python_bin> --version"
-ssh <user>@<server-host> "cd <project_root> && <python_bin> --version"
+PANEL_URL="http://<panel-host>:8765" \
+PAIR_CODE="<from-panel>" \
+NODE_NAME="relay-1" \
+ROLE="relay" \
+RUNTIME_MODE="docker-linux" \
+AGENT_PORT="9870" \
+docker compose -f docker/relay-agent.compose.yml up -d --build
 ```
 
-## 7. Web UI 配置建议
+验证：
 
-Web UI 中应优先填写这些字段：
+```bash
+docker compose -f docker/relay-agent.compose.yml ps
+curl http://127.0.0.1:9870/api/v1/status
+```
 
-- `topology.nodes.client`
-- `topology.nodes.relay`
-- `topology.nodes.server`
-- `topology.services.relay_probe`
-- `topology.services.mc_public`
-- `topology.services.iperf_public`
-- `topology.services.mc_local`
-- `topology.services.iperf_local`
+## 6. 配对流程
 
-如果 Linux 服务器本身就是控制端，而不是被测节点，不要把它误填成 `client / relay / server` 之一，除非它本身确实承担那个角色。
+统一流程：
 
-## 8. 已验证项
+1. 先启动 Panel。
+2. 在 Panel 中创建 `client / relay / server` 三个节点卡片。
+3. 点击 `生成配对命令`。
+4. 在目标机器上执行命令。
+5. 等待节点状态从 `unpaired` 变成：
+   - `online`
+   - `push-only`
+   - `heartbeat-degraded`
 
-在当前 Windows 开发机上已经完成：
+状态解释：
 
-- `python -m pytest -q` 通过
-- `python -m controller.webui --help` 可用
-- Web UI 本地启动并成功访问 `/api/state`
-- `docker compose config` 可正常解析
+- `online`
+  Push + Pull 都可用。
+- `push-only`
+  只有 heartbeat 可用，Panel 不可直连该 Agent。
+- `heartbeat-degraded`
+  Panel 可直连，但 Agent 主动 heartbeat 异常。
+- `offline`
+  两者都不可用。
 
-## 9. 待在 Linux 上补的验证
+## 7. 推荐的 Linux 验证顺序
 
-建议你切到 Linux 后优先做这几项：
+1. `python -m pytest -q`
+2. 原生启动 Panel 并访问 `/api/v1/dashboard`
+3. Docker 启动 Panel 并确认 `healthy`
+4. 在 Linux relay 上用 `docker/relay-agent.compose.yml` 起 Agent
+5. 在 macOS server 上执行 `bin/install_server_agent_launchd.sh`
+6. 在 Windows client 上执行 `bin/install_client_agent.ps1`
+7. 在 Panel 里触发一次 `full` 手动运行
+8. 检查 `results/run-*/report.html`
 
-1. 原生环境启动 Web UI 并访问 `http://127.0.0.1:8765/api/state`
-2. `docker compose up --build -d` 实际构建镜像并确认健康检查通过
-3. 用真实 `relay / server / client` 做一次完整测试
-4. 检查 `results/run-*/report.html` 是否能反映分段链路和阈值异常
+## 8. 已知事项
 
-## 10. 已知事项
-
-- `iperf3` 缺失时，吞吐相关 probe 会明确报错，但整次运行不会中断。
-- Windows 作为正式 `client` 运行目标已支持，但不作为 Linux 版 handoff 的主开发环境。
-- Docker Compose 中的 Web UI 端口已统一为容器内 `8765`，宿主侧可通过 `MC_NETPROBE_WEBUI_PORT` 改映射端口。
-
-## 11. 推荐的 Linux 续开发顺序
-
-1. 先用原生 Python 跑 `pytest`
-2. 再原生启动 `controller.webui`
-3. 确认 SSH 到三节点都正常
-4. 再验证 Docker 方式
-5. 最后用真实 MC / FRP / `iperf3` 环境做端到端联调
+- `iperf3` 缺失时，吞吐相关 probe 会明确失败，但其他 probe 继续执行。
+- macOS server 不建议强行使用 Docker Desktop 采集宿主机网络指标；默认改用原生 Agent。
+- Windows client 作为正式监控节点仍支持，但推荐通过计划任务常驻，而不是 Docker。
+- `main.py` 仍保留给本地调试使用，但不是主部署路径。

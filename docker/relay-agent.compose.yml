@@ -1,0 +1,47 @@
+services:
+  relay-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mc-netprobe-relay-agent
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - agents.service
+      - --config
+      - /app/config/agent/relay.yaml
+      - --panel-url
+      - ${PANEL_URL}
+      - --pair-code
+      - ${PAIR_CODE}
+      - --node-name
+      - ${NODE_NAME}
+      - --role
+      - ${ROLE:-relay}
+      - --runtime-mode
+      - ${RUNTIME_MODE:-docker-linux}
+      - --listen-host
+      - 0.0.0.0
+      - --listen-port
+      - ${AGENT_PORT:-9870}
+      - --advertise-url
+      - ${AGENT_ADVERTISE_URL:-http://127.0.0.1:${AGENT_PORT:-9870}}
+    ports:
+      - "${AGENT_PORT:-9870}:${AGENT_PORT:-9870}"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - ../config/agent:/app/config/agent
+      - ../logs:/app/logs
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${AGENT_PORT:-9870}/api/v1/status', timeout=5).read()"
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

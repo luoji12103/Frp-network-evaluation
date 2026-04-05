@@ -8,6 +8,10 @@ __pycache__/
 *.log
 results/
 logs/
+data/*
+!data/.gitkeep
+config/agent/*
+!config/agent/.gitkeep
 dist/
 build/
 .DS_Store

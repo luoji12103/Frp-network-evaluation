@@ -3,111 +3,124 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mc-netprobe control room</title>
+  <title>mc-netprobe panel</title>
   <style>
     :root {
-      --bg: #f3efe6;
-      --ink: #17212b;
-      --muted: #5f6c77;
-      --line: #d9cfbf;
-      --card: rgba(255, 252, 246, 0.92);
-      --accent: #1f5f5b;
-      --accent-soft: #d8ebe8;
-      --warn: #8c3d1f;
-      --ok: #215c37;
-      --shadow: 0 18px 40px rgba(54, 44, 34, 0.12);
+      --bg: #edf1ea;
+      --ink: #1f2b24;
+      --muted: #5e6b63;
+      --card: rgba(255, 255, 255, 0.88);
+      --line: #c9d3cb;
+      --accent: #285943;
+      --accent-soft: #dce9e1;
+      --warn: #935c15;
+      --danger: #8e2e26;
+      --ok: #24623f;
+      --shadow: 0 18px 40px rgba(28, 42, 33, 0.09);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Aptos", "Trebuchet MS", sans-serif;
+      font-family: "Aptos", "Segoe UI", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(31,95,91,0.14), transparent 25%),
-        radial-gradient(circle at top right, rgba(140,61,31,0.12), transparent 28%),
-        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
+        radial-gradient(circle at top left, rgba(40,89,67,0.15), transparent 26%),
+        radial-gradient(circle at top right, rgba(147,92,21,0.14), transparent 24%),
+        linear-gradient(180deg, #f8faf7 0%, var(--bg) 100%);
     }
-    .shell { max-width: 1380px; margin: 0 auto; padding: 28px 22px 42px; }
-    .hero, .grid { display: grid; gap: 18px; }
-    .hero { grid-template-columns: 1.4fr 1fr; margin-bottom: 22px; }
-    .grid { grid-template-columns: 1.2fr 0.8fr; }
+    .shell { max-width: 1450px; margin: 0 auto; padding: 24px; display: grid; gap: 18px; }
+    .hero, .body-grid { display: grid; gap: 18px; }
+    .hero { grid-template-columns: 1.3fr 0.7fr; }
+    .body-grid { grid-template-columns: 1.1fr 0.9fr; }
     .panel {
       background: var(--card);
-      border: 1px solid rgba(217, 207, 191, 0.95);
-      border-radius: 22px;
+      border: 1px solid rgba(201, 211, 203, 0.95);
+      border-radius: 24px;
       box-shadow: var(--shadow);
       padding: 20px;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(12px);
     }
-    .title, .section-title {
-      font-family: "Georgia", "Times New Roman", serif;
-      letter-spacing: 0.02em;
-    }
-    .title { font-size: 34px; margin: 0 0 8px; }
-    .section-title { font-size: 24px; margin: 0 0 14px; }
-    .subtitle, .meta { color: var(--muted); line-height: 1.55; }
-    .status, .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 13px;
-      border-radius: 999px;
-      font-weight: 700;
-    }
-    .status { background: var(--accent-soft); color: var(--accent); margin-bottom: 16px; }
-    .status.running, .pill.running { background: #ffe7b8; color: #8a4b00; }
-    .status.failed, .pill.failed { background: #f7d8d1; color: #8e2b14; }
-    .pill.completed { background: #d7ebde; color: var(--ok); }
-    .arch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-    .arch-card, .config-card, .run-card {
-      border-radius: 18px;
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.74), rgba(240,233,223,0.62));
-    }
-    .arch-card { padding: 16px; min-height: 140px; position: relative; }
-    .arch-card h3, .config-card h3 { margin: 0 0 10px; font-size: 18px; }
-    .arch-card p { margin: 0; color: var(--muted); line-height: 1.45; }
-    .arch-card::after {
-      content: "→"; position: absolute; right: -18px; top: calc(50% - 16px);
-      font-size: 30px; color: var(--accent);
-    }
-    .arch-card:last-child::after { display: none; }
-    .cards { display: grid; gap: 14px; }
-    .cards.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .cards.two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; }
-    .config-card { padding: 16px; }
-    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
-    label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
-    input, select {
-      width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid #cdbfa9;
-      background: rgba(255,255,255,0.94); color: var(--ink); font: inherit;
-    }
-    input[type="checkbox"] { width: 18px; height: 18px; padding: 0; }
-    .checkbox-row { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; margin-bottom: 10px; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    h1, h2, h3 { margin: 0; font-family: "Georgia", "Times New Roman", serif; font-weight: 600; }
+    h1 { font-size: 34px; margin-bottom: 10px; }
+    h2 { font-size: 24px; margin-bottom: 14px; }
+    h3 { font-size: 19px; margin-bottom: 10px; }
+    p { margin: 0; line-height: 1.5; color: var(--muted); }
+    .top-actions, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .top-actions { margin-top: 18px; }
     button {
-      border: none; border-radius: 999px; padding: 12px 18px; font-weight: 700; cursor: pointer;
-      transition: transform 0.18s ease;
+      border: none; border-radius: 999px; padding: 11px 16px; font-weight: 700; cursor: pointer;
+      transition: transform 0.15s ease;
     }
     button:hover { transform: translateY(-1px); }
     .primary { background: var(--accent); color: white; }
-    .secondary { background: #ebe3d6; color: var(--ink); }
-    .danger { background: #8c3d1f; color: white; }
-    .runs { display: grid; gap: 12px; max-height: 980px; overflow: auto; padding-right: 2px; }
-    .run-card { padding: 14px; }
-    .run-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; }
+    .secondary { background: #e8eee8; color: var(--ink); }
+    .danger { background: var(--danger); color: white; }
+    .status-badge, .node-pill, .run-pill {
+      display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; font-weight: 700;
+    }
+    .status-badge { background: var(--accent-soft); color: var(--accent); margin-bottom: 14px; }
+    .node-pill.online, .run-pill.completed { background: #d8eddf; color: var(--ok); }
+    .node-pill.push-only { background: #ffedc6; color: var(--warn); }
+    .node-pill.heartbeat-degraded { background: #f7ddd8; color: var(--danger); }
+    .node-pill.offline, .run-pill.failed { background: #f6d7d4; color: var(--danger); }
+    .node-pill.unpaired, .run-pill.running { background: #e6e5da; color: #555940; }
+    .node-pill.disabled { background: #e2e2e2; color: #555; }
+    .cards { display: grid; gap: 14px; }
+    .cards.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .node-card, .run-card, .alert-card {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(240,245,240,0.62));
+      padding: 16px;
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+    label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
+    input, select {
+      width: 100%;
+      border: 1px solid #c7d0ca;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: rgba(255,255,255,0.95);
+    }
+    .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; }
+    .check input { width: 18px; height: 18px; padding: 0; }
+    .metric-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 13px; }
+    .list { display: grid; gap: 12px; }
+    .muted { color: var(--muted); }
+    .split { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
     .message {
-      border-radius: 14px; padding: 12px 14px; margin-top: 14px; display: none; white-space: pre-wrap;
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: none;
+      white-space: pre-wrap;
     }
     .message.show { display: block; }
-    .message.ok { background: #d7ebde; color: var(--ok); }
-    .message.error { background: #f7d8d1; color: #8e2b14; }
-    .message.warn { background: #ffe7b8; color: #8a4b00; }
+    .message.ok { background: #d8eddf; color: var(--ok); }
+    .message.error { background: #f6d7d4; color: var(--danger); }
+    .message.warn { background: #ffedc6; color: var(--warn); }
+    .command-box {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      background: #f4f7f3;
+      border: 1px solid var(--line);
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .sparkline { width: 100%; height: 120px; margin-top: 12px; background: rgba(255,255,255,0.66); border-radius: 14px; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    @media (max-width: 1080px) {
-      .hero, .grid, .cards.three, .cards.two, .arch, .field-grid { grid-template-columns: 1fr; }
-      .arch-card::after { display: none; }
+    @media (max-width: 1100px) {
+      .hero, .body-grid, .cards.three, .cards.two, .field-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -115,289 +128,398 @@
   <div class="shell">
     <section class="hero">
       <div class="panel">
-        <div id="statusBadge" class="status">Idle</div>
-        <h1 class="title">mc-netprobe Control Room</h1>
-        <p class="subtitle">
-          在一个页面里掌握完整网络测试架构。配置 Windows 客户端、Linux 中转 FRPS、macOS 服务端，
-          保存连接信息后即可后台触发自动测试，并直接打开最近生成的 HTML 报告。
+        <div class="status-badge" id="panelStatus">Panel online</div>
+        <h1>mc-netprobe Agent Panel</h1>
+        <p>
+          中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，
+          不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。
         </p>
-        <div class="actions">
-          <button class="primary" id="saveBtn" type="button">保存配置</button>
-          <button class="danger" id="runBtn" type="button">开始自动测试</button>
-          <button class="secondary" id="openLatestBtn" type="button">打开最新报告</button>
+        <div class="top-actions">
+          <button class="primary" type="button" id="saveSettingsBtn">保存全局配置</button>
+          <button class="danger" type="button" id="runFullBtn">手动执行完整监测</button>
+          <button class="secondary" type="button" id="refreshBtn">刷新面板</button>
         </div>
         <div id="messageBox" class="message"></div>
       </div>
       <div class="panel">
-        <div class="arch">
-          <article class="arch-card">
-            <h3>Windows Client</h3>
-            <p>玩家侧或测试机。可以本机执行，也可以通过 SSH 连接到远端 Windows 客户端。</p>
-          </article>
-          <article class="arch-card">
-            <h3>Linux Relay / FRPS</h3>
-            <p>负责 FRP 中转和公网暴露端口，也承担 relay 到 server 的分段测试。</p>
-          </article>
-          <article class="arch-card">
-            <h3>macOS MC Server</h3>
-            <p>负责本地 Minecraft 服务与 iperf3 服务端，辅助定位服务端与家庭网络问题。</p>
-          </article>
-        </div>
+        <h2>Recent Alerts</h2>
+        <div id="alertsList" class="list"></div>
       </div>
     </section>
 
-    <section class="grid">
-      <div class="panel">
-        <h2 class="section-title">Topology & Scenario</h2>
-        <div class="cards three">
-          {% for node in ["client", "relay", "server"] %}
-          <div class="config-card">
-            <h3>{{ node|capitalize }} Node</h3>
-            <div class="checkbox-row"><input id="{{ node }}_local" type="checkbox"><span>本机直接执行</span></div>
-            <div class="field-grid">
-              <label>Host<input id="{{ node }}_host" type="text"></label>
-              <label>OS
-                <select id="{{ node }}_os">
-                  <option value="windows">windows</option>
-                  <option value="linux">linux</option>
-                  <option value="macos">macos</option>
-                </select>
-              </label>
-              <label>SSH User<input id="{{ node }}_ssh_user" type="text"></label>
-              <label>SSH Port<input id="{{ node }}_ssh_port" type="number"></label>
-              <label>Project Root<input id="{{ node }}_project_root" type="text"></label>
-              <label>Python Bin<input id="{{ node }}_python_bin" type="text"></label>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
+    <section class="panel">
+      <div class="split">
+        <h2>Nodes</h2>
+        <span class="muted">一套拓扑，三个角色，底层模型可扩展</span>
+      </div>
+      <div id="nodesGrid" class="cards three"></div>
+    </section>
 
+    <section class="body-grid">
+      <div class="panel">
+        <h2>Topology, Thresholds & Schedules</h2>
         <div class="cards two">
-          <div class="config-card">
-            <h3>Service Ports</h3>
+          <div class="node-card">
+            <h3>Service Endpoints</h3>
             <div class="field-grid">
-              {% for service_name in ["relay_probe", "mc_public", "iperf_public", "mc_local", "iperf_local"] %}
-              <label>{{ service_name }} host<input id="{{ service_name }}_host" type="text"></label>
-              <label>{{ service_name }} port<input id="{{ service_name }}_port" type="number"></label>
-              {% endfor %}
+              <label>relay_probe host<input id="relay_probe_host" type="text"></label>
+              <label>relay_probe port<input id="relay_probe_port" type="number"></label>
+              <label>mc_public host<input id="mc_public_host" type="text"></label>
+              <label>mc_public port<input id="mc_public_port" type="number"></label>
+              <label>iperf_public host<input id="iperf_public_host" type="text"></label>
+              <label>iperf_public port<input id="iperf_public_port" type="number"></label>
+              <label>mc_local host<input id="mc_local_host" type="text"></label>
+              <label>mc_local port<input id="mc_local_port" type="number"></label>
+              <label>iperf_local host<input id="iperf_local_host" type="text"></label>
+              <label>iperf_local port<input id="iperf_local_port" type="number"></label>
             </div>
           </div>
-          <div class="config-card">
-            <h3>Scenario Tuning</h3>
+          <div class="node-card">
+            <h3>Thresholds & Durations</h3>
             <div class="field-grid">
-              <label>Ping count<input id="ping_count" type="number"></label>
-              <label>Ping timeout sec<input id="ping_timeout_sec" type="number" step="0.1"></label>
-              <label>TCP attempts<input id="tcp_attempts" type="number"></label>
-              <label>TCP timeout ms<input id="tcp_timeout_ms" type="number"></label>
-              <label>TCP interval ms<input id="tcp_interval_ms" type="number"></label>
+              <label>Ping avg max ms<input id="ping_rtt_avg_max" type="number" step="0.1"></label>
+              <label>Ping jitter max ms<input id="ping_jitter_max" type="number" step="0.1"></label>
+              <label>TCP avg max ms<input id="tcp_connect_avg_max" type="number" step="0.1"></label>
+              <label>TCP error max %<input id="tcp_timeout_error_max" type="number" step="0.1"></label>
+              <label>Throughput up min Mbps<input id="throughput_up_min" type="number" step="0.1"></label>
+              <label>Throughput down min Mbps<input id="throughput_down_min" type="number" step="0.1"></label>
+              <label>Load delta max ms<input id="load_delta_max" type="number" step="0.1"></label>
+              <label>System CPU max %<input id="system_cpu_max" type="number" step="0.1"></label>
               <label>Throughput duration sec<input id="throughput_duration_sec" type="number"></label>
-              <label>Throughput timeout sec<input id="throughput_timeout_sec" type="number" step="0.1"></label>
-              <label>System sample sec<input id="system_sample_interval_sec" type="number" step="0.1"></label>
-              <label>Load baseline attempts<input id="load_baseline_attempts" type="number"></label>
-              <label>Load probe interval ms<input id="load_probe_interval_ms" type="number"></label>
-              <label>Load timeout ms<input id="load_timeout_ms" type="number"></label>
               <label>Load duration sec<input id="load_duration_sec" type="number"></label>
+              <label>TCP attempts<input id="tcp_attempts" type="number"></label>
+              <label>System sample sec<input id="system_sample_sec" type="number" step="0.1"></label>
             </div>
+            <div id="scheduleMeta" class="metric-meta"></div>
           </div>
         </div>
       </div>
 
-      <aside class="panel">
-        <h2 class="section-title">Recent Runs</h2>
-        <div class="runs" id="runsList"></div>
-      </aside>
+      <div class="panel">
+        <div class="split">
+          <h2>Recent Runs</h2>
+          <a id="latestReportLink" href="#" target="_blank">Open latest report</a>
+        </div>
+        <div id="runsList" class="list"></div>
+        <h2 style="margin-top:18px;">CPU Trend (24h)</h2>
+        <svg id="cpuTrend" class="sparkline" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+      </div>
     </section>
   </div>
 
   <script>
-    const initialConfig = {{ initial_config_json }};
     const initialState = {{ initial_state_json }};
+    let currentState = initialState;
 
     function $(id) { return document.getElementById(id); }
+
+    function showMessage(kind, text) {
+      const box = $("messageBox");
+      box.className = `message show ${kind}`;
+      box.textContent = text;
+    }
+
+    function nodeCard(role, node) {
+      const status = node ? node.status : "unpaired";
+      const nodeId = node ? node.id : "";
+      const name = node ? node.node_name : role;
+      const runtime = node ? node.runtime_mode : defaultRuntime(role);
+      const agentUrl = node ? (node.agent_url || "") : "";
+      const enabled = node ? Boolean(node.enabled) : true;
+      const paired = node ? Boolean(node.paired) : false;
+      const lastSeen = node && node.last_seen_at ? node.last_seen_at : "never";
+      return `
+        <article class="node-card" data-role="${role}" data-node-id="${nodeId}">
+          <div class="split">
+            <h3>${role.toUpperCase()}</h3>
+            <span class="node-pill ${status}">${status}</span>
+          </div>
+          <div class="field-grid" style="margin-top:12px;">
+            <label>Node name<input data-field="node_name" type="text" value="${escapeHtml(name)}"></label>
+            <label>Runtime
+              <select data-field="runtime_mode">
+                ${["docker-linux","native-macos","native-windows"].map((item) => `<option value="${item}" ${item === runtime ? "selected" : ""}>${item}</option>`).join("")}
+              </select>
+            </label>
+            <label>Agent URL<input data-field="agent_url" type="text" value="${escapeHtml(agentUrl)}" placeholder="http://host:9870"></label>
+            <label class="check"><input data-field="enabled" type="checkbox" ${enabled ? "checked" : ""}>Enabled</label>
+          </div>
+          <div class="metric-meta">
+            <span>paired: ${paired}</span>
+            <span>last seen: ${lastSeen}</span>
+            <span>push: ${node ? node.last_push_ok : false}</span>
+            <span>pull: ${node ? node.last_pull_ok : false}</span>
+          </div>
+          <div class="actions" style="margin-top:12px;">
+            <button class="primary" type="button" onclick="saveNode('${role}')">保存节点</button>
+            <button class="secondary" type="button" onclick="pairNode('${role}')" ${!nodeId ? "disabled" : ""}>生成配对命令</button>
+          </div>
+          <div id="pair_${role}" class="command-box" style="display:none;"></div>
+        </article>
+      `;
+    }
+
+    function defaultRuntime(role) {
+      if (role === "relay") return "docker-linux";
+      if (role === "server") return "native-macos";
+      return "native-windows";
+    }
+
     function escapeHtml(value) {
-      return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
     }
 
-    function fillForm(config) {
-      const { topology, scenarios } = config;
-      ["client","relay","server"].forEach((name) => {
-        const node = topology.nodes[name];
-        $(`${name}_host`).value = node.host || "";
-        $(`${name}_os`).value = node.os;
-        $(`${name}_ssh_user`).value = node.ssh_user || "";
-        $(`${name}_ssh_port`).value = node.ssh_port ?? 22;
-        $(`${name}_project_root`).value = node.project_root || "";
-        $(`${name}_python_bin`).value = node.python_bin || "";
-        $(`${name}_local`).checked = Boolean(node.local);
-      });
-      Object.entries(topology.services).forEach(([name, service]) => {
-        $(`${name}_host`).value = service.host || "";
-        $(`${name}_port`).value = service.port ?? "";
-      });
-      $("ping_count").value = scenarios.ping.count;
-      $("ping_timeout_sec").value = scenarios.ping.timeout_sec;
-      $("tcp_attempts").value = scenarios.tcp.attempts;
-      $("tcp_timeout_ms").value = scenarios.tcp.timeout_ms;
-      $("tcp_interval_ms").value = scenarios.tcp.interval_ms;
-      $("throughput_duration_sec").value = scenarios.throughput.duration_sec;
-      $("throughput_timeout_sec").value = scenarios.throughput.timeout_sec;
-      $("system_sample_interval_sec").value = scenarios.system.sample_interval_sec;
-      $("load_baseline_attempts").value = scenarios.load_inflation.baseline_attempts;
-      $("load_probe_interval_ms").value = scenarios.load_inflation.probe_interval_ms;
-      $("load_timeout_ms").value = scenarios.load_inflation.timeout_ms;
-      $("load_duration_sec").value = scenarios.load_inflation.duration_sec;
+    function fillSettings(settings, schedules) {
+      const s = settings.services;
+      $("relay_probe_host").value = s.relay_probe.host || "";
+      $("relay_probe_port").value = s.relay_probe.port;
+      $("mc_public_host").value = s.mc_public.host || "";
+      $("mc_public_port").value = s.mc_public.port;
+      $("iperf_public_host").value = s.iperf_public.host || "";
+      $("iperf_public_port").value = s.iperf_public.port;
+      $("mc_local_host").value = s.mc_local.host || "";
+      $("mc_local_port").value = s.mc_local.port;
+      $("iperf_local_host").value = s.iperf_local.host || "";
+      $("iperf_local_port").value = s.iperf_local.port;
+
+      $("ping_rtt_avg_max").value = settings.thresholds.ping.rtt_avg_ms_max;
+      $("ping_jitter_max").value = settings.thresholds.ping.jitter_ms_max;
+      $("tcp_connect_avg_max").value = settings.thresholds.tcp.connect_avg_ms_max;
+      $("tcp_timeout_error_max").value = settings.thresholds.tcp.timeout_or_error_pct_max;
+      $("throughput_up_min").value = settings.thresholds.throughput.throughput_up_mbps_min;
+      $("throughput_down_min").value = settings.thresholds.throughput.throughput_down_mbps_min;
+      $("load_delta_max").value = settings.thresholds.load_inflation.load_rtt_inflation_ms_max;
+      $("system_cpu_max").value = settings.thresholds.system.cpu_usage_pct_max;
+
+      $("throughput_duration_sec").value = settings.scenarios.throughput.duration_sec;
+      $("load_duration_sec").value = settings.scenarios.load_inflation.duration_sec;
+      $("tcp_attempts").value = settings.scenarios.tcp.attempts;
+      $("system_sample_sec").value = settings.scenarios.system.sample_interval_sec;
+      $("scheduleMeta").innerHTML = schedules.map((item) => `<span>${item.run_kind}: every ${item.interval_sec}s</span>`).join("");
     }
 
-    function collectConfig() {
+    function collectSettings() {
       return {
-        topology: {
-          project_name: initialConfig.topology.project_name || "mc-frp-netprobe-webui",
-          nodes: {
-            client: {
-              role: "client",
-              host: $("client_host").value.trim(),
-              os: $("client_os").value,
-              local: $("client_local").checked,
-              ssh_user: $("client_ssh_user").value.trim(),
-              ssh_port: Number($("client_ssh_port").value || 22),
-              project_root: $("client_project_root").value.trim(),
-              python_bin: $("client_python_bin").value.trim(),
-            },
-            relay: {
-              role: "relay",
-              host: $("relay_host").value.trim(),
-              os: $("relay_os").value,
-              local: $("relay_local").checked,
-              ssh_user: $("relay_ssh_user").value.trim(),
-              ssh_port: Number($("relay_ssh_port").value || 22),
-              project_root: $("relay_project_root").value.trim(),
-              python_bin: $("relay_python_bin").value.trim(),
-            },
-            server: {
-              role: "server",
-              host: $("server_host").value.trim(),
-              os: $("server_os").value,
-              local: $("server_local").checked,
-              ssh_user: $("server_ssh_user").value.trim(),
-              ssh_port: Number($("server_ssh_port").value || 22),
-              project_root: $("server_project_root").value.trim(),
-              python_bin: $("server_python_bin").value.trim(),
-            },
-          },
-          services: {
-            relay_probe: { host: $("relay_probe_host").value.trim(), port: Number($("relay_probe_port").value || 22) },
-            mc_public: { host: $("mc_public_host").value.trim(), port: Number($("mc_public_port").value || 25565) },
-            iperf_public: { host: $("iperf_public_host").value.trim(), port: Number($("iperf_public_port").value || 5201) },
-            mc_local: { host: $("mc_local_host").value.trim(), port: Number($("mc_local_port").value || 25565) },
-            iperf_local: { host: $("iperf_local_host").value.trim(), port: Number($("iperf_local_port").value || 5201) },
-          },
+        topology_name: currentState.settings.topology_name,
+        services: {
+          relay_probe: { host: $("relay_probe_host").value.trim(), port: Number($("relay_probe_port").value) },
+          mc_public: { host: $("mc_public_host").value.trim(), port: Number($("mc_public_port").value) },
+          iperf_public: { host: $("iperf_public_host").value.trim(), port: Number($("iperf_public_port").value) },
+          mc_local: { host: $("mc_local_host").value.trim(), port: Number($("mc_local_port").value) },
+          iperf_local: { host: $("iperf_local_host").value.trim(), port: Number($("iperf_local_port").value) },
         },
-        thresholds: initialConfig.thresholds,
+        thresholds: {
+          ping: {
+            packet_loss_pct_max: currentState.settings.thresholds.ping.packet_loss_pct_max,
+            rtt_avg_ms_max: Number($("ping_rtt_avg_max").value),
+            rtt_p95_ms_max: currentState.settings.thresholds.ping.rtt_p95_ms_max,
+            jitter_ms_max: Number($("ping_jitter_max").value),
+          },
+          tcp: {
+            connect_avg_ms_max: Number($("tcp_connect_avg_max").value),
+            connect_p95_ms_max: currentState.settings.thresholds.tcp.connect_p95_ms_max,
+            timeout_or_error_pct_max: Number($("tcp_timeout_error_max").value),
+          },
+          throughput: {
+            throughput_up_mbps_min: Number($("throughput_up_min").value),
+            throughput_down_mbps_min: Number($("throughput_down_min").value),
+          },
+          load_inflation: {
+            load_rtt_inflation_ms_max: Number($("load_delta_max").value),
+            loaded_timeout_pct_max: currentState.settings.thresholds.load_inflation.loaded_timeout_pct_max,
+          },
+          system: {
+            cpu_usage_pct_max: Number($("system_cpu_max").value),
+            memory_usage_pct_max: currentState.settings.thresholds.system.memory_usage_pct_max,
+          }
+        },
         scenarios: {
-          ...initialConfig.scenarios,
-          ping: { ...initialConfig.scenarios.ping, enabled: true, count: Number($("ping_count").value || 2), timeout_sec: Number($("ping_timeout_sec").value || 5) },
-          tcp: { ...initialConfig.scenarios.tcp, enabled: true, attempts: Number($("tcp_attempts").value || 3), timeout_ms: Number($("tcp_timeout_ms").value || 750), interval_ms: Number($("tcp_interval_ms").value || 200) },
-          throughput: { ...initialConfig.scenarios.throughput, enabled: true, duration_sec: Number($("throughput_duration_sec").value || 2), timeout_sec: Number($("throughput_timeout_sec").value || 5) },
-          system: { ...initialConfig.scenarios.system, enabled: true, sample_interval_sec: Number($("system_sample_interval_sec").value || 0.25) },
-          load_inflation: { ...initialConfig.scenarios.load_inflation, enabled: true, baseline_attempts: Number($("load_baseline_attempts").value || 2), probe_interval_ms: Number($("load_probe_interval_ms").value || 200), timeout_ms: Number($("load_timeout_ms").value || 500), duration_sec: Number($("load_duration_sec").value || 2) },
-        },
+          ping: currentState.settings.scenarios.ping,
+          tcp: {
+            ...currentState.settings.scenarios.tcp,
+            attempts: Number($("tcp_attempts").value),
+          },
+          throughput: {
+            ...currentState.settings.scenarios.throughput,
+            duration_sec: Number($("throughput_duration_sec").value),
+          },
+          system: {
+            ...currentState.settings.scenarios.system,
+            sample_interval_sec: Number($("system_sample_sec").value),
+          },
+          load_inflation: {
+            ...currentState.settings.scenarios.load_inflation,
+            duration_sec: Number($("load_duration_sec").value),
+          }
+        }
       };
     }
 
-    function showMessage(text, tone = "ok") {
-      const box = $("messageBox");
-      box.textContent = text;
-      box.className = `message show ${tone}`;
+    async function saveSettings() {
+      const response = await fetch("/api/v1/dashboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(collectSettings()),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showMessage("error", data.detail || data.error || "Failed to save settings");
+        return;
+      }
+      showMessage("ok", "Global settings saved.");
+      await refreshDashboard();
+    }
+
+    async function saveNode(role) {
+      const card = document.querySelector(`[data-role="${role}"]`);
+      const nodeId = card.getAttribute("data-node-id");
+      const payload = {
+        id: nodeId ? Number(nodeId) : null,
+        node_name: card.querySelector('[data-field="node_name"]').value.trim(),
+        role,
+        runtime_mode: card.querySelector('[data-field="runtime_mode"]').value,
+        agent_url: card.querySelector('[data-field="agent_url"]').value.trim() || null,
+        enabled: card.querySelector('[data-field="enabled"]').checked,
+      };
+      const response = await fetch("/api/v1/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showMessage("error", data.detail || data.error || "Failed to save node");
+        return;
+      }
+      showMessage("ok", `${role} node saved.`);
+      await refreshDashboard();
+    }
+
+    async function pairNode(role) {
+      const card = document.querySelector(`[data-role="${role}"]`);
+      const nodeId = card.getAttribute("data-node-id");
+      if (!nodeId) {
+        showMessage("warn", "Save the node before generating a pair code.");
+        return;
+      }
+      const response = await fetch(`/api/v1/nodes/${nodeId}/pair-code`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        showMessage("error", data.detail || data.error || "Failed to create pair code");
+        return;
+      }
+      const target = $(`pair_${role}`);
+      target.style.display = "block";
+      target.textContent = `Pair code: ${data.pair_code}\nExpires: ${data.expires_at}\n\nPrimary:\n${data.startup_command}\n\nFallback:\n${data.fallback_command || "n/a"}`;
+      showMessage("ok", `${role} pair command generated.`);
+    }
+
+    async function runFull() {
+      const response = await fetch("/api/v1/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_kind: "full", source: "manual" }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showMessage("error", data.detail || data.error || "Failed to trigger run");
+        return;
+      }
+      showMessage("ok", `Run ${data.run_id} started.`);
+      await refreshDashboard();
     }
 
     function renderRuns(runs) {
-      const host = $("runsList");
-      if (!runs.length) {
-        host.innerHTML = `<div class="run-card"><div class="meta">还没有执行记录。先保存配置，再点击“开始自动测试”。</div></div>`;
+      const target = $("runsList");
+      target.innerHTML = runs.length ? runs.map((run) => `
+        <article class="run-card">
+          <div class="split">
+            <strong>${run.run_kind}</strong>
+            <span class="run-pill ${run.status}">${run.status}</span>
+          </div>
+          <div class="metric-meta">
+            <span>${run.started_at}</span>
+            <span>findings: ${run.findings_count || 0}</span>
+          </div>
+          <p style="margin-top:10px;">${(run.error || (run.conclusion && run.conclusion[0]) || "No summary").toString()}</p>
+          <div class="actions" style="margin-top:10px;">
+            ${run.html_path ? `<a href="/${run.html_path}" target="_blank">report.html</a>` : ""}
+            ${run.raw_path ? `<a href="/${run.raw_path}" target="_blank">raw.json</a>` : ""}
+          </div>
+        </article>
+      `).join("") : `<p class="muted">No runs yet.</p>`;
+
+      const latestCompleted = runs.find((item) => item.html_path);
+      $("latestReportLink").href = latestCompleted ? `/${latestCompleted.html_path}` : "#";
+    }
+
+    function renderAlerts(alerts) {
+      const target = $("alertsList");
+      target.innerHTML = alerts.length ? alerts.map((alert) => `
+        <article class="alert-card">
+          <div class="split">
+            <strong>${alert.kind}</strong>
+            <span class="node-pill ${alert.severity === "error" ? "offline" : "push-only"}">${alert.severity}</span>
+          </div>
+          <p style="margin-top:8px;">${escapeHtml(alert.message)}</p>
+          <div class="metric-meta"><span>${alert.created_at}</span><span>${alert.status}</span></div>
+        </article>
+      `).join("") : `<p class="muted">No alerts.</p>`;
+    }
+
+    function renderTrend(samples) {
+      const svg = $("cpuTrend");
+      if (!samples.length) {
+        svg.innerHTML = "";
         return;
       }
-      host.innerHTML = runs.map((run) => {
-        const links = [
-          run.report_url ? `<div class="meta"><a href="${run.report_url}" target="_blank" rel="noreferrer">打开 HTML 报告</a></div>` : "",
-          run.raw_url ? `<div class="meta"><a href="${run.raw_url}" target="_blank" rel="noreferrer">打开 raw.json</a></div>` : "",
-        ].join("");
-        const conclusion = (run.conclusion || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
-        return `
-          <article class="run-card">
-            <div class="run-head">
-              <strong>${escapeHtml(run.run_id)}</strong>
-              <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
-            </div>
-            <div class="meta">Started: ${escapeHtml(run.started_at || "-")}</div>
-            <div class="meta">Finished: ${escapeHtml(run.finished_at || "-")}</div>
-            <div class="meta">Findings: ${escapeHtml(String(run.findings_count || 0))}</div>
-            ${links}
-            ${run.error ? `<div class="meta" style="color:#8e2b14;">${escapeHtml(run.error)}</div>` : ""}
-            ${conclusion ? `<ul class="meta">${conclusion}</ul>` : ""}
-          </article>`;
-      }).join("");
+      const values = samples.map((item) => Number(item.metric_value));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = Math.max(1, max - min);
+      const points = values.map((value, index) => {
+        const x = (index / Math.max(1, values.length - 1)) * 600;
+        const y = 110 - (((value - min) / span) * 90);
+        return `${x},${y}`;
+      }).join(" ");
+      svg.innerHTML = `
+        <rect x="0" y="0" width="600" height="120" rx="14" fill="rgba(255,255,255,0.78)"></rect>
+        <polyline fill="none" stroke="#285943" stroke-width="3" points="${points}"></polyline>
+        <text x="12" y="18" fill="#5e6b63" font-size="12">min ${min.toFixed(1)}%</text>
+        <text x="520" y="18" fill="#5e6b63" font-size="12">max ${max.toFixed(1)}%</text>
+      `;
     }
 
-    function updateStatus(snapshot) {
-      const badge = $("statusBadge");
-      const latest = snapshot.latest_run;
-      if (snapshot.is_running) {
-        badge.textContent = `Running ${latest ? latest.run_id : ""}`.trim();
-        badge.className = "status running";
-      } else if (latest && latest.status === "failed") {
-        badge.textContent = `Failed ${latest.run_id}`;
-        badge.className = "status failed";
-      } else if (latest && latest.status === "completed") {
-        badge.textContent = `Ready · latest ${latest.run_id}`;
-        badge.className = "status";
-      } else {
-        badge.textContent = "Idle";
-        badge.className = "status";
-      }
-      renderRuns(snapshot.runs || []);
+    function renderNodes(nodes) {
+      const map = Object.fromEntries(nodes.map((node) => [node.role, node]));
+      $("nodesGrid").innerHTML = ["client", "relay", "server"].map((role) => nodeCard(role, map[role] || null)).join("");
     }
 
-    async function postJson(url, body) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      return { ok: response.ok, data: await response.json() };
+    function renderDashboard(state) {
+      currentState = state;
+      renderNodes(state.nodes || []);
+      fillSettings(state.settings, state.schedules || []);
+      renderRuns(state.latest_runs || []);
+      renderAlerts(state.alerts || []);
+      renderTrend((state.history && state.history.samples) || []);
     }
 
-    async function refreshState() {
-      const response = await fetch("/api/state");
-      const snapshot = await response.json();
-      updateStatus(snapshot);
+    async function refreshDashboard() {
+      const response = await fetch("/api/v1/dashboard");
+      const data = await response.json();
+      renderDashboard(data);
     }
 
-    $("saveBtn").addEventListener("click", async () => {
-      const result = await postJson("/api/save", collectConfig());
-      if (!result.ok) { showMessage(result.data.error || "保存失败", "error"); return; }
-      const warnings = result.data.warnings || [];
-      showMessage(warnings.length ? `配置已保存，但还有未填项：\n- ${warnings.join("\n- ")}` : "配置已保存。", warnings.length ? "warn" : "ok");
-      await refreshState();
-    });
+    $("saveSettingsBtn").addEventListener("click", saveSettings);
+    $("runFullBtn").addEventListener("click", runFull);
+    $("refreshBtn").addEventListener("click", refreshDashboard);
 
-    $("runBtn").addEventListener("click", async () => {
-      const result = await postJson("/api/run", collectConfig());
-      if (!result.ok) { showMessage(result.data.error || "启动测试失败", "error"); return; }
-      showMessage(`测试已启动：${result.data.run.run_id}`, "ok");
-      await refreshState();
-    });
-
-    $("openLatestBtn").addEventListener("click", async () => {
-      const response = await fetch("/api/state");
-      const snapshot = await response.json();
-      const latest = snapshot.latest_run;
-      if (latest && latest.report_url) { window.open(latest.report_url, "_blank", "noopener"); return; }
-      showMessage("还没有可打开的 HTML 报告。先跑一次测试。", "warn");
-    });
-
-    fillForm(initialConfig);
-    updateStatus(initialState);
-    setInterval(refreshState, 3000);
+    renderDashboard(initialState);
+    setInterval(refreshDashboard, 10000);
   </script>
 </body>
 </html>
