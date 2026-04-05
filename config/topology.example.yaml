@@ -1,0 +1,38 @@
+project_name: mc-frp-netprobe
+
+nodes:
+  client:
+    role: client
+    host: 127.0.0.1
+    os: windows
+    local: true
+    python_bin: python
+  relay:
+    role: relay
+    host: 127.0.0.1
+    os: windows
+    local: true
+    python_bin: python
+  server:
+    role: server
+    host: 127.0.0.1
+    os: windows
+    local: true
+    python_bin: python
+
+services:
+  relay_probe:
+    host: 127.0.0.1
+    port: 22
+  mc_public:
+    host: 127.0.0.1
+    port: 25565
+  iperf_public:
+    host: 127.0.0.1
+    port: 5201
+  mc_local:
+    host: 127.0.0.1
+    port: 25565
+  iperf_local:
+    host: 127.0.0.1
+    port: 5201

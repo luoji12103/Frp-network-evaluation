@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mc-netprobe control room</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --ink: #17212b;
+      --muted: #5f6c77;
+      --line: #d9cfbf;
+      --card: rgba(255, 252, 246, 0.92);
+      --accent: #1f5f5b;
+      --accent-soft: #d8ebe8;
+      --warn: #8c3d1f;
+      --ok: #215c37;
+      --shadow: 0 18px 40px rgba(54, 44, 34, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Aptos", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(31,95,91,0.14), transparent 25%),
+        radial-gradient(circle at top right, rgba(140,61,31,0.12), transparent 28%),
+        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
+    }
+    .shell { max-width: 1380px; margin: 0 auto; padding: 28px 22px 42px; }
+    .hero, .grid { display: grid; gap: 18px; }
+    .hero { grid-template-columns: 1.4fr 1fr; margin-bottom: 22px; }
+    .grid { grid-template-columns: 1.2fr 0.8fr; }
+    .panel {
+      background: var(--card);
+      border: 1px solid rgba(217, 207, 191, 0.95);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 20px;
+      backdrop-filter: blur(8px);
+    }
+    .title, .section-title {
+      font-family: "Georgia", "Times New Roman", serif;
+      letter-spacing: 0.02em;
+    }
+    .title { font-size: 34px; margin: 0 0 8px; }
+    .section-title { font-size: 24px; margin: 0 0 14px; }
+    .subtitle, .meta { color: var(--muted); line-height: 1.55; }
+    .status, .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 13px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    .status { background: var(--accent-soft); color: var(--accent); margin-bottom: 16px; }
+    .status.running, .pill.running { background: #ffe7b8; color: #8a4b00; }
+    .status.failed, .pill.failed { background: #f7d8d1; color: #8e2b14; }
+    .pill.completed { background: #d7ebde; color: var(--ok); }
+    .arch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .arch-card, .config-card, .run-card {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.74), rgba(240,233,223,0.62));
+    }
+    .arch-card { padding: 16px; min-height: 140px; position: relative; }
+    .arch-card h3, .config-card h3 { margin: 0 0 10px; font-size: 18px; }
+    .arch-card p { margin: 0; color: var(--muted); line-height: 1.45; }
+    .arch-card::after {
+      content: "→"; position: absolute; right: -18px; top: calc(50% - 16px);
+      font-size: 30px; color: var(--accent);
+    }
+    .arch-card:last-child::after { display: none; }
+    .cards { display: grid; gap: 14px; }
+    .cards.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards.two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; }
+    .config-card { padding: 16px; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+    label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
+    input, select {
+      width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid #cdbfa9;
+      background: rgba(255,255,255,0.94); color: var(--ink); font: inherit;
+    }
+    input[type="checkbox"] { width: 18px; height: 18px; padding: 0; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; margin-bottom: 10px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button {
+      border: none; border-radius: 999px; padding: 12px 18px; font-weight: 700; cursor: pointer;
+      transition: transform 0.18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .primary { background: var(--accent); color: white; }
+    .secondary { background: #ebe3d6; color: var(--ink); }
+    .danger { background: #8c3d1f; color: white; }
+    .runs { display: grid; gap: 12px; max-height: 980px; overflow: auto; padding-right: 2px; }
+    .run-card { padding: 14px; }
+    .run-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; }
+    .message {
+      border-radius: 14px; padding: 12px 14px; margin-top: 14px; display: none; white-space: pre-wrap;
+    }
+    .message.show { display: block; }
+    .message.ok { background: #d7ebde; color: var(--ok); }
+    .message.error { background: #f7d8d1; color: #8e2b14; }
+    .message.warn { background: #ffe7b8; color: #8a4b00; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    @media (max-width: 1080px) {
+      .hero, .grid, .cards.three, .cards.two, .arch, .field-grid { grid-template-columns: 1fr; }
+      .arch-card::after { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="panel">
+        <div id="statusBadge" class="status">Idle</div>
+        <h1 class="title">mc-netprobe Control Room</h1>
+        <p class="subtitle">
+          在一个页面里掌握完整网络测试架构。配置 Windows 客户端、Linux 中转 FRPS、macOS 服务端，
+          保存连接信息后即可后台触发自动测试，并直接打开最近生成的 HTML 报告。
+        </p>
+        <div class="actions">
+          <button class="primary" id="saveBtn" type="button">保存配置</button>
+          <button class="danger" id="runBtn" type="button">开始自动测试</button>
+          <button class="secondary" id="openLatestBtn" type="button">打开最新报告</button>
+        </div>
+        <div id="messageBox" class="message"></div>
+      </div>
+      <div class="panel">
+        <div class="arch">
+          <article class="arch-card">
+            <h3>Windows Client</h3>
+            <p>玩家侧或测试机。可以本机执行，也可以通过 SSH 连接到远端 Windows 客户端。</p>
+          </article>
+          <article class="arch-card">
+            <h3>Linux Relay / FRPS</h3>
+            <p>负责 FRP 中转和公网暴露端口，也承担 relay 到 server 的分段测试。</p>
+          </article>
+          <article class="arch-card">
+            <h3>macOS MC Server</h3>
+            <p>负责本地 Minecraft 服务与 iperf3 服务端，辅助定位服务端与家庭网络问题。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2 class="section-title">Topology & Scenario</h2>
+        <div class="cards three">
+          {% for node in ["client", "relay", "server"] %}
+          <div class="config-card">
+            <h3>{{ node|capitalize }} Node</h3>
+            <div class="checkbox-row"><input id="{{ node }}_local" type="checkbox"><span>本机直接执行</span></div>
+            <div class="field-grid">
+              <label>Host<input id="{{ node }}_host" type="text"></label>
+              <label>OS
+                <select id="{{ node }}_os">
+                  <option value="windows">windows</option>
+                  <option value="linux">linux</option>
+                  <option value="macos">macos</option>
+                </select>
+              </label>
+              <label>SSH User<input id="{{ node }}_ssh_user" type="text"></label>
+              <label>SSH Port<input id="{{ node }}_ssh_port" type="number"></label>
+              <label>Project Root<input id="{{ node }}_project_root" type="text"></label>
+              <label>Python Bin<input id="{{ node }}_python_bin" type="text"></label>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="cards two">
+          <div class="config-card">
+            <h3>Service Ports</h3>
+            <div class="field-grid">
+              {% for service_name in ["relay_probe", "mc_public", "iperf_public", "mc_local", "iperf_local"] %}
+              <label>{{ service_name }} host<input id="{{ service_name }}_host" type="text"></label>
+              <label>{{ service_name }} port<input id="{{ service_name }}_port" type="number"></label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="config-card">
+            <h3>Scenario Tuning</h3>
+            <div class="field-grid">
+              <label>Ping count<input id="ping_count" type="number"></label>
+              <label>Ping timeout sec<input id="ping_timeout_sec" type="number" step="0.1"></label>
+              <label>TCP attempts<input id="tcp_attempts" type="number"></label>
+              <label>TCP timeout ms<input id="tcp_timeout_ms" type="number"></label>
+              <label>TCP interval ms<input id="tcp_interval_ms" type="number"></label>
+              <label>Throughput duration sec<input id="throughput_duration_sec" type="number"></label>
+              <label>Throughput timeout sec<input id="throughput_timeout_sec" type="number" step="0.1"></label>
+              <label>System sample sec<input id="system_sample_interval_sec" type="number" step="0.1"></label>
+              <label>Load baseline attempts<input id="load_baseline_attempts" type="number"></label>
+              <label>Load probe interval ms<input id="load_probe_interval_ms" type="number"></label>
+              <label>Load timeout ms<input id="load_timeout_ms" type="number"></label>
+              <label>Load duration sec<input id="load_duration_sec" type="number"></label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel">
+        <h2 class="section-title">Recent Runs</h2>
+        <div class="runs" id="runsList"></div>
+      </aside>
+    </section>
+  </div>
+
+  <script>
+    const initialConfig = {{ initial_config_json }};
+    const initialState = {{ initial_state_json }};
+
+    function $(id) { return document.getElementById(id); }
+    function escapeHtml(value) {
+      return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    }
+
+    function fillForm(config) {
+      const { topology, scenarios } = config;
+      ["client","relay","server"].forEach((name) => {
+        const node = topology.nodes[name];
+        $(`${name}_host`).value = node.host || "";
+        $(`${name}_os`).value = node.os;
+        $(`${name}_ssh_user`).value = node.ssh_user || "";
+        $(`${name}_ssh_port`).value = node.ssh_port ?? 22;
+        $(`${name}_project_root`).value = node.project_root || "";
+        $(`${name}_python_bin`).value = node.python_bin || "";
+        $(`${name}_local`).checked = Boolean(node.local);
+      });
+      Object.entries(topology.services).forEach(([name, service]) => {
+        $(`${name}_host`).value = service.host || "";
+        $(`${name}_port`).value = service.port ?? "";
+      });
+      $("ping_count").value = scenarios.ping.count;
+      $("ping_timeout_sec").value = scenarios.ping.timeout_sec;
+      $("tcp_attempts").value = scenarios.tcp.attempts;
+      $("tcp_timeout_ms").value = scenarios.tcp.timeout_ms;
+      $("tcp_interval_ms").value = scenarios.tcp.interval_ms;
+      $("throughput_duration_sec").value = scenarios.throughput.duration_sec;
+      $("throughput_timeout_sec").value = scenarios.throughput.timeout_sec;
+      $("system_sample_interval_sec").value = scenarios.system.sample_interval_sec;
+      $("load_baseline_attempts").value = scenarios.load_inflation.baseline_attempts;
+      $("load_probe_interval_ms").value = scenarios.load_inflation.probe_interval_ms;
+      $("load_timeout_ms").value = scenarios.load_inflation.timeout_ms;
+      $("load_duration_sec").value = scenarios.load_inflation.duration_sec;
+    }
+
+    function collectConfig() {
+      return {
+        topology: {
+          project_name: initialConfig.topology.project_name || "mc-frp-netprobe-webui",
+          nodes: {
+            client: {
+              role: "client",
+              host: $("client_host").value.trim(),
+              os: $("client_os").value,
+              local: $("client_local").checked,
+              ssh_user: $("client_ssh_user").value.trim(),
+              ssh_port: Number($("client_ssh_port").value || 22),
+              project_root: $("client_project_root").value.trim(),
+              python_bin: $("client_python_bin").value.trim(),
+            },
+            relay: {
+              role: "relay",
+              host: $("relay_host").value.trim(),
+              os: $("relay_os").value,
+              local: $("relay_local").checked,
+              ssh_user: $("relay_ssh_user").value.trim(),
+              ssh_port: Number($("relay_ssh_port").value || 22),
+              project_root: $("relay_project_root").value.trim(),
+              python_bin: $("relay_python_bin").value.trim(),
+            },
+            server: {
+              role: "server",
+              host: $("server_host").value.trim(),
+              os: $("server_os").value,
+              local: $("server_local").checked,
+              ssh_user: $("server_ssh_user").value.trim(),
+              ssh_port: Number($("server_ssh_port").value || 22),
+              project_root: $("server_project_root").value.trim(),
+              python_bin: $("server_python_bin").value.trim(),
+            },
+          },
+          services: {
+            relay_probe: { host: $("relay_probe_host").value.trim(), port: Number($("relay_probe_port").value || 22) },
+            mc_public: { host: $("mc_public_host").value.trim(), port: Number($("mc_public_port").value || 25565) },
+            iperf_public: { host: $("iperf_public_host").value.trim(), port: Number($("iperf_public_port").value || 5201) },
+            mc_local: { host: $("mc_local_host").value.trim(), port: Number($("mc_local_port").value || 25565) },
+            iperf_local: { host: $("iperf_local_host").value.trim(), port: Number($("iperf_local_port").value || 5201) },
+          },
+        },
+        thresholds: initialConfig.thresholds,
+        scenarios: {
+          ...initialConfig.scenarios,
+          ping: { ...initialConfig.scenarios.ping, enabled: true, count: Number($("ping_count").value || 2), timeout_sec: Number($("ping_timeout_sec").value || 5) },
+          tcp: { ...initialConfig.scenarios.tcp, enabled: true, attempts: Number($("tcp_attempts").value || 3), timeout_ms: Number($("tcp_timeout_ms").value || 750), interval_ms: Number($("tcp_interval_ms").value || 200) },
+          throughput: { ...initialConfig.scenarios.throughput, enabled: true, duration_sec: Number($("throughput_duration_sec").value || 2), timeout_sec: Number($("throughput_timeout_sec").value || 5) },
+          system: { ...initialConfig.scenarios.system, enabled: true, sample_interval_sec: Number($("system_sample_interval_sec").value || 0.25) },
+          load_inflation: { ...initialConfig.scenarios.load_inflation, enabled: true, baseline_attempts: Number($("load_baseline_attempts").value || 2), probe_interval_ms: Number($("load_probe_interval_ms").value || 200), timeout_ms: Number($("load_timeout_ms").value || 500), duration_sec: Number($("load_duration_sec").value || 2) },
+        },
+      };
+    }
+
+    function showMessage(text, tone = "ok") {
+      const box = $("messageBox");
+      box.textContent = text;
+      box.className = `message show ${tone}`;
+    }
+
+    function renderRuns(runs) {
+      const host = $("runsList");
+      if (!runs.length) {
+        host.innerHTML = `<div class="run-card"><div class="meta">还没有执行记录。先保存配置，再点击“开始自动测试”。</div></div>`;
+        return;
+      }
+      host.innerHTML = runs.map((run) => {
+        const links = [
+          run.report_url ? `<div class="meta"><a href="${run.report_url}" target="_blank" rel="noreferrer">打开 HTML 报告</a></div>` : "",
+          run.raw_url ? `<div class="meta"><a href="${run.raw_url}" target="_blank" rel="noreferrer">打开 raw.json</a></div>` : "",
+        ].join("");
+        const conclusion = (run.conclusion || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+        return `
+          <article class="run-card">
+            <div class="run-head">
+              <strong>${escapeHtml(run.run_id)}</strong>
+              <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+            </div>
+            <div class="meta">Started: ${escapeHtml(run.started_at || "-")}</div>
+            <div class="meta">Finished: ${escapeHtml(run.finished_at || "-")}</div>
+            <div class="meta">Findings: ${escapeHtml(String(run.findings_count || 0))}</div>
+            ${links}
+            ${run.error ? `<div class="meta" style="color:#8e2b14;">${escapeHtml(run.error)}</div>` : ""}
+            ${conclusion ? `<ul class="meta">${conclusion}</ul>` : ""}
+          </article>`;
+      }).join("");
+    }
+
+    function updateStatus(snapshot) {
+      const badge = $("statusBadge");
+      const latest = snapshot.latest_run;
+      if (snapshot.is_running) {
+        badge.textContent = `Running ${latest ? latest.run_id : ""}`.trim();
+        badge.className = "status running";
+      } else if (latest && latest.status === "failed") {
+        badge.textContent = `Failed ${latest.run_id}`;
+        badge.className = "status failed";
+      } else if (latest && latest.status === "completed") {
+        badge.textContent = `Ready · latest ${latest.run_id}`;
+        badge.className = "status";
+      } else {
+        badge.textContent = "Idle";
+        badge.className = "status";
+      }
+      renderRuns(snapshot.runs || []);
+    }
+
+    async function postJson(url, body) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { ok: response.ok, data: await response.json() };
+    }
+
+    async function refreshState() {
+      const response = await fetch("/api/state");
+      const snapshot = await response.json();
+      updateStatus(snapshot);
+    }
+
+    $("saveBtn").addEventListener("click", async () => {
+      const result = await postJson("/api/save", collectConfig());
+      if (!result.ok) { showMessage(result.data.error || "保存失败", "error"); return; }
+      const warnings = result.data.warnings || [];
+      showMessage(warnings.length ? `配置已保存，但还有未填项：\n- ${warnings.join("\n- ")}` : "配置已保存。", warnings.length ? "warn" : "ok");
+      await refreshState();
+    });
+
+    $("runBtn").addEventListener("click", async () => {
+      const result = await postJson("/api/run", collectConfig());
+      if (!result.ok) { showMessage(result.data.error || "启动测试失败", "error"); return; }
+      showMessage(`测试已启动：${result.data.run.run_id}`, "ok");
+      await refreshState();
+    });
+
+    $("openLatestBtn").addEventListener("click", async () => {
+      const response = await fetch("/api/state");
+      const snapshot = await response.json();
+      const latest = snapshot.latest_run;
+      if (latest && latest.report_url) { window.open(latest.report_url, "_blank", "noopener"); return; }
+      showMessage("还没有可打开的 HTML 报告。先跑一次测试。", "warn");
+    });
+
+    fillForm(initialConfig);
+    updateStatus(initialState);
+    setInterval(refreshState, 3000);
+  </script>
+</body>
+</html>

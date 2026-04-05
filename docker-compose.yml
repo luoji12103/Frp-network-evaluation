@@ -1,0 +1,29 @@
+services:
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mc-netprobe-webui
+    restart: unless-stopped
+    ports:
+      - "${MC_NETPROBE_WEBUI_PORT:-8765}:8765"
+    environment:
+      MC_NETPROBE_WEBUI_HOST: "0.0.0.0"
+      MC_NETPROBE_WEBUI_PORT: "28765"
+      TZ: "${TZ:-Asia/Hong_Kong}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./config/webui:/app/config/webui
+      - ./results:/app/results
+      - ./logs:/app/logs
+      - ${MC_NETPROBE_SSH_DIR:-./docker/ssh}:/home/app/.ssh:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/state', timeout=5).read()"
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

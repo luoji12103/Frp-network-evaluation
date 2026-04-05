@@ -1,0 +1,22 @@
+ping:
+  packet_loss_pct_max: 2.0
+  rtt_avg_ms_max: 120.0
+  rtt_p95_ms_max: 180.0
+  jitter_ms_max: 20.0
+
+tcp:
+  connect_avg_ms_max: 150.0
+  connect_p95_ms_max: 250.0
+  timeout_or_error_pct_max: 10.0
+
+throughput:
+  throughput_up_mbps_min: 5.0
+  throughput_down_mbps_min: 5.0
+
+load_inflation:
+  load_rtt_inflation_ms_max: 80.0
+  loaded_timeout_pct_max: 15.0
+
+system:
+  cpu_usage_pct_max: 90.0
+  memory_usage_pct_max: 90.0
