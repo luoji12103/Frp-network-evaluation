@@ -2,7 +2,7 @@
 set -euo pipefail
 
 mkdir -p /app/config/webui /app/results /app/logs /home/app/.ssh
-chmod 700 /home/app/.ssh || true
+chmod 700 /home/app/.ssh 2>/dev/null || true
 
 if [ "$#" -gt 0 ]; then
   exec "$@"

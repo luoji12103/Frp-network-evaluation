@@ -11,7 +11,7 @@ from typing import Any
 from agents import execute_task
 from controller.scenario import ScenariosConfig, ThresholdsConfig, TopologyConfig
 from controller.ssh_exec import SSHExecutor
-from probes.common import ProbeResult, RunResult, ThresholdFinding, current_environment, make_error_probe, now_iso
+from probes.common import ProbeResult, RunResult, ThresholdFinding, current_environment, detect_platform_name, make_error_probe, now_iso
 from probes.metrics import calculate_load_inflation
 
 
@@ -320,7 +320,8 @@ class Orchestrator:
         node = getattr(self.topology.nodes, node_name)
         merged_payload = dict(payload)
         merged_payload.setdefault("source", node_name)
-        merged_payload.setdefault("platform_name", node.os)
+        platform_name = detect_platform_name() if node.local else node.os
+        merged_payload.setdefault("platform_name", platform_name)
 
         if node.local:
             result = ProbeResult.from_dict(await execute_task(role=node.role, task=task, payload=merged_payload))
@@ -330,7 +331,9 @@ class Orchestrator:
 
         result.metadata.setdefault("path_label", path_label)
         result.metadata.setdefault("source_node", node_name)
-        result.metadata.setdefault("node_os", node.os)
+        result.metadata.setdefault("node_os", platform_name)
+        if node.local and node.os != platform_name:
+            result.metadata.setdefault("configured_node_os", node.os)
         return result
 
 

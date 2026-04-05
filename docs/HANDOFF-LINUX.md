@@ -61,11 +61,17 @@
 - `iperf3`
 - `git`
 
-如果缺包，可以先执行：
+如果缺包，可以先按发行版执行：
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y python3 python3-venv python3-pip openssh-client iperf3 git
+```
+
+或在 Rocky / RHEL / CentOS 这类系统上执行：
+
+```bash
+sudo dnf install -y python3 python3-pip openssh-clients iperf3 git iputils
 ```
 
 ### 4.2 初始化项目
@@ -87,6 +93,10 @@ python main.py \
   --thresholds config/thresholds.example.yaml \
   --scenarios config/scenarios.example.yaml
 ```
+
+说明：
+
+- 当节点配置为 `local: true` 时，控制端现在会自动按当前 Linux 宿主机平台执行本地 probe，不会再误用示例 YAML 里的其他 `os` 值。
 
 ### 4.4 启动 Web UI
 

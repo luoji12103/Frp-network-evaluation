@@ -207,3 +207,13 @@ def current_environment() -> dict[str, Any]:
         "hostname": platform.node(),
         "pid": os.getpid(),
     }
+
+
+def detect_platform_name() -> str:
+    """Normalize the current host OS into the project platform labels."""
+    system = platform.system().lower()
+    if "windows" in system:
+        return "windows"
+    if "darwin" in system:
+        return "macos"
+    return "linux"

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
 from typing import Any
 
 from probes.mc_probe import run_mc_tcp_probe
+from probes.common import detect_platform_name
 from probes.ping import run_ping_probe
 from probes.system_probe import run_system_snapshot_probe
 from probes.tcp_handshake import run_tcp_handshake_probe
@@ -17,7 +17,7 @@ from probes.throughput import run_throughput_probe, start_iperf_server_process
 async def execute_task(role: str, task: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Execute a single agent task and return a serialized probe result."""
     source = payload.get("source", role)
-    platform_name = payload.get("platform_name") or _detect_platform_name()
+    platform_name = payload.get("platform_name") or detect_platform_name()
 
     if task == "ping":
         result = await run_ping_probe(
@@ -130,12 +130,3 @@ async def run_agent(role: str) -> int:
         }
         print(json.dumps(error_result, indent=2, ensure_ascii=False))
         return 0
-
-
-def _detect_platform_name() -> str:
-    system = platform.system().lower()
-    if "windows" in system:
-        return "windows"
-    if "darwin" in system:
-        return "macos"
-    return "linux"
