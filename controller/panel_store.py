@@ -705,6 +705,66 @@ class PanelStore:
             },
         }
 
+    def build_public_dashboard_snapshot(self) -> dict[str, Any]:
+        settings = self.get_settings().model_dump()
+        nodes = [self._public_node(node) for node in self.list_nodes()]
+        runs = [self._public_run(run) for run in self.list_recent_runs(limit=12)]
+        alerts = [self._public_alert(alert) for alert in self.list_recent_alerts(limit=12)]
+        degraded_statuses = {"push-only", "heartbeat-degraded"}
+        offline_statuses = {"offline", "unpaired", "disabled"}
+        return {
+            "topology_id": self.get_topology_id(),
+            "topology_name": settings["topology_name"],
+            "summary": {
+                "total_nodes": len(nodes),
+                "online_nodes": sum(1 for node in nodes if node["status"] == "online"),
+                "degraded_nodes": sum(1 for node in nodes if node["status"] in degraded_statuses),
+                "offline_nodes": sum(1 for node in nodes if node["status"] in offline_statuses),
+                "active_alerts": sum(1 for alert in alerts if alert["status"] == "open"),
+            },
+            "nodes": nodes,
+            "latest_runs": runs,
+            "alerts": alerts,
+            "history": {
+                "samples": self.query_history(metric_name="cpu_usage_pct", time_range_hours=24, limit=180),
+            },
+        }
+
+    def _public_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": int(node["id"]),
+            "role": str(node["role"]),
+            "node_name": str(node["node_name"]),
+            "status": str(node["status"]),
+            "enabled": bool(node["enabled"]),
+            "paired": bool(node["paired"]),
+            "last_seen_at": node.get("last_seen_at"),
+            "last_push_ok": bool(node.get("last_push_ok")),
+            "last_pull_ok": bool(node.get("last_pull_ok")),
+        }
+
+    def _public_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": str(run["run_id"]),
+            "run_kind": str(run["run_kind"]),
+            "status": str(run["status"]),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+            "findings_count": int(run.get("findings_count") or 0),
+            "conclusion": list(run.get("conclusion") or []),
+            "error": run.get("error"),
+            "html_path": run.get("html_path"),
+        }
+
+    def _public_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "kind": str(alert["kind"]),
+            "severity": str(alert["severity"]),
+            "status": str(alert["status"]),
+            "message": str(alert["message"]),
+            "created_at": alert.get("created_at"),
+        }
+
     def _initialize(self) -> None:
         with self._lock, self._connect() as conn:
             conn.executescript(

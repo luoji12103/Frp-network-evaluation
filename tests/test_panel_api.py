@@ -7,32 +7,77 @@ from fastapi.testclient import TestClient
 from controller.webui import create_app
 
 
-def test_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
-    app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
-    with TestClient(app) as client:
-        response = client.get("/api/v1/dashboard")
+def build_client(tmp_path: Path) -> TestClient:
+    app = create_app(
+        db_path=tmp_path / "monitor.db",
+        start_background=False,
+        admin_username="admin",
+        admin_password="secret-pass",
+    )
+    return TestClient(app)
+
+
+def login_admin(client: TestClient) -> None:
+    response = client.post(
+        "/login",
+        content="username=admin&password=secret-pass&next=%2Fadmin",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin"
+
+
+def test_public_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        response = client.get("/api/v1/public-dashboard")
         assert response.status_code == 200
         payload = response.json()
-        assert payload["settings"]["services"]["mc_public"]["port"] == 25565
-        assert [item["run_kind"] for item in payload["schedules"]] == ["system", "baseline", "capacity"]
+        assert payload["topology_name"] == "mc-netprobe-monitor"
+        assert payload["summary"]["total_nodes"] == 0
 
 
-def test_dashboard_page_includes_bilingual_toggle(tmp_path: Path) -> None:
-    app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
-    with TestClient(app) as client:
+def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
         response = client.get("/")
         assert response.status_code == 200
         body = response.text
         assert 'id="localeSelect"' in body
         assert '"zh-CN"' in body
         assert '"en-US"' in body
-        assert "Save Global Settings" in body
-        assert "保存全局配置" in body
+        assert "Admin Login" in body
+        assert "管理员登录" in body
+
+
+def test_admin_login_required_for_management_routes(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        page = client.get("/admin", follow_redirects=False)
+        assert page.status_code == 303
+        assert page.headers["location"] == "/login?next=/admin"
+
+        api = client.get("/api/v1/dashboard")
+        assert api.status_code == 401
+        assert api.json()["detail"] == "Admin login required"
+
+
+def test_admin_login_allows_dashboard_access(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        page = client.get("/admin")
+        assert page.status_code == 200
+        assert "Save Global Settings" in page.text
+        assert "保存全局配置" in page.text
+
+        api = client.get("/api/v1/dashboard")
+        assert api.status_code == 200
+        payload = api.json()
+        assert payload["settings"]["services"]["mc_public"]["port"] == 25565
+        assert [item["run_kind"] for item in payload["schedules"]] == ["system", "baseline", "capacity"]
 
 
 def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
-    app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
-    with TestClient(app) as client:
+    with build_client(tmp_path) as client:
+        login_admin(client)
         node = client.post(
             "/api/v1/nodes",
             json={
@@ -84,8 +129,8 @@ def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
 
 
 def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> None:
-    app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
-    with TestClient(app) as client:
+    with build_client(tmp_path) as client:
+        login_admin(client)
         runtime = client.app.state.runtime
         node = client.post(
             "/api/v1/nodes",

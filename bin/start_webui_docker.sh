@@ -13,3 +13,6 @@ docker compose up --build -d
 
 echo "mc-netprobe Panel is starting in Docker."
 echo "URL: http://127.0.0.1:${MC_NETPROBE_WEBUI_PORT}"
+echo "Public board: http://127.0.0.1:${MC_NETPROBE_WEBUI_PORT}/"
+echo "Admin login:  http://127.0.0.1:${MC_NETPROBE_WEBUI_PORT}/login"
+echo "If MC_NETPROBE_ADMIN_PASSWORD is unset, read ./data/admin-password.txt after the first start."

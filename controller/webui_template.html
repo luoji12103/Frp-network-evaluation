@@ -48,11 +48,22 @@
     .hero-head, .top-actions, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
     .hero-head { justify-content: space-between; align-items: flex-start; }
     .top-actions { margin-top: 18px; }
+    .inline-form { margin: 0; }
+    .action-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: transform 0.15s ease;
+    }
     button {
       border: none; border-radius: 999px; padding: 11px 16px; font-weight: 700; cursor: pointer;
       transition: transform 0.15s ease;
     }
-    button:hover { transform: translateY(-1px); }
+    button:hover, .action-link:hover { transform: translateY(-1px); }
     .primary { background: var(--accent); color: white; }
     .secondary { background: #e8eee8; color: var(--ink); }
     .danger { background: var(--danger); color: white; }
@@ -159,9 +170,13 @@
           不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。
         </p>
         <div class="top-actions">
+          <a class="action-link secondary" id="publicViewLink" href="/" data-i18n="publicView">公开页面</a>
           <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">保存全局配置</button>
           <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">手动执行完整监测</button>
           <button class="secondary" type="button" id="refreshBtn" data-i18n="refreshPanel">刷新面板</button>
+          <form class="inline-form" method="post" action="/logout">
+            <button class="secondary" type="submit" id="logoutBtn" data-i18n="logout">退出登录</button>
+          </form>
         </div>
         <div id="messageBox" class="message"></div>
       </div>
@@ -244,6 +259,8 @@
         language: "语言",
         heroTitle: "mc-netprobe Agent 面板",
         heroDescription: "中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。",
+        publicView: "公开页面",
+        logout: "退出登录",
         saveSettings: "保存全局配置",
         runFull: "手动执行完整监测",
         refreshPanel: "刷新面板",
@@ -287,6 +304,7 @@
         pairNodeOk: "{role} 配对命令已生成。",
         triggerRunFailed: "触发监测失败",
         triggerRunOk: "监测任务 {runId} 已启动。",
+        sessionExpired: "登录已失效，请重新进入管理页面。",
         field: {
           relayProbeHost: "relay_probe 主机",
           relayProbePort: "relay_probe 端口",
@@ -363,6 +381,8 @@
         language: "Language",
         heroTitle: "mc-netprobe Agent Panel",
         heroDescription: "The central monitoring panel handles node pairing, continuous scheduling, alerts, and historical trends. Nodes only run Agents, with no SSH injection and no system credentials stored in the panel.",
+        publicView: "Public View",
+        logout: "Log Out",
         saveSettings: "Save Global Settings",
         runFull: "Run Full Check",
         refreshPanel: "Refresh Panel",
@@ -406,6 +426,7 @@
         pairNodeOk: "{role} pair command generated.",
         triggerRunFailed: "Failed to trigger run",
         triggerRunOk: "Run {runId} started.",
+        sessionExpired: "Your admin session expired. Please sign in again.",
         field: {
           relayProbeHost: "relay_probe host",
           relayProbePort: "relay_probe port",
@@ -551,6 +572,16 @@
       box.textContent = text;
     }
 
+    async function apiJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      if (response.status === 401) {
+        window.location.href = "/login?next=/admin";
+        throw new Error(t("sessionExpired"));
+      }
+      return { response, data };
+    }
+
     function nodeCard(role, node) {
       const status = node ? node.status : "unpaired";
       const nodeId = node ? node.id : "";
@@ -694,12 +725,11 @@
     }
 
     async function saveSettings() {
-      const response = await fetch("/api/v1/dashboard", {
+      const { response, data } = await apiJson("/api/v1/dashboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(collectSettings()),
       });
-      const data = await response.json();
       if (!response.ok) {
         showMessage("error", data.detail || data.error || t("saveSettingsFailed"));
         return;
@@ -719,12 +749,11 @@
         agent_url: card.querySelector('[data-field="agent_url"]').value.trim() || null,
         enabled: card.querySelector('[data-field="enabled"]').checked,
       };
-      const response = await fetch("/api/v1/nodes", {
+      const { response, data } = await apiJson("/api/v1/nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
       if (!response.ok) {
         showMessage("error", data.detail || data.error || t("saveNodeFailed"));
         return;
@@ -740,8 +769,7 @@
         showMessage("warn", t("pairNodeNeedSave"));
         return;
       }
-      const response = await fetch(`/api/v1/nodes/${nodeId}/pair-code`, { method: "POST" });
-      const data = await response.json();
+      const { response, data } = await apiJson(`/api/v1/nodes/${nodeId}/pair-code`, { method: "POST" });
       if (!response.ok) {
         showMessage("error", data.detail || data.error || t("pairNodeFailed"));
         return;
@@ -753,12 +781,11 @@
     }
 
     async function runFull() {
-      const response = await fetch("/api/v1/runs", {
+      const { response, data } = await apiJson("/api/v1/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ run_kind: "full", source: "manual" }),
       });
-      const data = await response.json();
       if (!response.ok) {
         showMessage("error", data.detail || data.error || t("triggerRunFailed"));
         return;
@@ -843,8 +870,7 @@
     }
 
     async function refreshDashboard() {
-      const response = await fetch("/api/v1/dashboard");
-      const data = await response.json();
+      const { data } = await apiJson("/api/v1/dashboard");
       renderDashboard(data);
     }
 

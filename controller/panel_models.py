@@ -140,6 +140,18 @@ class DashboardSnapshot(BaseModel):
     history: dict[str, Any]
 
 
+class PublicDashboardSnapshot(BaseModel):
+    """Public-safe dashboard response for the unauthenticated view."""
+
+    topology_id: int
+    topology_name: str
+    summary: dict[str, int]
+    nodes: list[dict[str, Any]]
+    latest_runs: list[dict[str, Any]]
+    alerts: list[dict[str, Any]]
+    history: dict[str, Any]
+
+
 class HistoryResponse(BaseModel):
     """Metric history query response."""
 

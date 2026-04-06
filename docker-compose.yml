@@ -11,6 +11,9 @@ services:
       MC_NETPROBE_WEBUI_HOST: "0.0.0.0"
       MC_NETPROBE_WEBUI_PORT: "8765"
       MC_NETPROBE_PANEL_DB_PATH: "data/monitor.db"
+      MC_NETPROBE_ADMIN_USERNAME: "${MC_NETPROBE_ADMIN_USERNAME:-admin}"
+      MC_NETPROBE_ADMIN_PASSWORD: "${MC_NETPROBE_ADMIN_PASSWORD:-}"
+      MC_NETPROBE_ADMIN_PASSWORD_FILE: "data/admin-password.txt"
       TZ: "${TZ:-UTC}"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -23,7 +26,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/v1/dashboard', timeout=5).read()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/v1/public-dashboard', timeout=5).read()"
       interval: 20s
       timeout: 5s
       retries: 3
