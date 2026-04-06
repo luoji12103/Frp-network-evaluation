@@ -4,10 +4,27 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import agents.service as agent_service
 from agents.service import create_agent_app
 
 
-def test_agent_runs_direct_job_and_returns_cached_result(tmp_path: Path) -> None:
+def test_agent_runs_direct_job_and_returns_cached_result(monkeypatch, tmp_path: Path) -> None:
+    async def fake_execute_task(role: str, task: str, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "name": task,
+            "source": role,
+            "target": "local",
+            "success": True,
+            "metrics": {"sample_interval_sec": payload.get("sample_interval_sec")},
+            "samples": [],
+            "error": None,
+            "started_at": "2026-04-06T00:00:00Z",
+            "duration_ms": 1.0,
+            "metadata": {"role": role},
+        }
+
+    monkeypatch.setattr(agent_service, "execute_task", fake_execute_task)
+
     app = create_agent_app(
         config_path=tmp_path / "agent.yaml",
         overrides={

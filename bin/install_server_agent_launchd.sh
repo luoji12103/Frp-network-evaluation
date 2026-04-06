@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+require_command() {
+  local command_name="$1"
+  if ! command -v "${command_name}" >/dev/null 2>&1; then
+    echo "Required command not found: ${command_name}" >&2
+    exit 1
+  fi
+}
+
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PANEL_URL=""
 PAIR_CODE=""
@@ -28,57 +36,64 @@ if [[ -z "${PANEL_URL}" || -z "${PAIR_CODE}" ]]; then
   exit 1
 fi
 
+require_command launchctl
+require_command plutil
+require_command "${PYTHON_BIN}"
+
+PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
 PLIST_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
-mkdir -p "${PLIST_DIR}"
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_PATH="${REPO_ROOT}/logs/server-agent.launchd.log"
+DOMAIN_TARGET="gui/$(id -u)"
+SERVICE_TARGET="${DOMAIN_TARGET}/${LABEL}"
 
-cat > "${PLIST_PATH}" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${PYTHON_BIN}</string>
-    <string>-m</string>
-    <string>agents.service</string>
-    <string>--config</string>
-    <string>${REPO_ROOT}/${CONFIG_PATH}</string>
-    <string>--panel-url</string>
-    <string>${PANEL_URL}</string>
-    <string>--pair-code</string>
-    <string>${PAIR_CODE}</string>
-    <string>--node-name</string>
-    <string>${NODE_NAME}</string>
-    <string>--role</string>
-    <string>${ROLE}</string>
-    <string>--runtime-mode</string>
-    <string>${RUNTIME_MODE}</string>
-    <string>--listen-host</string>
-    <string>0.0.0.0</string>
-    <string>--listen-port</string>
-    <string>${LISTEN_PORT}</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${REPO_ROOT}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${REPO_ROOT}/logs/server-agent.launchd.log</string>
-  <key>StandardErrorPath</key>
-  <string>${REPO_ROOT}/logs/server-agent.launchd.log</string>
-</dict>
-</plist>
-PLIST
+mkdir -p "${PLIST_DIR}" "${REPO_ROOT}/logs"
 
-mkdir -p "${REPO_ROOT}/logs"
-launchctl unload "${PLIST_PATH}" >/dev/null 2>&1 || true
-launchctl load "${PLIST_PATH}"
+"${PYTHON_BIN}" "${REPO_ROOT}/agents/launchd.py" \
+  --repo-root "${REPO_ROOT}" \
+  --home-dir "${HOME}" \
+  --python-bin "${PYTHON_BIN}" \
+  --panel-url "${PANEL_URL}" \
+  --pair-code "${PAIR_CODE}" \
+  --node-name "${NODE_NAME}" \
+  --role "${ROLE}" \
+  --runtime-mode "${RUNTIME_MODE}" \
+  --listen-host "0.0.0.0" \
+  --listen-port "${LISTEN_PORT}" \
+  --config "${CONFIG_PATH}" \
+  --label "${LABEL}"
 
-echo "Installed launchd agent: ${PLIST_PATH}"
+plutil -lint "${PLIST_PATH}"
+
+if launchctl bootout "${SERVICE_TARGET}" >/dev/null 2>&1; then
+  :
+fi
+
+LOAD_METHOD="bootstrap"
+if ! launchctl bootstrap "${DOMAIN_TARGET}" "${PLIST_PATH}" >/dev/null 2>&1; then
+  LOAD_METHOD="load"
+fi
+
+if [[ "${LOAD_METHOD}" == "bootstrap" ]]; then
+  if ! launchctl kickstart -k "${SERVICE_TARGET}" >/dev/null 2>&1; then
+    LOAD_METHOD="load"
+  fi
+fi
+
+if [[ "${LOAD_METHOD}" == "load" ]]; then
+  echo "launchctl bootstrap/kickstart failed; falling back to unload/load." >&2
+  launchctl unload "${PLIST_PATH}" >/dev/null 2>&1 || true
+  launchctl load "${PLIST_PATH}"
+fi
+
+echo "Installed launchd agent"
+echo "  plist: ${PLIST_PATH}"
+echo "  label: ${LABEL}"
+echo "  logs: ${LOG_PATH}"
+echo "  reload method: ${LOAD_METHOD}"
+echo "Next checks:"
+echo "  plutil -lint \"${PLIST_PATH}\""
+echo "  launchctl print ${SERVICE_TARGET}"
+echo "  tail -n 50 \"${LOG_PATH}\""
+echo "  curl http://127.0.0.1:${LISTEN_PORT}/api/v1/status"
