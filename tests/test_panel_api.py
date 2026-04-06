@@ -17,6 +17,19 @@ def test_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
         assert [item["run_kind"] for item in payload["schedules"]] == ["system", "baseline", "capacity"]
 
 
+def test_dashboard_page_includes_bilingual_toggle(tmp_path: Path) -> None:
+    app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
+    with TestClient(app) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        body = response.text
+        assert 'id="localeSelect"' in body
+        assert '"zh-CN"' in body
+        assert '"en-US"' in body
+        assert "Save Global Settings" in body
+        assert "保存全局配置" in body
+
+
 def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
     app = create_app(db_path=tmp_path / "monitor.db", start_background=False)
     with TestClient(app) as client:

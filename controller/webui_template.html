@@ -45,7 +45,8 @@
     h2 { font-size: 24px; margin-bottom: 14px; }
     h3 { font-size: 19px; margin-bottom: 10px; }
     p { margin: 0; line-height: 1.5; color: var(--muted); }
-    .top-actions, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .hero-head, .top-actions, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .hero-head { justify-content: space-between; align-items: flex-start; }
     .top-actions { margin-top: 18px; }
     button {
       border: none; border-radius: 999px; padding: 11px 16px; font-weight: 700; cursor: pointer;
@@ -89,6 +90,20 @@
       color: var(--ink);
       background: rgba(255,255,255,0.95);
     }
+    .lang-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .lang-control select {
+      width: auto;
+      min-width: 132px;
+      padding: 8px 12px;
+      border-radius: 999px;
+    }
     .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; }
     .check input { width: 18px; height: 18px; padding: 0; }
     .metric-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 13px; }
@@ -128,67 +143,78 @@
   <div class="shell">
     <section class="hero">
       <div class="panel">
-        <div class="status-badge" id="panelStatus">Panel online</div>
-        <h1>mc-netprobe Agent Panel</h1>
-        <p>
+        <div class="hero-head">
+          <div class="status-badge" id="panelStatus" data-i18n="panelOnline">Panel online</div>
+          <label class="lang-control" for="localeSelect">
+            <span id="localeLabel" data-i18n="language">Language</span>
+            <select id="localeSelect" aria-label="Language">
+              <option value="zh-CN">中文</option>
+              <option value="en-US">English</option>
+            </select>
+          </label>
+        </div>
+        <h1 id="heroTitle" data-i18n="heroTitle">mc-netprobe Agent Panel</h1>
+        <p id="heroDescription">
           中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，
           不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。
         </p>
         <div class="top-actions">
-          <button class="primary" type="button" id="saveSettingsBtn">保存全局配置</button>
-          <button class="danger" type="button" id="runFullBtn">手动执行完整监测</button>
-          <button class="secondary" type="button" id="refreshBtn">刷新面板</button>
+          <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">保存全局配置</button>
+          <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">手动执行完整监测</button>
+          <button class="secondary" type="button" id="refreshBtn" data-i18n="refreshPanel">刷新面板</button>
         </div>
         <div id="messageBox" class="message"></div>
       </div>
       <div class="panel">
-        <h2>Recent Alerts</h2>
+        <h2 id="alertsTitle" data-i18n="recentAlerts">Recent Alerts</h2>
         <div id="alertsList" class="list"></div>
       </div>
     </section>
 
     <section class="panel">
       <div class="split">
-        <h2>Nodes</h2>
-        <span class="muted">一套拓扑，三个角色，底层模型可扩展</span>
+        <h2 id="nodesTitle" data-i18n="nodes">Nodes</h2>
+        <span class="muted" id="nodesCaption">
+          一套拓扑，三个角色，底层模型可扩展
+        </span>
       </div>
       <div id="nodesGrid" class="cards three"></div>
     </section>
 
     <section class="body-grid">
       <div class="panel">
-        <h2>Topology, Thresholds & Schedules</h2>
+        <h2 id="topologyTitle" data-i18n="topologyThresholdsSchedules">Topology, Thresholds & Schedules</h2>
         <div class="cards two">
           <div class="node-card">
-            <h3>Service Endpoints</h3>
+            <h3 id="serviceEndpointsTitle" data-i18n="serviceEndpoints">Service Endpoints</h3>
             <div class="field-grid">
-              <label>relay_probe host<input id="relay_probe_host" type="text"></label>
-              <label>relay_probe port<input id="relay_probe_port" type="number"></label>
-              <label>mc_public host<input id="mc_public_host" type="text"></label>
-              <label>mc_public port<input id="mc_public_port" type="number"></label>
-              <label>iperf_public host<input id="iperf_public_host" type="text"></label>
-              <label>iperf_public port<input id="iperf_public_port" type="number"></label>
-              <label>mc_local host<input id="mc_local_host" type="text"></label>
-              <label>mc_local port<input id="mc_local_port" type="number"></label>
-              <label>iperf_local host<input id="iperf_local_host" type="text"></label>
-              <label>iperf_local port<input id="iperf_local_port" type="number"></label>
+              <label><span data-i18n="field.relayProbeHost">relay_probe host</span><input id="relay_probe_host" type="text"></label>
+              <label><span data-i18n="field.relayProbePort">relay_probe port</span><input id="relay_probe_port" type="number"></label>
+              <label><span data-i18n="field.mcPublicHost">mc_public host</span><input id="mc_public_host" type="text"></label>
+              <label><span data-i18n="field.mcPublicPort">mc_public port</span><input id="mc_public_port" type="number"></label>
+              <label><span data-i18n="field.iperfPublicHost">iperf_public host</span><input id="iperf_public_host" type="text"></label>
+              <label><span data-i18n="field.iperfPublicPort">iperf_public port</span><input id="iperf_public_port" type="number"></label>
+              <label><span data-i18n="field.mcLocalHost">mc_local host</span><input id="mc_local_host" type="text"></label>
+              <label><span data-i18n="field.mcLocalPort">mc_local port</span><input id="mc_local_port" type="number"></label>
+              <label><span data-i18n="field.iperfLocalHost">iperf_local host</span><input id="iperf_local_host" type="text"></label>
+              <label><span data-i18n="field.iperfLocalPort">iperf_local port</span><input id="iperf_local_port" type="number"></label>
             </div>
           </div>
           <div class="node-card">
-            <h3>Thresholds & Durations</h3>
+            <h3 id="thresholdsDurationsTitle" data-i18n="thresholdsDurations">Thresholds & Durations</h3>
             <div class="field-grid">
-              <label>Ping avg max ms<input id="ping_rtt_avg_max" type="number" step="0.1"></label>
-              <label>Ping jitter max ms<input id="ping_jitter_max" type="number" step="0.1"></label>
-              <label>TCP avg max ms<input id="tcp_connect_avg_max" type="number" step="0.1"></label>
-              <label>TCP error max %<input id="tcp_timeout_error_max" type="number" step="0.1"></label>
-              <label>Throughput up min Mbps<input id="throughput_up_min" type="number" step="0.1"></label>
-              <label>Throughput down min Mbps<input id="throughput_down_min" type="number" step="0.1"></label>
-              <label>Load delta max ms<input id="load_delta_max" type="number" step="0.1"></label>
-              <label>System CPU max %<input id="system_cpu_max" type="number" step="0.1"></label>
-              <label>Throughput duration sec<input id="throughput_duration_sec" type="number"></label>
-              <label>Load duration sec<input id="load_duration_sec" type="number"></label>
-              <label>TCP attempts<input id="tcp_attempts" type="number"></label>
-              <label>System sample sec<input id="system_sample_sec" type="number" step="0.1"></label>
+              <label><span data-i18n="field.pingAvgMax">Ping avg max ms</span><input id="ping_rtt_avg_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.pingJitterMax">Ping jitter max ms</span><input id="ping_jitter_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.tcpAvgMax">TCP avg max ms</span><input id="tcp_connect_avg_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.tcpErrorMax">TCP error max %</span><input id="tcp_timeout_error_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.throughputUpMin">Throughput up min Mbps</span><input id="throughput_up_min" type="number" step="0.1"></label>
+              <label><span data-i18n="field.throughputDownMin">Throughput down min Mbps</span><input id="throughput_down_min" type="number" step="0.1"></label>
+              <label><span data-i18n="field.loadDeltaMax">Load delta max ms</span><input id="load_delta_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.systemCpuMax">System CPU max %</span><input id="system_cpu_max" type="number" step="0.1"></label>
+              <label><span data-i18n="field.throughputDurationSec">Throughput duration sec</span><input id="throughput_duration_sec" type="number"></label>
+              <label><span data-i18n="field.loadDurationSec">Load duration sec</span><input id="load_duration_sec" type="number"></label>
+              <label><span data-i18n="field.tcpAttempts">TCP attempts</span><input id="tcp_attempts" type="number"></label>
+              <label><span data-i18n="field.systemSampleSec">System sample sec</span><input id="system_sample_sec" type="number" step="0.1"></label>
             </div>
             <div id="scheduleMeta" class="metric-meta"></div>
           </div>
@@ -197,11 +223,11 @@
 
       <div class="panel">
         <div class="split">
-          <h2>Recent Runs</h2>
-          <a id="latestReportLink" href="#" target="_blank">Open latest report</a>
+          <h2 id="runsTitle" data-i18n="recentRuns">Recent Runs</h2>
+          <a id="latestReportLink" href="#" target="_blank" data-i18n="openLatestReport">Open latest report</a>
         </div>
         <div id="runsList" class="list"></div>
-        <h2 style="margin-top:18px;">CPU Trend (24h)</h2>
+        <h2 id="cpuTrendTitle" style="margin-top:18px;" data-i18n="cpuTrend24h">CPU Trend (24h)</h2>
         <svg id="cpuTrend" class="sparkline" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
       </div>
     </section>
@@ -210,8 +236,314 @@
   <script>
     const initialState = {{ initial_state_json }};
     let currentState = initialState;
+    const LOCALE_STORAGE_KEY = "mc-netprobe-locale";
+    const translations = {
+      "zh-CN": {
+        pageTitle: "mc-netprobe 监控面板",
+        panelOnline: "面板在线",
+        language: "语言",
+        heroTitle: "mc-netprobe Agent 面板",
+        heroDescription: "中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。",
+        saveSettings: "保存全局配置",
+        runFull: "手动执行完整监测",
+        refreshPanel: "刷新面板",
+        recentAlerts: "最近告警",
+        nodes: "节点",
+        nodesCaption: "一套拓扑，三个角色，底层模型可扩展",
+        topologyThresholdsSchedules: "拓扑、阈值与调度",
+        serviceEndpoints: "服务端点",
+        thresholdsDurations: "阈值与时长",
+        recentRuns: "最近运行",
+        openLatestReport: "打开最新报告",
+        cpuTrend24h: "CPU 趋势（24 小时）",
+        saveNode: "保存节点",
+        generatePairCommand: "生成配对命令",
+        nodeName: "节点名称",
+        runtime: "运行方式",
+        agentUrl: "Agent URL",
+        enabled: "启用",
+        paired: "已配对",
+        lastSeen: "最近上线",
+        push: "Push",
+        pull: "Pull",
+        pairCode: "配对码",
+        expires: "过期时间",
+        primary: "主命令",
+        fallback: "兜底命令",
+        notAvailable: "无",
+        findings: "发现项",
+        noSummary: "暂无摘要",
+        noRunsYet: "还没有运行记录。",
+        noAlerts: "暂无告警。",
+        everySeconds: "每 {seconds} 秒",
+        min: "最小",
+        max: "最大",
+        saveSettingsFailed: "保存全局配置失败",
+        saveSettingsOk: "全局配置已保存。",
+        saveNodeFailed: "保存节点失败",
+        saveNodeOk: "{role} 节点已保存。",
+        pairNodeNeedSave: "请先保存节点，再生成配对码。",
+        pairNodeFailed: "生成配对码失败",
+        pairNodeOk: "{role} 配对命令已生成。",
+        triggerRunFailed: "触发监测失败",
+        triggerRunOk: "监测任务 {runId} 已启动。",
+        field: {
+          relayProbeHost: "relay_probe 主机",
+          relayProbePort: "relay_probe 端口",
+          mcPublicHost: "mc_public 主机",
+          mcPublicPort: "mc_public 端口",
+          iperfPublicHost: "iperf_public 主机",
+          iperfPublicPort: "iperf_public 端口",
+          mcLocalHost: "mc_local 主机",
+          mcLocalPort: "mc_local 端口",
+          iperfLocalHost: "iperf_local 主机",
+          iperfLocalPort: "iperf_local 端口",
+          pingAvgMax: "Ping 平均延迟上限 ms",
+          pingJitterMax: "Ping 抖动上限 ms",
+          tcpAvgMax: "TCP 平均连接上限 ms",
+          tcpErrorMax: "TCP 错误率上限 %",
+          throughputUpMin: "上行吞吐下限 Mbps",
+          throughputDownMin: "下行吞吐下限 Mbps",
+          loadDeltaMax: "负载增量上限 ms",
+          systemCpuMax: "系统 CPU 上限 %",
+          throughputDurationSec: "吞吐持续时间 sec",
+          loadDurationSec: "负载持续时间 sec",
+          tcpAttempts: "TCP 尝试次数",
+          systemSampleSec: "系统采样 sec",
+        },
+        status: {
+          online: "在线",
+          "push-only": "仅 Push",
+          "heartbeat-degraded": "心跳降级",
+          offline: "离线",
+          unpaired: "未配对",
+          disabled: "已禁用",
+          running: "运行中",
+          completed: "已完成",
+          failed: "失败",
+          error: "错误",
+          warning: "警告",
+          info: "信息",
+          open: "未恢复",
+          active: "激活",
+          resolved: "已恢复",
+          accepted: "已接收",
+        },
+        bool: {
+          true: "是",
+          false: "否",
+        },
+        role: {
+          client: "客户端",
+          relay: "中继",
+          server: "服务端",
+        },
+        runtimeMode: {
+          "docker-linux": "Docker（Linux）",
+          "native-macos": "原生（macOS）",
+          "native-windows": "原生（Windows）",
+        },
+        runKind: {
+          system: "system",
+          baseline: "baseline",
+          capacity: "capacity",
+          full: "full",
+        },
+        alertKind: {
+          offline: "离线",
+          threshold: "阈值",
+          node_status: "节点状态",
+          run_failed: "运行失败",
+          "data-gap": "数据缺失",
+        },
+      },
+      "en-US": {
+        pageTitle: "mc-netprobe panel",
+        panelOnline: "Panel online",
+        language: "Language",
+        heroTitle: "mc-netprobe Agent Panel",
+        heroDescription: "The central monitoring panel handles node pairing, continuous scheduling, alerts, and historical trends. Nodes only run Agents, with no SSH injection and no system credentials stored in the panel.",
+        saveSettings: "Save Global Settings",
+        runFull: "Run Full Check",
+        refreshPanel: "Refresh Panel",
+        recentAlerts: "Recent Alerts",
+        nodes: "Nodes",
+        nodesCaption: "One topology, three roles, with room to extend the data model later.",
+        topologyThresholdsSchedules: "Topology, Thresholds & Schedules",
+        serviceEndpoints: "Service Endpoints",
+        thresholdsDurations: "Thresholds & Durations",
+        recentRuns: "Recent Runs",
+        openLatestReport: "Open Latest Report",
+        cpuTrend24h: "CPU Trend (24h)",
+        saveNode: "Save Node",
+        generatePairCommand: "Generate Pair Command",
+        nodeName: "Node Name",
+        runtime: "Runtime",
+        agentUrl: "Agent URL",
+        enabled: "Enabled",
+        paired: "Paired",
+        lastSeen: "Last Seen",
+        push: "Push",
+        pull: "Pull",
+        pairCode: "Pair Code",
+        expires: "Expires",
+        primary: "Primary",
+        fallback: "Fallback",
+        notAvailable: "n/a",
+        findings: "findings",
+        noSummary: "No summary",
+        noRunsYet: "No runs yet.",
+        noAlerts: "No alerts.",
+        everySeconds: "every {seconds}s",
+        min: "min",
+        max: "max",
+        saveSettingsFailed: "Failed to save settings",
+        saveSettingsOk: "Global settings saved.",
+        saveNodeFailed: "Failed to save node",
+        saveNodeOk: "{role} node saved.",
+        pairNodeNeedSave: "Save the node before generating a pair code.",
+        pairNodeFailed: "Failed to create pair code",
+        pairNodeOk: "{role} pair command generated.",
+        triggerRunFailed: "Failed to trigger run",
+        triggerRunOk: "Run {runId} started.",
+        field: {
+          relayProbeHost: "relay_probe host",
+          relayProbePort: "relay_probe port",
+          mcPublicHost: "mc_public host",
+          mcPublicPort: "mc_public port",
+          iperfPublicHost: "iperf_public host",
+          iperfPublicPort: "iperf_public port",
+          mcLocalHost: "mc_local host",
+          mcLocalPort: "mc_local port",
+          iperfLocalHost: "iperf_local host",
+          iperfLocalPort: "iperf_local port",
+          pingAvgMax: "Ping avg max ms",
+          pingJitterMax: "Ping jitter max ms",
+          tcpAvgMax: "TCP avg max ms",
+          tcpErrorMax: "TCP error max %",
+          throughputUpMin: "Throughput up min Mbps",
+          throughputDownMin: "Throughput down min Mbps",
+          loadDeltaMax: "Load delta max ms",
+          systemCpuMax: "System CPU max %",
+          throughputDurationSec: "Throughput duration sec",
+          loadDurationSec: "Load duration sec",
+          tcpAttempts: "TCP attempts",
+          systemSampleSec: "System sample sec",
+        },
+        status: {
+          online: "Online",
+          "push-only": "Push only",
+          "heartbeat-degraded": "Heartbeat degraded",
+          offline: "Offline",
+          unpaired: "Unpaired",
+          disabled: "Disabled",
+          running: "Running",
+          completed: "Completed",
+          failed: "Failed",
+          error: "Error",
+          warning: "Warning",
+          info: "Info",
+          open: "Open",
+          active: "Active",
+          resolved: "Resolved",
+          accepted: "Accepted",
+        },
+        bool: {
+          true: "yes",
+          false: "no",
+        },
+        role: {
+          client: "Client",
+          relay: "Relay",
+          server: "Server",
+        },
+        runtimeMode: {
+          "docker-linux": "Docker (Linux)",
+          "native-macos": "Native (macOS)",
+          "native-windows": "Native (Windows)",
+        },
+        runKind: {
+          system: "system",
+          baseline: "baseline",
+          capacity: "capacity",
+          full: "full",
+        },
+        alertKind: {
+          offline: "offline",
+          threshold: "threshold",
+          node_status: "node status",
+          run_failed: "run failed",
+          "data-gap": "data gap",
+        },
+      },
+    };
+    let currentLocale = detectLocale();
 
     function $(id) { return document.getElementById(id); }
+
+    function detectLocale() {
+      const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+      if (saved && translations[saved]) {
+        return saved;
+      }
+      return navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+    }
+
+    function lookupTranslation(locale, key) {
+      return key.split(".").reduce((value, segment) => (
+        value && typeof value === "object" ? value[segment] : undefined
+      ), translations[locale]);
+    }
+
+    function t(key, vars = {}) {
+      const template = lookupTranslation(currentLocale, key) ?? lookupTranslation("en-US", key) ?? key;
+      return String(template).replace(/\{(\w+)\}/g, (_, token) => String(vars[token] ?? `{${token}}`));
+    }
+
+    function translateStatus(status) {
+      return lookupTranslation(currentLocale, `status.${status}`) ?? lookupTranslation("en-US", `status.${status}`) ?? status;
+    }
+
+    function translateRole(role) {
+      return lookupTranslation(currentLocale, `role.${role}`) ?? lookupTranslation("en-US", `role.${role}`) ?? role;
+    }
+
+    function translateRuntime(mode) {
+      return lookupTranslation(currentLocale, `runtimeMode.${mode}`) ?? lookupTranslation("en-US", `runtimeMode.${mode}`) ?? mode;
+    }
+
+    function translateRunKind(kind) {
+      return lookupTranslation(currentLocale, `runKind.${kind}`) ?? lookupTranslation("en-US", `runKind.${kind}`) ?? kind;
+    }
+
+    function translateAlertKind(kind) {
+      return lookupTranslation(currentLocale, `alertKind.${kind}`) ?? lookupTranslation("en-US", `alertKind.${kind}`) ?? kind;
+    }
+
+    function translateBool(value) {
+      return t(`bool.${Boolean(value)}`);
+    }
+
+    function applyStaticTranslations() {
+      document.documentElement.lang = currentLocale;
+      document.title = t("pageTitle");
+      $("heroDescription").textContent = t("heroDescription");
+      $("nodesCaption").textContent = t("nodesCaption");
+      document.querySelectorAll("[data-i18n]").forEach((element) => {
+        element.textContent = t(element.dataset.i18n);
+      });
+    }
+
+    function setLocale(locale) {
+      if (!translations[locale]) {
+        return;
+      }
+      currentLocale = locale;
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+      $("localeSelect").value = locale;
+      applyStaticTranslations();
+      renderDashboard(currentState);
+    }
 
     function showMessage(kind, text) {
       const box = $("messageBox");
@@ -227,32 +559,32 @@
       const agentUrl = node ? (node.agent_url || "") : "";
       const enabled = node ? Boolean(node.enabled) : true;
       const paired = node ? Boolean(node.paired) : false;
-      const lastSeen = node && node.last_seen_at ? node.last_seen_at : "never";
+      const lastSeen = node && node.last_seen_at ? node.last_seen_at : t("notAvailable");
       return `
         <article class="node-card" data-role="${role}" data-node-id="${nodeId}">
           <div class="split">
-            <h3>${role.toUpperCase()}</h3>
-            <span class="node-pill ${status}">${status}</span>
+            <h3>${translateRole(role)}</h3>
+            <span class="node-pill ${status}">${translateStatus(status)}</span>
           </div>
           <div class="field-grid" style="margin-top:12px;">
-            <label>Node name<input data-field="node_name" type="text" value="${escapeHtml(name)}"></label>
-            <label>Runtime
+            <label>${t("nodeName")}<input data-field="node_name" type="text" value="${escapeHtml(name)}"></label>
+            <label>${t("runtime")}
               <select data-field="runtime_mode">
-                ${["docker-linux","native-macos","native-windows"].map((item) => `<option value="${item}" ${item === runtime ? "selected" : ""}>${item}</option>`).join("")}
+                ${["docker-linux","native-macos","native-windows"].map((item) => `<option value="${item}" ${item === runtime ? "selected" : ""}>${translateRuntime(item)}</option>`).join("")}
               </select>
             </label>
-            <label>Agent URL<input data-field="agent_url" type="text" value="${escapeHtml(agentUrl)}" placeholder="http://host:9870"></label>
-            <label class="check"><input data-field="enabled" type="checkbox" ${enabled ? "checked" : ""}>Enabled</label>
+            <label>${t("agentUrl")}<input data-field="agent_url" type="text" value="${escapeHtml(agentUrl)}" placeholder="http://host:9870"></label>
+            <label class="check"><input data-field="enabled" type="checkbox" ${enabled ? "checked" : ""}>${t("enabled")}</label>
           </div>
           <div class="metric-meta">
-            <span>paired: ${paired}</span>
-            <span>last seen: ${lastSeen}</span>
-            <span>push: ${node ? node.last_push_ok : false}</span>
-            <span>pull: ${node ? node.last_pull_ok : false}</span>
+            <span>${t("paired")}: ${translateBool(paired)}</span>
+            <span>${t("lastSeen")}: ${escapeHtml(lastSeen)}</span>
+            <span>${t("push")}: ${translateBool(node ? node.last_push_ok : false)}</span>
+            <span>${t("pull")}: ${translateBool(node ? node.last_pull_ok : false)}</span>
           </div>
           <div class="actions" style="margin-top:12px;">
-            <button class="primary" type="button" onclick="saveNode('${role}')">保存节点</button>
-            <button class="secondary" type="button" onclick="pairNode('${role}')" ${!nodeId ? "disabled" : ""}>生成配对命令</button>
+            <button class="primary" type="button" onclick="saveNode('${role}')">${t("saveNode")}</button>
+            <button class="secondary" type="button" onclick="pairNode('${role}')" ${!nodeId ? "disabled" : ""}>${t("generatePairCommand")}</button>
           </div>
           <div id="pair_${role}" class="command-box" style="display:none;"></div>
         </article>
@@ -299,7 +631,9 @@
       $("load_duration_sec").value = settings.scenarios.load_inflation.duration_sec;
       $("tcp_attempts").value = settings.scenarios.tcp.attempts;
       $("system_sample_sec").value = settings.scenarios.system.sample_interval_sec;
-      $("scheduleMeta").innerHTML = schedules.map((item) => `<span>${item.run_kind}: every ${item.interval_sec}s</span>`).join("");
+      $("scheduleMeta").innerHTML = schedules.map((item) => (
+        `<span>${translateRunKind(item.run_kind)}: ${t("everySeconds", { seconds: item.interval_sec })}</span>`
+      )).join("");
     }
 
     function collectSettings() {
@@ -367,10 +701,10 @@
       });
       const data = await response.json();
       if (!response.ok) {
-        showMessage("error", data.detail || data.error || "Failed to save settings");
+        showMessage("error", data.detail || data.error || t("saveSettingsFailed"));
         return;
       }
-      showMessage("ok", "Global settings saved.");
+      showMessage("ok", t("saveSettingsOk"));
       await refreshDashboard();
     }
 
@@ -392,10 +726,10 @@
       });
       const data = await response.json();
       if (!response.ok) {
-        showMessage("error", data.detail || data.error || "Failed to save node");
+        showMessage("error", data.detail || data.error || t("saveNodeFailed"));
         return;
       }
-      showMessage("ok", `${role} node saved.`);
+      showMessage("ok", t("saveNodeOk", { role: translateRole(role) }));
       await refreshDashboard();
     }
 
@@ -403,19 +737,19 @@
       const card = document.querySelector(`[data-role="${role}"]`);
       const nodeId = card.getAttribute("data-node-id");
       if (!nodeId) {
-        showMessage("warn", "Save the node before generating a pair code.");
+        showMessage("warn", t("pairNodeNeedSave"));
         return;
       }
       const response = await fetch(`/api/v1/nodes/${nodeId}/pair-code`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) {
-        showMessage("error", data.detail || data.error || "Failed to create pair code");
+        showMessage("error", data.detail || data.error || t("pairNodeFailed"));
         return;
       }
       const target = $(`pair_${role}`);
       target.style.display = "block";
-      target.textContent = `Pair code: ${data.pair_code}\nExpires: ${data.expires_at}\n\nPrimary:\n${data.startup_command}\n\nFallback:\n${data.fallback_command || "n/a"}`;
-      showMessage("ok", `${role} pair command generated.`);
+      target.textContent = `${t("pairCode")}: ${data.pair_code}\n${t("expires")}: ${data.expires_at}\n\n${t("primary")}:\n${data.startup_command}\n\n${t("fallback")}:\n${data.fallback_command || t("notAvailable")}`;
+      showMessage("ok", t("pairNodeOk", { role: translateRole(role) }));
     }
 
     async function runFull() {
@@ -426,10 +760,10 @@
       });
       const data = await response.json();
       if (!response.ok) {
-        showMessage("error", data.detail || data.error || "Failed to trigger run");
+        showMessage("error", data.detail || data.error || t("triggerRunFailed"));
         return;
       }
-      showMessage("ok", `Run ${data.run_id} started.`);
+      showMessage("ok", t("triggerRunOk", { runId: data.run_id }));
       await refreshDashboard();
     }
 
@@ -438,20 +772,20 @@
       target.innerHTML = runs.length ? runs.map((run) => `
         <article class="run-card">
           <div class="split">
-            <strong>${run.run_kind}</strong>
-            <span class="run-pill ${run.status}">${run.status}</span>
+            <strong>${translateRunKind(run.run_kind)}</strong>
+            <span class="run-pill ${run.status}">${translateStatus(run.status)}</span>
           </div>
           <div class="metric-meta">
             <span>${run.started_at}</span>
-            <span>findings: ${run.findings_count || 0}</span>
+            <span>${t("findings")}: ${run.findings_count || 0}</span>
           </div>
-          <p style="margin-top:10px;">${(run.error || (run.conclusion && run.conclusion[0]) || "No summary").toString()}</p>
+          <p style="margin-top:10px;">${escapeHtml((run.error || (run.conclusion && run.conclusion[0]) || t("noSummary")).toString())}</p>
           <div class="actions" style="margin-top:10px;">
             ${run.html_path ? `<a href="/${run.html_path}" target="_blank">report.html</a>` : ""}
             ${run.raw_path ? `<a href="/${run.raw_path}" target="_blank">raw.json</a>` : ""}
           </div>
         </article>
-      `).join("") : `<p class="muted">No runs yet.</p>`;
+      `).join("") : `<p class="muted">${t("noRunsYet")}</p>`;
 
       const latestCompleted = runs.find((item) => item.html_path);
       $("latestReportLink").href = latestCompleted ? `/${latestCompleted.html_path}` : "#";
@@ -462,13 +796,13 @@
       target.innerHTML = alerts.length ? alerts.map((alert) => `
         <article class="alert-card">
           <div class="split">
-            <strong>${alert.kind}</strong>
-            <span class="node-pill ${alert.severity === "error" ? "offline" : "push-only"}">${alert.severity}</span>
+            <strong>${translateAlertKind(alert.kind)}</strong>
+            <span class="node-pill ${alert.severity === "error" ? "offline" : "push-only"}">${translateStatus(alert.severity)}</span>
           </div>
           <p style="margin-top:8px;">${escapeHtml(alert.message)}</p>
-          <div class="metric-meta"><span>${alert.created_at}</span><span>${alert.status}</span></div>
+          <div class="metric-meta"><span>${alert.created_at}</span><span>${translateStatus(alert.status)}</span></div>
         </article>
-      `).join("") : `<p class="muted">No alerts.</p>`;
+      `).join("") : `<p class="muted">${t("noAlerts")}</p>`;
     }
 
     function renderTrend(samples) {
@@ -489,8 +823,8 @@
       svg.innerHTML = `
         <rect x="0" y="0" width="600" height="120" rx="14" fill="rgba(255,255,255,0.78)"></rect>
         <polyline fill="none" stroke="#285943" stroke-width="3" points="${points}"></polyline>
-        <text x="12" y="18" fill="#5e6b63" font-size="12">min ${min.toFixed(1)}%</text>
-        <text x="520" y="18" fill="#5e6b63" font-size="12">max ${max.toFixed(1)}%</text>
+        <text x="12" y="18" fill="#5e6b63" font-size="12">${t("min")} ${min.toFixed(1)}%</text>
+        <text x="520" y="18" fill="#5e6b63" font-size="12">${t("max")} ${max.toFixed(1)}%</text>
       `;
     }
 
@@ -517,8 +851,9 @@
     $("saveSettingsBtn").addEventListener("click", saveSettings);
     $("runFullBtn").addEventListener("click", runFull);
     $("refreshBtn").addEventListener("click", refreshDashboard);
+    $("localeSelect").addEventListener("change", (event) => setLocale(event.target.value));
 
-    renderDashboard(initialState);
+    setLocale(currentLocale);
     setInterval(refreshDashboard, 10000);
   </script>
 </body>
