@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mc-netprobe public board</title>
+  <title>mc-netprobe 公开网络看板</title>
   <style>
     :root {
       --bg: #eef2eb;
@@ -126,6 +126,15 @@
       text-align: center;
     }
     .locale-wrap, .toolbar-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .status-meta {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 13px;
+    }
     @media (max-width: 1200px) {
       .hero, .grid-two, .grid-four, .grid-role, .grid-path { grid-template-columns: 1fr; }
     }
@@ -136,36 +145,39 @@
     <section class="hero">
       <div class="panel">
         <div class="topline">
-          <div class="pill" data-i18n="boardBadge">Public network quality board</div>
+          <div class="pill" data-i18n="boardBadge">公开网络质量大盘</div>
           <div class="locale-wrap">
-            <label for="timeRangeSelect" data-i18n="timeRange">Time range</label>
+            <label for="timeRangeSelect" data-i18n="timeRange">时间范围</label>
             <select id="timeRangeSelect" aria-label="Time range">
               <option value="24h">24h</option>
               <option value="7d">7d</option>
               <option value="30d">30d</option>
             </select>
-            <label for="localeSelect" data-i18n="language">Language</label>
+            <label for="autoRefreshSelect" data-i18n="autoRefresh">自动刷新</label>
+            <select id="autoRefreshSelect" aria-label="Auto refresh"></select>
+            <label for="localeSelect" data-i18n="language">语言</label>
             <select id="localeSelect" aria-label="Language">
               <option value="zh-CN">中文</option>
               <option value="en-US">English</option>
             </select>
           </div>
         </div>
-        <h1 data-i18n="heroTitle">mc-netprobe Network Quality</h1>
+        <h1 data-i18n="heroTitle">mc-netprobe 网络质量总览</h1>
         <p data-i18n="heroDescription">
-          Public view for network quality, role-level health, recent anomalies, and monitoring trends. Internal addresses, credentials, and management controls stay behind admin login.
+          公开查看网络质量、角色健康、近期异常与监测趋势。内部地址、管理操作和敏感配置保持在管理员后台内。
         </p>
         <div class="toolbar" style="margin-top: 18px;">
           <div class="toolbar-group">
-            <a class="button primary" href="/admin" data-i18n="adminLogin">Admin Login</a>
-            <button class="button" type="button" id="refreshBtn" data-i18n="refreshBoard">Refresh Board</button>
+            <a class="button primary" href="/admin" data-i18n="adminLogin">管理员登录</a>
+            <button class="button" type="button" id="refreshBtn" data-i18n="refreshBoard">刷新看板</button>
           </div>
-          <a class="muted" id="latestReportLink" href="#" target="_blank" rel="noreferrer" data-i18n="openLatestReport">Open latest report</a>
+          <a class="muted" id="latestReportLink" href="#" target="_blank" rel="noreferrer" data-i18n="openLatestReport">打开最新报告</a>
         </div>
+        <div id="boardStatusMeta" class="status-meta"></div>
       </div>
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="topSummary">Executive Summary</h2>
+          <h2 data-i18n="topSummary">执行摘要</h2>
           <span class="muted" id="topologyName"></span>
         </div>
         <div id="kpiGrid" class="grid-four"></div>
@@ -174,35 +186,35 @@
 
     <section class="panel">
       <div class="section-head">
-        <h2 data-i18n="roleHealth">Role Health</h2>
-        <span class="muted" data-i18n="roleHealthHint">Public role-level visibility without exposing endpoints</span>
+        <h2 data-i18n="roleHealth">角色健康</h2>
+        <span class="muted" data-i18n="roleHealthHint">仅公开角色级状态，不暴露后端地址</span>
       </div>
       <div id="roleGrid" class="grid-role"></div>
     </section>
 
     <section class="panel">
       <div class="section-head">
-        <h2 data-i18n="pathSummary">Path Summary</h2>
-        <span class="muted" data-i18n="pathSummaryHint">Focused on latency, loss, jitter, throughput, and active alerts</span>
+        <h2 data-i18n="pathSummary">路径摘要</h2>
+        <span class="muted" data-i18n="pathSummaryHint">聚焦延迟、丢包、抖动、吞吐与活跃告警</span>
       </div>
       <div id="pathGrid" class="grid-path"></div>
     </section>
 
     <section class="grid-two">
       <div class="panel">
-        <h2 data-i18n="latencyTrend">Latency Trend</h2>
+        <h2 data-i18n="latencyTrend">延迟趋势</h2>
         <div id="latencyChart" class="chart"></div>
       </div>
       <div class="panel">
-        <h2 data-i18n="jitterTrend">Jitter Trend</h2>
+        <h2 data-i18n="jitterTrend">抖动趋势</h2>
         <div id="jitterChart" class="chart"></div>
       </div>
       <div class="panel">
-        <h2 data-i18n="lossTrend">Loss Trend</h2>
+        <h2 data-i18n="lossTrend">丢包趋势</h2>
         <div id="lossChart" class="chart"></div>
       </div>
       <div class="panel">
-        <h2 data-i18n="throughputTrend">Throughput Trend</h2>
+        <h2 data-i18n="throughputTrend">吞吐趋势</h2>
         <div id="throughputChart" class="chart"></div>
       </div>
     </section>
@@ -210,14 +222,14 @@
     <section class="grid-two">
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="recentAnomalies">Recent Anomalies</h2>
-          <span class="muted" data-i18n="recentAnomaliesHint">Threshold and anomaly events only</span>
+          <h2 data-i18n="recentAnomalies">最近异常</h2>
+          <span class="muted" data-i18n="recentAnomaliesHint">仅展示阈值和离群事件</span>
         </div>
         <div id="alertsList" class="list"></div>
       </div>
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="recentRuns">Recent Runs</h2>
+          <h2 data-i18n="recentRuns">最近运行</h2>
           <span class="muted" id="lastUpdated"></span>
         </div>
         <div id="runsList" class="list"></div>

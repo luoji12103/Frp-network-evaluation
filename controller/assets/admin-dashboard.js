@@ -1,5 +1,8 @@
 (function () {
-  const LOCALE_STORAGE_KEY = "mc-netprobe-locale";
+  const ADMIN_LOCALE_STORAGE_KEY = "mc-netprobe-admin-locale";
+  const ADMIN_REFRESH_STORAGE_KEY = "mc-netprobe-admin-refresh-sec";
+  const ADMIN_FILTERS_STORAGE_KEY = "mc-netprobe-admin-filters";
+  const ADMIN_TAB_STORAGE_KEY = "mc-netprobe-admin-tab";
   const DEFAULT_TIME_RANGES = ["1h", "6h", "24h", "7d", "30d"];
   const FIXED_ROLES = ["client", "relay", "server"];
   const ROLE_RUNTIME = {
@@ -39,6 +42,14 @@
       pageTitle: "mc-netprobe 企业级网络面板",
       panelOnline: "面板在线",
       language: "语言",
+      autoRefresh: "自动刷新",
+      refreshOff: "关闭",
+      refresh15: "15 秒",
+      refresh30: "30 秒",
+      refresh60: "60 秒",
+      refreshStatusReady: "面板已就绪",
+      refreshStatusOk: "已刷新",
+      refreshStatusError: "刷新失败",
       heroTitle: "mc-netprobe 企业级网络面板",
       heroDescription: "常驻 Panel 负责角色化网络质量监控、异常检测、趋势分析、告警处理和节点管理，全程不保存 SSH 凭据。",
       publicView: "公开页面",
@@ -62,6 +73,10 @@
       onlyAnomalies: "仅异常",
       includeResolved: "包含已恢复",
       pathFocus: "路径聚焦",
+      filterSummaryReady: "筛选摘要",
+      all: "全部",
+      booleanTrue: "是",
+      booleanFalse: "否",
       tabOverview: "总览",
       tabPathExplorer: "路径分析",
       tabMetricExplorer: "指标分析",
@@ -135,6 +150,11 @@
       sourceNode: "来源节点",
       saveNode: "保存节点",
       generatePairCommand: "生成配对命令",
+      signalOk: "正常",
+      signalFail: "失败",
+      silenceHoursPrompt: "静默小时数",
+      silenceReasonPrompt: "静默原因",
+      defaultMaintenanceReason: "维护窗口",
       runtimeMode: "运行方式",
       nodeName: "节点名称",
       agentUrl: "Agent URL",
@@ -171,6 +191,12 @@
         systemSampleSec: "系统采样 sec",
       },
       role: { client: "客户端", relay: "中继", server: "服务端" },
+      runKindValue: {
+        system: "系统",
+        baseline: "基线",
+        capacity: "容量",
+        full: "完整",
+      },
       runtime: {
         "docker-linux": "Docker Linux",
         "native-macos": "原生 macOS",
@@ -208,6 +234,14 @@
       pageTitle: "mc-netprobe enterprise panel",
       panelOnline: "Panel online",
       language: "Language",
+      autoRefresh: "Auto refresh",
+      refreshOff: "Off",
+      refresh15: "15 sec",
+      refresh30: "30 sec",
+      refresh60: "60 sec",
+      refreshStatusReady: "Panel ready",
+      refreshStatusOk: "Refreshed",
+      refreshStatusError: "Refresh failed",
       heroTitle: "mc-netprobe Enterprise Network Panel",
       heroDescription: "Persistent panel for role-aware network quality monitoring, anomaly detection, historical analysis, alert handling, and node management without SSH credential storage.",
       publicView: "Public View",
@@ -231,6 +265,10 @@
       onlyAnomalies: "Only anomalies",
       includeResolved: "Include resolved",
       pathFocus: "Path focus",
+      filterSummaryReady: "Filter summary",
+      all: "All",
+      booleanTrue: "Yes",
+      booleanFalse: "No",
       tabOverview: "Overview",
       tabPathExplorer: "Path Explorer",
       tabMetricExplorer: "Metric Explorer",
@@ -304,6 +342,11 @@
       sourceNode: "Source node",
       saveNode: "Save Node",
       generatePairCommand: "Generate Pair Command",
+      signalOk: "OK",
+      signalFail: "FAIL",
+      silenceHoursPrompt: "Silence hours",
+      silenceReasonPrompt: "Silence reason",
+      defaultMaintenanceReason: "maintenance",
       runtimeMode: "Runtime Mode",
       nodeName: "Node Name",
       agentUrl: "Agent URL",
@@ -340,6 +383,12 @@
         systemSampleSec: "System sample sec",
       },
       role: { client: "Client", relay: "Relay", server: "Server" },
+      runKindValue: {
+        system: "System",
+        baseline: "Baseline",
+        capacity: "Capacity",
+        full: "Full",
+      },
       runtime: {
         "docker-linux": "Docker Linux",
         "native-macos": "Native macOS",
@@ -378,6 +427,7 @@
   const state = {
     snapshot: window.__INITIAL_STATE__ || {},
     locale: loadLocale(),
+    refreshSec: loadRefreshSec(),
     filtersMeta: null,
     overview: null,
     pathHealth: null,
@@ -387,9 +437,12 @@
     selectedRun: null,
     activeTab: "overview",
     pairCommands: { primary: "", fallback: "" },
+    lastRefreshAt: null,
+    lastError: "",
   };
 
   const charts = {};
+  let refreshTimer = null;
 
   document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
@@ -397,19 +450,30 @@
     hydrateManagement();
     renderHeadlineAlerts();
     await initializeFilters();
+    restoreViewState();
+    setupAutoRefresh();
     await refreshAll();
+    renderPanelStatusMeta();
   });
 
   function bindEvents() {
+    populateRefreshOptions();
     document.getElementById("localeSelect").value = state.locale;
+    document.getElementById("autoRefreshSelect").value = String(state.refreshSec);
     document.getElementById("localeSelect").addEventListener("change", async (event) => {
       state.locale = event.target.value;
-      localStorage.setItem(LOCALE_STORAGE_KEY, state.locale);
+      safeStorageSet(ADMIN_LOCALE_STORAGE_KEY, state.locale);
       applyLocale();
       rebuildFilterOptions();
       hydrateManagement();
       renderHeadlineAlerts();
       renderAllAnalytics();
+    });
+    document.getElementById("autoRefreshSelect").addEventListener("change", (event) => {
+      state.refreshSec = Number(event.target.value || 0);
+      safeStorageSet(ADMIN_REFRESH_STORAGE_KEY, String(state.refreshSec));
+      setupAutoRefresh();
+      renderPanelStatusMeta();
     });
     document.getElementById("refreshBtn").addEventListener("click", async () => {
       await refreshSnapshot();
@@ -492,6 +556,51 @@
     populateSingleSelect("filter-only-anomalies", ["false", "true"], "false");
     populateSingleSelect("filter-include-resolved", ["false", "true"], "false");
     populateSingleSelect("path-focus-select", ["", ...(state.filtersMeta?.paths || [])], "");
+  }
+
+  function restoreViewState() {
+    const savedFilters = loadSavedFilters();
+    if (savedFilters) {
+      setSelectedValue("filter-time-range", savedFilters.timeRange || "24h");
+      setSelectedValues("filter-roles", savedFilters.roles || []);
+      setSelectedValues("filter-nodes", savedFilters.nodes || []);
+      setSelectedValues("filter-paths", savedFilters.paths || []);
+      setSelectedValues("filter-probes", savedFilters.probes || []);
+      setSelectedValue("filter-metric", savedFilters.metric || "rtt_avg_ms");
+      setSelectedValues("filter-run-kinds", savedFilters.runKinds || []);
+      setSelectedValues("filter-severities", savedFilters.severities || []);
+      setSelectedValues("filter-alert-statuses", savedFilters.alertStatuses || ["open", "acknowledged"]);
+      setSelectedValue("filter-only-anomalies", String(Boolean(savedFilters.onlyAnomalies)));
+      setSelectedValue("filter-include-resolved", String(Boolean(savedFilters.includeResolved)));
+      setSelectedValue("path-focus-select", savedFilters.pathFocus || "");
+    }
+    const savedTab = safeStorageGet(ADMIN_TAB_STORAGE_KEY);
+    if (savedTab && document.querySelector(`[data-tab="${savedTab}"]`)) {
+      setActiveTab(savedTab);
+    }
+  }
+
+  function populateRefreshOptions() {
+    document.getElementById("autoRefreshSelect").innerHTML = [
+      { value: 0, label: t("refreshOff") },
+      { value: 15, label: t("refresh15") },
+      { value: 30, label: t("refresh30") },
+      { value: 60, label: t("refresh60") },
+    ].map((item) => `<option value="${item.value}" ${Number(item.value) === state.refreshSec ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+  }
+
+  function setupAutoRefresh() {
+    if (refreshTimer) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    if (state.refreshSec > 0) {
+      refreshTimer = window.setInterval(() => {
+        refreshSnapshot()
+          .then(refreshAll)
+          .catch(() => undefined);
+      }, state.refreshSec * 1000);
+    }
   }
 
   function populateSingleSelect(id, options, selected) {
@@ -598,10 +707,27 @@
       state.metricSeries = metricSeries;
       state.alerts = alerts;
       state.runs = runs;
+      state.lastRefreshAt = new Date().toISOString();
+      state.lastError = "";
+      saveCurrentFilters();
       renderAllAnalytics();
+      renderPanelStatusMeta();
     } catch (error) {
+      state.lastError = error.message || String(error);
+      renderPanelStatusMeta();
       showMessage(error.message || String(error), "error");
     }
+  }
+
+  function renderPanelStatusMeta() {
+    const target = document.getElementById("panelStatusMeta");
+    const refreshLabel = state.refreshSec > 0 ? `${state.refreshSec}s` : t("refreshOff");
+    const base = state.lastRefreshAt
+      ? `${t("refreshStatusOk")} · ${formatTimestamp(state.lastRefreshAt)}`
+      : t("refreshStatusReady");
+    target.textContent = state.lastError
+      ? `${t("refreshStatusError")}: ${state.lastError} · ${t("autoRefresh")}: ${refreshLabel}`
+      : `${base} · ${t("autoRefresh")}: ${refreshLabel}`;
   }
 
   function renderAllAnalytics() {
@@ -610,6 +736,7 @@
     renderMetricExplorer();
     renderAlerts();
     renderRuns();
+    renderFiltersSummary();
   }
 
   function renderHeadlineAlerts() {
@@ -780,7 +907,7 @@
     body.innerHTML = items.map((run) => `
       <tr>
         <td>${escapeHtml(run.run_id)}</td>
-        <td>${escapeHtml(run.run_kind)}</td>
+        <td>${escapeHtml(runKindLabel(run.run_kind || ""))}</td>
         <td><span class="status-pill ${escapeHtml(run.status || "")}">${escapeHtml(statusLabel(run.status || ""))}</span></td>
         <td>${escapeHtml(formatTimestamp(run.started_at))}</td>
         <td>${run.findings_count || 0}</td>
@@ -808,6 +935,7 @@
           <span class="status-pill ${escapeHtml(payload.status || "")}">${escapeHtml(statusLabel(payload.status || ""))}</span>
         </div>
         <div class="muted">${escapeHtml(formatTimestamp(payload.started_at))}</div>
+        <div class="muted">${escapeHtml(t("runKind"))}: ${escapeHtml(runKindLabel(payload.run_kind || ""))}</div>
         <div class="muted">${escapeHtml(t("findings"))}: ${findings.length}</div>
         <div class="muted">${links.join(" | ") || escapeHtml(t("noData"))}</div>
       </div>
@@ -866,7 +994,7 @@
   function renderScheduleMeta() {
     const schedules = state.snapshot?.schedules || [];
     document.getElementById("scheduleMeta").innerHTML = schedules.map((item) => `
-      <span>${escapeHtml(item.run_kind)}: ${escapeHtml(String(item.interval_sec))}s</span>
+      <span>${escapeHtml(runKindLabel(item.run_kind || ""))}: ${escapeHtml(String(item.interval_sec))}s</span>
     `).join(" | ");
   }
 
@@ -886,8 +1014,8 @@
             ${Object.keys(translations[state.locale].runtime).map((mode) => `<option value="${escapeHtml(mode)}" ${((node.runtime_mode || ROLE_RUNTIME[role]) === mode) ? "selected" : ""}>${escapeHtml(runtimeLabel(mode))}</option>`).join("")}
           </select></label>
           <label><span>${escapeHtml(t("agentUrl"))}</span><input data-field="agent_url" type="text" value="${escapeHtml(node.agent_url || "")}"></label>
-          <label><span>${escapeHtml(t("enabled"))}</span><select data-field="enabled"><option value="true" ${node.enabled !== false ? "selected" : ""}>true</option><option value="false" ${node.enabled === false ? "selected" : ""}>false</option></select></label>
-          <div class="muted">${escapeHtml(t("paired"))}: ${node.paired ? "true" : "false"}</div>
+          <label><span>${escapeHtml(t("enabled"))}</span><select data-field="enabled"><option value="true" ${node.enabled !== false ? "selected" : ""}>${escapeHtml(booleanLabel(true))}</option><option value="false" ${node.enabled === false ? "selected" : ""}>${escapeHtml(booleanLabel(false))}</option></select></label>
+          <div class="muted">${escapeHtml(t("paired"))}: ${escapeHtml(booleanLabel(Boolean(node.paired)))}</div>
           <div class="muted">${escapeHtml(t("lastSeen"))}: ${escapeHtml(formatTimestamp(node.last_seen_at))}</div>
           <div class="node-actions">
             <button type="button" data-action="save-node" class="primary">${escapeHtml(t("saveNode"))}</button>
@@ -991,7 +1119,7 @@
   }
 
   async function silenceAlert(alertId) {
-    const hoursText = window.prompt("Silence hours / 静默小时", "24");
+    const hoursText = window.prompt(t("silenceHoursPrompt"), "24");
     if (!hoursText) {
       return;
     }
@@ -999,7 +1127,7 @@
     if (!Number.isFinite(hours) || hours <= 0) {
       return;
     }
-    const reason = window.prompt("Reason / 原因", "maintenance");
+    const reason = window.prompt(t("silenceReasonPrompt"), t("defaultMaintenanceReason"));
     const silencedUntil = new Date(Date.now() + hours * 3600 * 1000).toISOString();
     try {
       await fetchJson(`/api/v1/admin/alerts/${alertId}/silence`, {
@@ -1025,6 +1153,25 @@
     const payload = await fetchJson(`/api/v1/admin/alerts?${query.toString()}`);
     const lines = (payload.items || []).slice(0, 8).map((item) => `${formatTimestamp(item.created_at)} | ${kindLabel(item.kind)} | ${item.message}`);
     showMessage(`${t("alertHistoryTitle")}\n${lines.join("\n")}`, "warn");
+  }
+
+  function renderFiltersSummary() {
+    const target = document.getElementById("filtersSummary");
+    if (!target) {
+      return;
+    }
+    const filters = readFilters();
+    const parts = [
+      `${t("timeRange")}: ${filters.timeRange || "24h"}`,
+      `${t("roles")}: ${formatFilterCount(filters.roles)}`,
+      `${t("nodes")}: ${formatFilterCount(filters.nodes)}`,
+      `${t("paths")}: ${formatFilterCount(filters.paths)}`,
+      `${t("probes")}: ${formatFilterCount(filters.probes)}`,
+      `${t("metric")}: ${metricLabel(filters.metric || "")}`,
+      `${t("tabAlerts")}: ${(state.alerts?.items || []).length}`,
+      `${t("tabRuns")}: ${(state.runs?.items || []).length}`,
+    ];
+    target.textContent = parts.join(" · ") || t("filterSummaryReady");
   }
 
   function renderPieChart(elementId, distribution) {
@@ -1144,10 +1291,12 @@
     populateSingleSelect("filter-only-anomalies", ["false", "true"], "false");
     populateSingleSelect("filter-include-resolved", ["false", "true"], "false");
     populateSingleSelect("path-focus-select", ["", ...(state.filtersMeta?.paths || [])], "");
+    saveCurrentFilters();
   }
 
   function setActiveTab(tabName) {
     state.activeTab = tabName;
+    safeStorageSet(ADMIN_TAB_STORAGE_KEY, tabName);
     document.querySelectorAll(".tab-button").forEach((button) => {
       button.classList.toggle("active", button.dataset.tab === tabName);
     });
@@ -1160,9 +1309,12 @@
   function applyLocale() {
     document.documentElement.lang = state.locale;
     document.title = t("pageTitle");
+    populateRefreshOptions();
     document.querySelectorAll("[data-i18n]").forEach((node) => {
       node.textContent = t(node.dataset.i18n);
     });
+    renderPanelStatusMeta();
+    renderFiltersSummary();
   }
 
   async function fetchJson(url, options = {}) {
@@ -1217,6 +1369,20 @@
     return document.getElementById(id).value;
   }
 
+  function setSelectedValue(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+      element.value = value ?? "";
+    }
+  }
+
+  function setSelectedValues(id, values) {
+    const wanted = new Set(values || []);
+    Array.from(document.getElementById(id).options || []).forEach((option) => {
+      option.selected = wanted.has(option.value);
+    });
+  }
+
   function setValue(id, value) {
     const element = document.getElementById(id);
     if (element) {
@@ -1251,9 +1417,13 @@
     if (value === "") {
       return t("allPaths");
     }
+    if (value === "true" || value === "false") {
+      return booleanLabel(value === "true");
+    }
     return pathLabel(value) !== value ? pathLabel(value)
       : runtimeLabel(value) !== value ? runtimeLabel(value)
       : roleLabel(value) !== value ? roleLabel(value)
+      : runKindLabel(value) !== value ? runKindLabel(value)
       : metricLabel(value) !== value ? metricLabel(value)
       : severityLabel(value) !== value ? severityLabel(value)
       : statusLabel(value) !== value ? statusLabel(value)
@@ -1266,6 +1436,10 @@
 
   function runtimeLabel(mode) {
     return translations[state.locale].runtime[mode] || mode;
+  }
+
+  function runKindLabel(runKind) {
+    return translations[state.locale].runKindValue[runKind] || runKind;
   }
 
   function severityLabel(level) {
@@ -1286,6 +1460,14 @@
 
   function metricLabel(metric) {
     return METRIC_LABELS[metric]?.[state.locale] || metric || t("noData");
+  }
+
+  function booleanLabel(value) {
+    return value ? t("booleanTrue") : t("booleanFalse");
+  }
+
+  function signalLabel(value) {
+    return value ? t("signalOk") : t("signalFail");
   }
 
   function kpiLabel(key) {
@@ -1365,8 +1547,67 @@
   }
 
   function loadLocale() {
-    const value = localStorage.getItem(LOCALE_STORAGE_KEY);
-    return translations[value] ? value : "zh-CN";
+    const value = safeStorageGet(ADMIN_LOCALE_STORAGE_KEY);
+    if (translations[value]) {
+      return value;
+    }
+    return detectBrowserLocale();
+  }
+
+  function loadRefreshSec() {
+    const value = Number(safeStorageGet(ADMIN_REFRESH_STORAGE_KEY) || 30);
+    return Number.isFinite(value) && [0, 15, 30, 60].includes(value) ? value : 30;
+  }
+
+  function loadSavedFilters() {
+    try {
+      const raw = safeStorageGet(ADMIN_FILTERS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveCurrentFilters() {
+    safeStorageSet(ADMIN_FILTERS_STORAGE_KEY, JSON.stringify({
+      timeRange: selectedValue("filter-time-range"),
+      roles: selectedValues("filter-roles"),
+      nodes: selectedValues("filter-nodes"),
+      paths: selectedValues("filter-paths"),
+      probes: selectedValues("filter-probes"),
+      metric: selectedValue("filter-metric"),
+      runKinds: selectedValues("filter-run-kinds"),
+      severities: selectedValues("filter-severities"),
+      alertStatuses: selectedValues("filter-alert-statuses"),
+      onlyAnomalies: selectedValue("filter-only-anomalies") === "true",
+      includeResolved: selectedValue("filter-include-resolved") === "true",
+      pathFocus: selectedValue("path-focus-select"),
+    }));
+  }
+
+  function detectBrowserLocale() {
+    const languages = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : [navigator.language || ""];
+    return languages.some((value) => String(value).toLowerCase().startsWith("zh")) ? "zh-CN" : "en-US";
+  }
+
+  function safeStorageGet(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function safeStorageSet(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (error) {
+      return;
+    }
+  }
+
+  function formatFilterCount(values) {
+    return values && values.length ? String(values.length) : t("all");
   }
 
   function escapeHtml(value) {

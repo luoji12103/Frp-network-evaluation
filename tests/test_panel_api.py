@@ -130,8 +130,11 @@ def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None
         response = client.get("/")
         assert response.status_code == 200
         body = response.text
+        assert '<html lang="zh-CN">' in body
         assert 'id="localeSelect"' in body
-        assert "Admin Login" in body
+        assert 'id="autoRefreshSelect"' in body
+        assert "管理员登录" in body
+        assert "公开网络质量大盘" in body
         assert "/assets/public-dashboard.js" in body
 
 
@@ -151,7 +154,10 @@ def test_admin_login_allows_dashboard_access(tmp_path: Path) -> None:
         login_admin(client)
         page = client.get("/admin")
         assert page.status_code == 200
-        assert "Save Global Settings" in page.text
+        assert '<html lang="zh-CN">' in page.text
+        assert "保存全局配置" in page.text
+        assert 'id="autoRefreshSelect"' in page.text
+        assert 'id="filtersSummary"' in page.text
         assert "/assets/admin-dashboard.js" in page.text
 
         api = client.get("/api/v1/dashboard")

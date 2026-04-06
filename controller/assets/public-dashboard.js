@@ -1,12 +1,18 @@
 (function () {
+  const PUBLIC_LOCALE_STORAGE_KEY = "mc-netprobe-public-locale";
+  const PUBLIC_TIME_RANGE_STORAGE_KEY = "mc-netprobe-public-time-range";
+  const PUBLIC_REFRESH_STORAGE_KEY = "mc-netprobe-public-refresh-sec";
   const state = {
     data: window.__INITIAL_STATE__ || {},
     locale: loadLocale(),
-    timeRange: inferTimeRange(window.__INITIAL_STATE__),
+    timeRange: loadTimeRange(),
+    refreshSec: loadRefreshSec(),
+    lastRefreshAt: null,
+    lastError: "",
   };
 
   const charts = {};
-  const LOCALE_STORAGE_KEY = "mc-netprobe-locale";
+  let refreshTimer = null;
   const translations = {
     "zh-CN": {
       pageTitle: "mc-netprobe 公开网络看板",
@@ -38,6 +44,8 @@
       findings: "发现项",
       push: "Push",
       pull: "Pull",
+      signalOk: "正常",
+      signalFail: "失败",
       noData: "暂无数据",
       noAlerts: "暂无异常事件。",
       noRuns: "暂无运行记录。",
@@ -50,7 +58,21 @@
       lastSeen: "最近上线",
       reportUnavailable: "暂无报告",
       updatedAt: "更新时间",
+      autoRefresh: "自动刷新",
+      refreshOff: "关闭",
+      refresh15: "15 秒",
+      refresh30: "30 秒",
+      refresh60: "60 秒",
+      refreshStatusReady: "页面已就绪",
+      refreshStatusOk: "已刷新",
+      refreshStatusError: "刷新失败",
       kpiUnitPct: "%",
+      runKind: {
+        system: "系统",
+        baseline: "基线",
+        capacity: "容量",
+        full: "完整",
+      },
       role: { client: "客户端", relay: "中继", server: "服务端" },
       status: {
         online: "在线",
@@ -105,6 +127,8 @@
       findings: "Findings",
       push: "Push",
       pull: "Pull",
+      signalOk: "OK",
+      signalFail: "FAIL",
       noData: "No data yet",
       noAlerts: "No recent anomaly events.",
       noRuns: "No runs yet.",
@@ -117,7 +141,21 @@
       lastSeen: "Last seen",
       reportUnavailable: "No report",
       updatedAt: "Updated",
+      autoRefresh: "Auto refresh",
+      refreshOff: "Off",
+      refresh15: "15 sec",
+      refresh30: "30 sec",
+      refresh60: "60 sec",
+      refreshStatusReady: "Ready",
+      refreshStatusOk: "Refreshed",
+      refreshStatusError: "Refresh failed",
       kpiUnitPct: "%",
+      runKind: {
+        system: "System",
+        baseline: "Baseline",
+        capacity: "Capacity",
+        full: "Full",
+      },
       role: { client: "Client", relay: "Relay", server: "Server" },
       status: {
         online: "Online",
@@ -170,24 +208,60 @@
   document.addEventListener("DOMContentLoaded", () => {
     bindEvents();
     applyLocale();
+    restoreControls();
+    setupAutoRefresh();
     render();
+    renderStatusMeta();
   });
 
   function bindEvents() {
-    document.getElementById("localeSelect").value = state.locale;
-    document.getElementById("timeRangeSelect").value = state.timeRange;
     document.getElementById("localeSelect").addEventListener("change", (event) => {
       state.locale = event.target.value;
-      localStorage.setItem(LOCALE_STORAGE_KEY, state.locale);
+      safeStorageSet(PUBLIC_LOCALE_STORAGE_KEY, state.locale);
       applyLocale();
       render();
     });
     document.getElementById("timeRangeSelect").addEventListener("change", async (event) => {
       state.timeRange = event.target.value;
+      safeStorageSet(PUBLIC_TIME_RANGE_STORAGE_KEY, state.timeRange);
       await refreshData();
+    });
+    document.getElementById("autoRefreshSelect").addEventListener("change", (event) => {
+      state.refreshSec = Number(event.target.value || 0);
+      safeStorageSet(PUBLIC_REFRESH_STORAGE_KEY, String(state.refreshSec));
+      setupAutoRefresh();
+      renderStatusMeta();
     });
     document.getElementById("refreshBtn").addEventListener("click", refreshData);
     window.addEventListener("resize", () => Object.values(charts).forEach((chart) => chart.resize()));
+  }
+
+  function restoreControls() {
+    populateRefreshOptions();
+    document.getElementById("localeSelect").value = state.locale;
+    document.getElementById("timeRangeSelect").value = state.timeRange;
+    document.getElementById("autoRefreshSelect").value = String(state.refreshSec);
+  }
+
+  function populateRefreshOptions() {
+    document.getElementById("autoRefreshSelect").innerHTML = [
+      { value: 0, label: t("refreshOff") },
+      { value: 15, label: t("refresh15") },
+      { value: 30, label: t("refresh30") },
+      { value: 60, label: t("refresh60") },
+    ].map((item) => `<option value="${item.value}" ${Number(item.value) === state.refreshSec ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+  }
+
+  function setupAutoRefresh() {
+    if (refreshTimer) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    if (state.refreshSec > 0) {
+      refreshTimer = window.setInterval(() => {
+        refreshData().catch(() => undefined);
+      }, state.refreshSec * 1000);
+    }
   }
 
   async function refreshData() {
@@ -195,18 +269,24 @@
       credentials: "same-origin",
     });
     if (!response.ok) {
+      state.lastError = `${t("refreshStatusError")}: ${response.status}`;
+      renderStatusMeta();
       return;
     }
     state.data = await response.json();
+    state.lastRefreshAt = new Date().toISOString();
+    state.lastError = "";
     render();
   }
 
   function applyLocale() {
     document.documentElement.lang = state.locale;
     document.title = t("pageTitle");
+    populateRefreshOptions();
     document.querySelectorAll("[data-i18n]").forEach((node) => {
       node.textContent = t(node.dataset.i18n);
     });
+    renderStatusMeta();
   }
 
   function render() {
@@ -219,6 +299,17 @@
     renderAlerts();
     renderRuns();
     renderCharts();
+    renderStatusMeta();
+  }
+
+  function renderStatusMeta() {
+    const status = document.getElementById("boardStatusMeta");
+    const refreshLabel = state.refreshSec > 0 ? `${state.refreshSec}s` : t("refreshOff");
+    const base = state.lastRefreshAt
+      ? `${t("refreshStatusOk")} · ${t("updatedAt")}: ${formatTimestamp(state.lastRefreshAt)}`
+      : t("refreshStatusReady");
+    const suffix = `${t("timeRange")}: ${state.timeRange} · ${t("autoRefresh")}: ${refreshLabel}`;
+    status.textContent = state.lastError ? `${state.lastError} · ${suffix}` : `${base} · ${suffix}`;
   }
 
   function renderLatestReport() {
@@ -272,7 +363,7 @@
           </div>
           <div class="metric-meta">${escapeHtml(node.node_name)}</div>
           <div class="metric-meta">${escapeHtml(t("lastSeen"))}: ${escapeHtml(formatTimestamp(node.last_seen_at))}</div>
-          <div class="metric-meta">${escapeHtml(t("push"))}: ${node.last_push_ok ? "OK" : "FAIL"} | ${escapeHtml(t("pull"))}: ${node.last_pull_ok ? "OK" : "FAIL"}</div>
+          <div class="metric-meta">${escapeHtml(t("push"))}: ${escapeHtml(signalLabel(node.last_push_ok))} | ${escapeHtml(t("pull"))}: ${escapeHtml(signalLabel(node.last_pull_ok))}</div>
         </div>
       `;
     }).join("");
@@ -328,7 +419,7 @@
     root.innerHTML = runs.slice(0, 8).map((run) => `
       <div class="list-item">
         <div class="section-head">
-          <strong>${escapeHtml(run.run_kind || "")}</strong>
+          <strong>${escapeHtml(runKindLabel(run.run_kind || ""))}</strong>
           <span class="status-pill ${escapeHtml(run.status || "")}">${escapeHtml(statusLabel(run.status || ""))}</span>
         </div>
         <div class="metric-meta">${escapeHtml(formatTimestamp(run.started_at))}</div>
@@ -361,7 +452,7 @@
       xAxis: { type: "time" },
       yAxis: { type: "value" },
       series: seriesItems.map((series) => ({
-        name: series.name,
+        name: pathLabel(series.path_label || series.name),
         type: "line",
         showSymbol: false,
         smooth: false,
@@ -417,12 +508,20 @@
     return translations[state.locale].role[role] || role;
   }
 
+  function runKindLabel(runKind) {
+    return translations[state.locale].runKind[runKind] || runKind;
+  }
+
   function statusLabel(status) {
     return translations[state.locale].status[status] || status || t("noData");
   }
 
   function kindLabel(kind) {
     return translations[state.locale].kind[kind] || kind || t("noData");
+  }
+
+  function signalLabel(value) {
+    return value ? t("signalOk") : t("signalFail");
   }
 
   function inferTimeRange(payload) {
@@ -437,8 +536,42 @@
   }
 
   function loadLocale() {
-    const value = localStorage.getItem(LOCALE_STORAGE_KEY);
-    return translations[value] ? value : "zh-CN";
+    const value = safeStorageGet(PUBLIC_LOCALE_STORAGE_KEY);
+    if (translations[value]) {
+      return value;
+    }
+    return detectBrowserLocale();
+  }
+
+  function loadRefreshSec() {
+    const value = Number(safeStorageGet(PUBLIC_REFRESH_STORAGE_KEY) || 30);
+    return Number.isFinite(value) && [0, 15, 30, 60].includes(value) ? value : 30;
+  }
+
+  function loadTimeRange() {
+    const value = safeStorageGet(PUBLIC_TIME_RANGE_STORAGE_KEY);
+    return ["24h", "7d", "30d"].includes(value || "") ? value : inferTimeRange(window.__INITIAL_STATE__);
+  }
+
+  function detectBrowserLocale() {
+    const languages = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : [navigator.language || ""];
+    return languages.some((value) => String(value).toLowerCase().startsWith("zh")) ? "zh-CN" : "en-US";
+  }
+
+  function safeStorageGet(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function safeStorageSet(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (error) {
+      return;
+    }
   }
 
   function formatNumber(value, suffix) {
