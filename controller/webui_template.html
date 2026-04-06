@@ -7,16 +7,16 @@
   <style>
     :root {
       --bg: #edf1ea;
-      --ink: #1f2b24;
-      --muted: #5e6b63;
-      --card: rgba(255, 255, 255, 0.88);
-      --line: #c9d3cb;
-      --accent: #285943;
-      --accent-soft: #dce9e1;
-      --warn: #935c15;
-      --danger: #8e2e26;
-      --ok: #24623f;
-      --shadow: 0 18px 40px rgba(28, 42, 33, 0.09);
+      --ink: #18231d;
+      --muted: #5d6b62;
+      --card: rgba(255, 255, 255, 0.9);
+      --line: #c8d2cb;
+      --accent: #1f5a46;
+      --accent-soft: #dbe8df;
+      --warn: #a16617;
+      --danger: #8c342c;
+      --ok: #23653f;
+      --shadow: 0 18px 40px rgba(24, 35, 29, 0.08);
     }
     * { box-sizing: border-box; }
     body {
@@ -24,117 +24,158 @@
       font-family: "Aptos", "Segoe UI", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(40,89,67,0.15), transparent 26%),
-        radial-gradient(circle at top right, rgba(147,92,21,0.14), transparent 24%),
+        radial-gradient(circle at top left, rgba(31, 90, 70, 0.15), transparent 24%),
+        radial-gradient(circle at top right, rgba(161, 102, 23, 0.12), transparent 20%),
         linear-gradient(180deg, #f8faf7 0%, var(--bg) 100%);
     }
-    .shell { max-width: 1450px; margin: 0 auto; padding: 24px; display: grid; gap: 18px; }
-    .hero, .body-grid { display: grid; gap: 18px; }
-    .hero { grid-template-columns: 1.3fr 0.7fr; }
-    .body-grid { grid-template-columns: 1.1fr 0.9fr; }
+    .shell { max-width: 1560px; margin: 0 auto; padding: 24px; display: grid; gap: 18px; }
     .panel {
       background: var(--card);
-      border: 1px solid rgba(201, 211, 203, 0.95);
+      border: 1px solid rgba(200, 210, 203, 0.95);
       border-radius: 24px;
       box-shadow: var(--shadow);
       padding: 20px;
       backdrop-filter: blur(12px);
     }
-    h1, h2, h3 { margin: 0; font-family: "Georgia", "Times New Roman", serif; font-weight: 600; }
-    h1 { font-size: 34px; margin-bottom: 10px; }
-    h2 { font-size: 24px; margin-bottom: 14px; }
-    h3 { font-size: 19px; margin-bottom: 10px; }
-    p { margin: 0; line-height: 1.5; color: var(--muted); }
-    .hero-head, .top-actions, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
-    .hero-head { justify-content: space-between; align-items: flex-start; }
-    .top-actions { margin-top: 18px; }
-    .inline-form { margin: 0; }
-    .action-link {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 999px;
-      padding: 11px 16px;
-      font-weight: 700;
-      text-decoration: none;
-      transition: transform 0.15s ease;
-    }
-    button {
-      border: none; border-radius: 999px; padding: 11px 16px; font-weight: 700; cursor: pointer;
-      transition: transform 0.15s ease;
-    }
-    button:hover, .action-link:hover { transform: translateY(-1px); }
-    .primary { background: var(--accent); color: white; }
-    .secondary { background: #e8eee8; color: var(--ink); }
-    .danger { background: var(--danger); color: white; }
-    .status-badge, .node-pill, .run-pill {
-      display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; font-weight: 700;
-    }
-    .status-badge { background: var(--accent-soft); color: var(--accent); margin-bottom: 14px; }
-    .node-pill.online, .run-pill.completed { background: #d8eddf; color: var(--ok); }
-    .node-pill.push-only { background: #ffedc6; color: var(--warn); }
-    .node-pill.heartbeat-degraded { background: #f7ddd8; color: var(--danger); }
-    .node-pill.offline, .run-pill.failed { background: #f6d7d4; color: var(--danger); }
-    .node-pill.unpaired, .run-pill.running { background: #e6e5da; color: #555940; }
-    .node-pill.disabled { background: #e2e2e2; color: #555; }
-    .cards { display: grid; gap: 14px; }
-    .cards.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .cards.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .node-card, .run-card, .alert-card {
-      border-radius: 18px;
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(240,245,240,0.62));
-      padding: 16px;
-    }
-    .field-grid {
+    .hero, .grid-two, .grid-three, .grid-four, .management-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px 12px;
+      gap: 16px;
     }
-    label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
-    input, select {
-      width: 100%;
-      border: 1px solid #c7d0ca;
-      border-radius: 12px;
-      padding: 10px 12px;
-      font: inherit;
-      color: var(--ink);
-      background: rgba(255,255,255,0.95);
-    }
-    .lang-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 13px;
+    .hero { grid-template-columns: 1.1fr 0.9fr; }
+    .grid-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .management-grid { grid-template-columns: 1.15fr 0.85fr; }
+    h1, h2, h3 {
+      margin: 0;
+      font-family: "Iowan Old Style", "Georgia", serif;
       font-weight: 600;
     }
-    .lang-control select {
-      width: auto;
-      min-width: 132px;
+    h1 { font-size: 38px; margin-top: 8px; }
+    h2 { font-size: 24px; margin-bottom: 14px; }
+    h3 { font-size: 18px; margin-bottom: 10px; }
+    p { margin: 0; color: var(--muted); line-height: 1.5; }
+    .topline, .toolbar, .section-head, .tab-row, .metric-meta, .field-grid, .command-meta, .node-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .topline, .section-head, .toolbar { justify-content: space-between; }
+    .pill, .status-pill, .tab-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       padding: 8px 12px;
       border-radius: 999px;
+      font-weight: 700;
+      font-size: 13px;
+      border: 1px solid transparent;
     }
-    .check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; }
-    .check input { width: 18px; height: 18px; padding: 0; }
-    .metric-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 13px; }
-    .list { display: grid; gap: 12px; }
-    .muted { color: var(--muted); }
-    .split { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .pill { background: var(--accent-soft); color: var(--accent); }
+    .status-pill.online { background: #dcefe3; color: var(--ok); }
+    .status-pill.push-only, .status-pill.degraded, .status-pill.warning, .status-pill.acknowledged { background: #fff0cc; color: var(--warn); }
+    .status-pill.heartbeat-degraded, .status-pill.offline, .status-pill.critical, .status-pill.error, .status-pill.open { background: #f8ddd8; color: var(--danger); }
+    .status-pill.resolved, .status-pill.info, .status-pill.completed { background: #dcefe3; color: var(--ok); }
+    .status-pill.unpaired, .status-pill.running, .status-pill.disabled { background: #e8e8e8; color: #555; }
+    button, .button, select, input, textarea {
+      font: inherit;
+    }
+    .button, button {
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--ink);
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .button.primary, button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: transparent;
+    }
+    .button.danger, button.danger {
+      background: var(--danger);
+      color: white;
+      border-color: transparent;
+    }
+    .tab-button {
+      cursor: pointer;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.76);
+      color: var(--ink);
+    }
+    .tab-button.active {
+      background: var(--accent);
+      color: white;
+      border-color: transparent;
+    }
+    .filters-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.96);
+      color: var(--ink);
+    }
+    select[multiple] {
+      min-height: 108px;
+      border-radius: 16px;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    .card {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(240,245,241,0.66));
+      padding: 16px;
+    }
+    .kpi-value {
+      font-size: 32px;
+      margin-top: 8px;
+      font-family: "Iowan Old Style", "Georgia", serif;
+    }
+    .chart { width: 100%; height: 310px; }
+    .hidden { display: none !important; }
     .message {
-      border-radius: 14px;
-      padding: 12px 14px;
       display: none;
+      border-radius: 16px;
+      padding: 14px 16px;
       white-space: pre-wrap;
     }
     .message.show { display: block; }
-    .message.ok { background: #d8eddf; color: var(--ok); }
-    .message.error { background: #f6d7d4; color: var(--danger); }
-    .message.warn { background: #ffedc6; color: var(--warn); }
+    .message.ok { background: #dcefe3; color: var(--ok); }
+    .message.error { background: #f8ddd8; color: var(--danger); }
+    .message.warn { background: #fff0cc; color: var(--warn); }
+    .list, .table-wrap { display: grid; gap: 12px; }
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 700; }
     .command-box {
-      margin-top: 10px;
       padding: 12px;
-      border-radius: 12px;
+      border-radius: 14px;
       background: #f4f7f3;
       border: 1px solid var(--line);
       font-family: Consolas, monospace;
@@ -142,11 +183,18 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .sparkline { width: 100%; height: 120px; margin-top: 12px; background: rgba(255,255,255,0.66); border-radius: 14px; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    @media (max-width: 1100px) {
-      .hero, .body-grid, .cards.three, .cards.two, .field-grid { grid-template-columns: 1fr; }
+    .muted { color: var(--muted); }
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .node-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tab-section { display: grid; gap: 16px; }
+    @media (max-width: 1280px) {
+      .hero, .grid-two, .grid-three, .grid-four, .management-grid, .filters-grid, .node-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -154,733 +202,259 @@
   <div class="shell">
     <section class="hero">
       <div class="panel">
-        <div class="hero-head">
-          <div class="status-badge" id="panelStatus" data-i18n="panelOnline">Panel online</div>
-          <label class="lang-control" for="localeSelect">
-            <span id="localeLabel" data-i18n="language">Language</span>
+        <div class="topline">
+          <div class="pill" data-i18n="panelOnline">Panel online</div>
+          <div class="toolbar">
+            <label for="localeSelect" data-i18n="language">Language</label>
             <select id="localeSelect" aria-label="Language">
               <option value="zh-CN">中文</option>
               <option value="en-US">English</option>
             </select>
-          </label>
+          </div>
         </div>
-        <h1 id="heroTitle" data-i18n="heroTitle">mc-netprobe Agent Panel</h1>
-        <p id="heroDescription">
-          中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，
-          不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。
+        <h1 data-i18n="heroTitle">mc-netprobe Enterprise Network Panel</h1>
+        <p data-i18n="heroDescription">
+          Persistent panel for role-aware network quality monitoring, anomaly detection, drilldown analysis, alert handling, and node management without storing SSH credentials.
         </p>
-        <div class="top-actions">
-          <a class="action-link secondary" id="publicViewLink" href="/" data-i18n="publicView">公开页面</a>
-          <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">保存全局配置</button>
-          <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">手动执行完整监测</button>
-          <button class="secondary" type="button" id="refreshBtn" data-i18n="refreshPanel">刷新面板</button>
-          <form class="inline-form" method="post" action="/logout">
-            <button class="secondary" type="submit" id="logoutBtn" data-i18n="logout">退出登录</button>
+        <div class="toolbar" style="margin-top: 18px;">
+          <div class="tab-row">
+            <a class="button" href="/" data-i18n="publicView">Public View</a>
+            <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">Save Global Settings</button>
+            <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">Run Full Monitoring</button>
+            <button type="button" id="refreshBtn" data-i18n="refreshPanel">Refresh Panel</button>
+          </div>
+          <form method="post" action="/logout">
+            <button type="submit" data-i18n="logout">Logout</button>
           </form>
         </div>
         <div id="messageBox" class="message"></div>
       </div>
       <div class="panel">
-        <h2 id="alertsTitle" data-i18n="recentAlerts">Recent Alerts</h2>
-        <div id="alertsList" class="list"></div>
+        <div class="section-head">
+          <h2 data-i18n="recentAlertHeadline">Alert Pulse</h2>
+          <span class="muted" id="topologyCaption"></span>
+        </div>
+        <div id="headlineAlerts" class="list"></div>
       </div>
     </section>
 
     <section class="panel">
-      <div class="split">
-        <h2 id="nodesTitle" data-i18n="nodes">Nodes</h2>
-        <span class="muted" id="nodesCaption">
-          一套拓扑，三个角色，底层模型可扩展
-        </span>
+      <div class="section-head">
+        <h2 data-i18n="globalFilters">Global Filters</h2>
+        <div class="toolbar">
+          <button type="button" id="applyFiltersBtn" class="primary" data-i18n="applyFilters">Apply Filters</button>
+          <button type="button" id="resetFiltersBtn" data-i18n="resetFilters">Reset Filters</button>
+        </div>
       </div>
-      <div id="nodesGrid" class="cards three"></div>
+      <div class="filters-grid">
+        <label><span data-i18n="timeRange">Time Range</span><select id="filter-time-range"></select></label>
+        <label><span data-i18n="roles">Roles</span><select id="filter-roles" multiple></select></label>
+        <label><span data-i18n="nodes">Nodes</span><select id="filter-nodes" multiple></select></label>
+        <label><span data-i18n="paths">Paths</span><select id="filter-paths" multiple></select></label>
+        <label><span data-i18n="probes">Probes</span><select id="filter-probes" multiple></select></label>
+        <label><span data-i18n="metric">Metric</span><select id="filter-metric"></select></label>
+        <label><span data-i18n="runKinds">Run Kinds</span><select id="filter-run-kinds" multiple></select></label>
+        <label><span data-i18n="severities">Severities</span><select id="filter-severities" multiple></select></label>
+        <label><span data-i18n="alertStatuses">Alert Status</span><select id="filter-alert-statuses" multiple></select></label>
+        <label><span data-i18n="onlyAnomalies">Only anomalies</span><select id="filter-only-anomalies"><option value="false">false</option><option value="true">true</option></select></label>
+        <label><span data-i18n="includeResolved">Include resolved</span><select id="filter-include-resolved"><option value="false">false</option><option value="true">true</option></select></label>
+        <label><span data-i18n="pathFocus">Path focus</span><select id="path-focus-select"></select></label>
+      </div>
     </section>
 
-    <section class="body-grid">
+    <section class="panel">
+      <div class="tab-row" id="tabButtons">
+        <button type="button" class="tab-button active" data-tab="overview" data-i18n="tabOverview">Overview</button>
+        <button type="button" class="tab-button" data-tab="path" data-i18n="tabPathExplorer">Path Explorer</button>
+        <button type="button" class="tab-button" data-tab="metric" data-i18n="tabMetricExplorer">Metric Explorer</button>
+        <button type="button" class="tab-button" data-tab="alerts" data-i18n="tabAlerts">Alerts</button>
+        <button type="button" class="tab-button" data-tab="runs" data-i18n="tabRuns">Runs</button>
+        <button type="button" class="tab-button" data-tab="management" data-i18n="tabManagement">Management</button>
+      </div>
+    </section>
+
+    <section id="tab-overview" class="tab-section">
       <div class="panel">
-        <h2 id="topologyTitle" data-i18n="topologyThresholdsSchedules">Topology, Thresholds & Schedules</h2>
-        <div class="cards two">
-          <div class="node-card">
-            <h3 id="serviceEndpointsTitle" data-i18n="serviceEndpoints">Service Endpoints</h3>
-            <div class="field-grid">
-              <label><span data-i18n="field.relayProbeHost">relay_probe host</span><input id="relay_probe_host" type="text"></label>
-              <label><span data-i18n="field.relayProbePort">relay_probe port</span><input id="relay_probe_port" type="number"></label>
-              <label><span data-i18n="field.mcPublicHost">mc_public host</span><input id="mc_public_host" type="text"></label>
-              <label><span data-i18n="field.mcPublicPort">mc_public port</span><input id="mc_public_port" type="number"></label>
-              <label><span data-i18n="field.iperfPublicHost">iperf_public host</span><input id="iperf_public_host" type="text"></label>
-              <label><span data-i18n="field.iperfPublicPort">iperf_public port</span><input id="iperf_public_port" type="number"></label>
-              <label><span data-i18n="field.mcLocalHost">mc_local host</span><input id="mc_local_host" type="text"></label>
-              <label><span data-i18n="field.mcLocalPort">mc_local port</span><input id="mc_local_port" type="number"></label>
-              <label><span data-i18n="field.iperfLocalHost">iperf_local host</span><input id="iperf_local_host" type="text"></label>
-              <label><span data-i18n="field.iperfLocalPort">iperf_local port</span><input id="iperf_local_port" type="number"></label>
-            </div>
-          </div>
-          <div class="node-card">
-            <h3 id="thresholdsDurationsTitle" data-i18n="thresholdsDurations">Thresholds & Durations</h3>
-            <div class="field-grid">
-              <label><span data-i18n="field.pingAvgMax">Ping avg max ms</span><input id="ping_rtt_avg_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.pingJitterMax">Ping jitter max ms</span><input id="ping_jitter_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.tcpAvgMax">TCP avg max ms</span><input id="tcp_connect_avg_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.tcpErrorMax">TCP error max %</span><input id="tcp_timeout_error_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.throughputUpMin">Throughput up min Mbps</span><input id="throughput_up_min" type="number" step="0.1"></label>
-              <label><span data-i18n="field.throughputDownMin">Throughput down min Mbps</span><input id="throughput_down_min" type="number" step="0.1"></label>
-              <label><span data-i18n="field.loadDeltaMax">Load delta max ms</span><input id="load_delta_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.systemCpuMax">System CPU max %</span><input id="system_cpu_max" type="number" step="0.1"></label>
-              <label><span data-i18n="field.throughputDurationSec">Throughput duration sec</span><input id="throughput_duration_sec" type="number"></label>
-              <label><span data-i18n="field.loadDurationSec">Load duration sec</span><input id="load_duration_sec" type="number"></label>
-              <label><span data-i18n="field.tcpAttempts">TCP attempts</span><input id="tcp_attempts" type="number"></label>
-              <label><span data-i18n="field.systemSampleSec">System sample sec</span><input id="system_sample_sec" type="number" step="0.1"></label>
-            </div>
-            <div id="scheduleMeta" class="metric-meta"></div>
-          </div>
+        <h2 data-i18n="overviewKpis">Overview KPIs</h2>
+        <div id="overviewKpis" class="grid-four"></div>
+      </div>
+      <div class="grid-two">
+        <div class="panel">
+          <h2 data-i18n="statusDistribution">Status Distribution</h2>
+          <div id="statusChart" class="chart"></div>
+        </div>
+        <div class="panel">
+          <h2 data-i18n="recentAnomalies">Recent Anomalies</h2>
+          <div id="overviewAnomalies" class="list"></div>
         </div>
       </div>
-
       <div class="panel">
-        <div class="split">
-          <h2 id="runsTitle" data-i18n="recentRuns">Recent Runs</h2>
-          <a id="latestReportLink" href="#" target="_blank" data-i18n="openLatestReport">Open latest report</a>
+        <h2 data-i18n="pathHealthHeat">Path Health Heat</h2>
+        <div id="overviewPathGrid" class="grid-four"></div>
+      </div>
+      <div class="grid-two">
+        <div class="panel"><h2 data-i18n="latencyTrend">Latency Trend</h2><div id="overviewLatencyChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="lossTrend">Loss Trend</h2><div id="overviewLossChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="throughputTrend">Throughput Trend</h2><div id="overviewThroughputChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="systemTrend">System Trend</h2><div id="overviewSystemChart" class="chart"></div></div>
+      </div>
+    </section>
+
+    <section id="tab-path" class="tab-section hidden">
+      <div class="panel">
+        <div class="section-head">
+          <h2 data-i18n="pathExplorerHeadline">Path Explorer</h2>
+          <span class="muted" id="pathExplorerCaption"></span>
         </div>
-        <div id="runsList" class="list"></div>
-        <h2 id="cpuTrendTitle" style="margin-top:18px;" data-i18n="cpuTrend24h">CPU Trend (24h)</h2>
-        <svg id="cpuTrend" class="sparkline" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+        <div id="pathSummaryCards" class="grid-four"></div>
+      </div>
+      <div class="grid-two">
+        <div class="panel"><h2 data-i18n="latencyTrend">Latency Trend</h2><div id="pathLatencyChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="lossTrend">Loss Trend</h2><div id="pathLossChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="throughputTrend">Throughput Trend</h2><div id="pathThroughputChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="loadTrend">Load Impact</h2><div id="pathLoadChart" class="chart"></div></div>
+      </div>
+    </section>
+
+    <section id="tab-metric" class="tab-section hidden">
+      <div class="panel">
+        <div class="section-head">
+          <h2 data-i18n="metricExplorerHeadline">Metric Explorer</h2>
+          <span class="muted" id="metricExplorerCaption"></span>
+        </div>
+        <div class="metric-meta">
+          <span data-i18n="metricExplorerHint">One metric, up to four filtered series, thresholds and anomaly markers included.</span>
+        </div>
+        <div id="metricExplorerChart" class="chart"></div>
+      </div>
+      <div class="panel">
+        <h2 data-i18n="metricSeriesSummary">Metric Series Summary</h2>
+        <div id="metricSeriesSummary" class="grid-four"></div>
+      </div>
+    </section>
+
+    <section id="tab-alerts" class="tab-section hidden">
+      <div class="panel">
+        <h2 data-i18n="alertCenter">Alert Center</h2>
+        <div id="alertSummaryCards" class="grid-four"></div>
+      </div>
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="severity">Severity</th>
+                <th data-i18n="kind">Kind</th>
+                <th data-i18n="path">Path</th>
+                <th data-i18n="metric">Metric</th>
+                <th data-i18n="actual">Actual</th>
+                <th data-i18n="threshold">Threshold</th>
+                <th data-i18n="status">Status</th>
+                <th data-i18n="actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="alertsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-runs" class="tab-section hidden">
+      <div class="management-grid">
+        <div class="panel">
+          <h2 data-i18n="runsHeadline">Runs</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="runId">Run</th>
+                  <th data-i18n="runKind">Run Kind</th>
+                  <th data-i18n="status">Status</th>
+                  <th data-i18n="startedAt">Started</th>
+                  <th data-i18n="findings">Findings</th>
+                  <th data-i18n="actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="runsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h2 data-i18n="runDetail">Run Detail</h2>
+          <div id="runDetail"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-management" class="tab-section hidden">
+      <div class="management-grid">
+        <div class="panel">
+          <h2 data-i18n="topologyThresholdsSchedules">Topology, Thresholds & Schedules</h2>
+          <div class="grid-two">
+            <div class="card">
+              <h3 data-i18n="serviceEndpoints">Service Endpoints</h3>
+              <div class="grid-two">
+                <label><span data-i18n="field.relayProbeHost">relay_probe host</span><input id="relay_probe_host" type="text"></label>
+                <label><span data-i18n="field.relayProbePort">relay_probe port</span><input id="relay_probe_port" type="number"></label>
+                <label><span data-i18n="field.mcPublicHost">mc_public host</span><input id="mc_public_host" type="text"></label>
+                <label><span data-i18n="field.mcPublicPort">mc_public port</span><input id="mc_public_port" type="number"></label>
+                <label><span data-i18n="field.iperfPublicHost">iperf_public host</span><input id="iperf_public_host" type="text"></label>
+                <label><span data-i18n="field.iperfPublicPort">iperf_public port</span><input id="iperf_public_port" type="number"></label>
+                <label><span data-i18n="field.mcLocalHost">mc_local host</span><input id="mc_local_host" type="text"></label>
+                <label><span data-i18n="field.mcLocalPort">mc_local port</span><input id="mc_local_port" type="number"></label>
+                <label><span data-i18n="field.iperfLocalHost">iperf_local host</span><input id="iperf_local_host" type="text"></label>
+                <label><span data-i18n="field.iperfLocalPort">iperf_local port</span><input id="iperf_local_port" type="number"></label>
+              </div>
+            </div>
+            <div class="card">
+              <h3 data-i18n="thresholdsDurations">Thresholds & Durations</h3>
+              <div class="grid-two">
+                <label><span data-i18n="field.pingAvgMax">Ping avg max ms</span><input id="ping_rtt_avg_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.pingJitterMax">Ping jitter max ms</span><input id="ping_jitter_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.tcpAvgMax">TCP avg max ms</span><input id="tcp_connect_avg_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.tcpErrorMax">TCP error max %</span><input id="tcp_timeout_error_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.throughputUpMin">Throughput up min Mbps</span><input id="throughput_up_min" type="number" step="0.1"></label>
+                <label><span data-i18n="field.throughputDownMin">Throughput down min Mbps</span><input id="throughput_down_min" type="number" step="0.1"></label>
+                <label><span data-i18n="field.loadDeltaMax">Load delta max ms</span><input id="load_delta_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.systemCpuMax">System CPU max %</span><input id="system_cpu_max" type="number" step="0.1"></label>
+                <label><span data-i18n="field.throughputDurationSec">Throughput duration sec</span><input id="throughput_duration_sec" type="number"></label>
+                <label><span data-i18n="field.loadDurationSec">Load duration sec</span><input id="load_duration_sec" type="number"></label>
+                <label><span data-i18n="field.tcpAttempts">TCP attempts</span><input id="tcp_attempts" type="number"></label>
+                <label><span data-i18n="field.systemSampleSec">System sample sec</span><input id="system_sample_sec" type="number" step="0.1"></label>
+              </div>
+              <div id="scheduleMeta" class="metric-meta"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2 data-i18n="pairingConsole">Pairing Console</h2>
+          <div class="metric-meta">
+            <span data-i18n="pairingHint">Generate commands for Linux Docker relay, macOS launchd server, or Windows scheduled task client agents.</span>
+          </div>
+          <div class="command-meta" style="margin-top: 12px;">
+            <span class="muted" data-i18n="primaryCommand">Primary Command</span>
+            <button type="button" id="copyPrimaryBtn" data-i18n="copy">Copy</button>
+          </div>
+          <div id="pairPrimaryBox" class="command-box"></div>
+          <div class="command-meta" style="margin-top: 14px;">
+            <span class="muted" data-i18n="fallbackCommand">Fallback Command</span>
+            <button type="button" id="copyFallbackBtn" data-i18n="copy">Copy</button>
+          </div>
+          <div id="pairFallbackBox" class="command-box"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="section-head">
+          <h2 data-i18n="nodes">Nodes</h2>
+          <span class="muted" data-i18n="nodesCaption">Single topology UI, role-aware deployment targets, and persistent agent pairing.</span>
+        </div>
+        <div id="nodeGrid" class="node-grid"></div>
       </div>
     </section>
   </div>
 
-  <script>
-    const initialState = {{ initial_state_json }};
-    let currentState = initialState;
-    const LOCALE_STORAGE_KEY = "mc-netprobe-locale";
-    const translations = {
-      "zh-CN": {
-        pageTitle: "mc-netprobe 监控面板",
-        panelOnline: "面板在线",
-        language: "语言",
-        heroTitle: "mc-netprobe Agent 面板",
-        heroDescription: "中央监控面板负责节点配对、持续调度、告警和历史趋势。节点自身只运行 Agent，不再通过 SSH 注入执行，也不在面板里保存任何系统凭据。",
-        publicView: "公开页面",
-        logout: "退出登录",
-        saveSettings: "保存全局配置",
-        runFull: "手动执行完整监测",
-        refreshPanel: "刷新面板",
-        recentAlerts: "最近告警",
-        nodes: "节点",
-        nodesCaption: "一套拓扑，三个角色，底层模型可扩展",
-        topologyThresholdsSchedules: "拓扑、阈值与调度",
-        serviceEndpoints: "服务端点",
-        thresholdsDurations: "阈值与时长",
-        recentRuns: "最近运行",
-        openLatestReport: "打开最新报告",
-        cpuTrend24h: "CPU 趋势（24 小时）",
-        saveNode: "保存节点",
-        generatePairCommand: "生成配对命令",
-        nodeName: "节点名称",
-        runtime: "运行方式",
-        agentUrl: "Agent URL",
-        enabled: "启用",
-        paired: "已配对",
-        lastSeen: "最近上线",
-        push: "Push",
-        pull: "Pull",
-        pairCode: "配对码",
-        expires: "过期时间",
-        primary: "主命令",
-        fallback: "兜底命令",
-        notAvailable: "无",
-        findings: "发现项",
-        noSummary: "暂无摘要",
-        noRunsYet: "还没有运行记录。",
-        noAlerts: "暂无告警。",
-        everySeconds: "每 {seconds} 秒",
-        min: "最小",
-        max: "最大",
-        saveSettingsFailed: "保存全局配置失败",
-        saveSettingsOk: "全局配置已保存。",
-        saveNodeFailed: "保存节点失败",
-        saveNodeOk: "{role} 节点已保存。",
-        pairNodeNeedSave: "请先保存节点，再生成配对码。",
-        pairNodeFailed: "生成配对码失败",
-        pairNodeOk: "{role} 配对命令已生成。",
-        triggerRunFailed: "触发监测失败",
-        triggerRunOk: "监测任务 {runId} 已启动。",
-        sessionExpired: "登录已失效，请重新进入管理页面。",
-        field: {
-          relayProbeHost: "relay_probe 主机",
-          relayProbePort: "relay_probe 端口",
-          mcPublicHost: "mc_public 主机",
-          mcPublicPort: "mc_public 端口",
-          iperfPublicHost: "iperf_public 主机",
-          iperfPublicPort: "iperf_public 端口",
-          mcLocalHost: "mc_local 主机",
-          mcLocalPort: "mc_local 端口",
-          iperfLocalHost: "iperf_local 主机",
-          iperfLocalPort: "iperf_local 端口",
-          pingAvgMax: "Ping 平均延迟上限 ms",
-          pingJitterMax: "Ping 抖动上限 ms",
-          tcpAvgMax: "TCP 平均连接上限 ms",
-          tcpErrorMax: "TCP 错误率上限 %",
-          throughputUpMin: "上行吞吐下限 Mbps",
-          throughputDownMin: "下行吞吐下限 Mbps",
-          loadDeltaMax: "负载增量上限 ms",
-          systemCpuMax: "系统 CPU 上限 %",
-          throughputDurationSec: "吞吐持续时间 sec",
-          loadDurationSec: "负载持续时间 sec",
-          tcpAttempts: "TCP 尝试次数",
-          systemSampleSec: "系统采样 sec",
-        },
-        status: {
-          online: "在线",
-          "push-only": "仅 Push",
-          "heartbeat-degraded": "心跳降级",
-          offline: "离线",
-          unpaired: "未配对",
-          disabled: "已禁用",
-          running: "运行中",
-          completed: "已完成",
-          failed: "失败",
-          error: "错误",
-          warning: "警告",
-          info: "信息",
-          open: "未恢复",
-          active: "激活",
-          resolved: "已恢复",
-          accepted: "已接收",
-        },
-        bool: {
-          true: "是",
-          false: "否",
-        },
-        role: {
-          client: "客户端",
-          relay: "中继",
-          server: "服务端",
-        },
-        runtimeMode: {
-          "docker-linux": "Docker（Linux）",
-          "native-macos": "原生（macOS）",
-          "native-windows": "原生（Windows）",
-        },
-        runKind: {
-          system: "system",
-          baseline: "baseline",
-          capacity: "capacity",
-          full: "full",
-        },
-        alertKind: {
-          offline: "离线",
-          threshold: "阈值",
-          node_status: "节点状态",
-          run_failed: "运行失败",
-          "data-gap": "数据缺失",
-        },
-      },
-      "en-US": {
-        pageTitle: "mc-netprobe panel",
-        panelOnline: "Panel online",
-        language: "Language",
-        heroTitle: "mc-netprobe Agent Panel",
-        heroDescription: "The central monitoring panel handles node pairing, continuous scheduling, alerts, and historical trends. Nodes only run Agents, with no SSH injection and no system credentials stored in the panel.",
-        publicView: "Public View",
-        logout: "Log Out",
-        saveSettings: "Save Global Settings",
-        runFull: "Run Full Check",
-        refreshPanel: "Refresh Panel",
-        recentAlerts: "Recent Alerts",
-        nodes: "Nodes",
-        nodesCaption: "One topology, three roles, with room to extend the data model later.",
-        topologyThresholdsSchedules: "Topology, Thresholds & Schedules",
-        serviceEndpoints: "Service Endpoints",
-        thresholdsDurations: "Thresholds & Durations",
-        recentRuns: "Recent Runs",
-        openLatestReport: "Open Latest Report",
-        cpuTrend24h: "CPU Trend (24h)",
-        saveNode: "Save Node",
-        generatePairCommand: "Generate Pair Command",
-        nodeName: "Node Name",
-        runtime: "Runtime",
-        agentUrl: "Agent URL",
-        enabled: "Enabled",
-        paired: "Paired",
-        lastSeen: "Last Seen",
-        push: "Push",
-        pull: "Pull",
-        pairCode: "Pair Code",
-        expires: "Expires",
-        primary: "Primary",
-        fallback: "Fallback",
-        notAvailable: "n/a",
-        findings: "findings",
-        noSummary: "No summary",
-        noRunsYet: "No runs yet.",
-        noAlerts: "No alerts.",
-        everySeconds: "every {seconds}s",
-        min: "min",
-        max: "max",
-        saveSettingsFailed: "Failed to save settings",
-        saveSettingsOk: "Global settings saved.",
-        saveNodeFailed: "Failed to save node",
-        saveNodeOk: "{role} node saved.",
-        pairNodeNeedSave: "Save the node before generating a pair code.",
-        pairNodeFailed: "Failed to create pair code",
-        pairNodeOk: "{role} pair command generated.",
-        triggerRunFailed: "Failed to trigger run",
-        triggerRunOk: "Run {runId} started.",
-        sessionExpired: "Your admin session expired. Please sign in again.",
-        field: {
-          relayProbeHost: "relay_probe host",
-          relayProbePort: "relay_probe port",
-          mcPublicHost: "mc_public host",
-          mcPublicPort: "mc_public port",
-          iperfPublicHost: "iperf_public host",
-          iperfPublicPort: "iperf_public port",
-          mcLocalHost: "mc_local host",
-          mcLocalPort: "mc_local port",
-          iperfLocalHost: "iperf_local host",
-          iperfLocalPort: "iperf_local port",
-          pingAvgMax: "Ping avg max ms",
-          pingJitterMax: "Ping jitter max ms",
-          tcpAvgMax: "TCP avg max ms",
-          tcpErrorMax: "TCP error max %",
-          throughputUpMin: "Throughput up min Mbps",
-          throughputDownMin: "Throughput down min Mbps",
-          loadDeltaMax: "Load delta max ms",
-          systemCpuMax: "System CPU max %",
-          throughputDurationSec: "Throughput duration sec",
-          loadDurationSec: "Load duration sec",
-          tcpAttempts: "TCP attempts",
-          systemSampleSec: "System sample sec",
-        },
-        status: {
-          online: "Online",
-          "push-only": "Push only",
-          "heartbeat-degraded": "Heartbeat degraded",
-          offline: "Offline",
-          unpaired: "Unpaired",
-          disabled: "Disabled",
-          running: "Running",
-          completed: "Completed",
-          failed: "Failed",
-          error: "Error",
-          warning: "Warning",
-          info: "Info",
-          open: "Open",
-          active: "Active",
-          resolved: "Resolved",
-          accepted: "Accepted",
-        },
-        bool: {
-          true: "yes",
-          false: "no",
-        },
-        role: {
-          client: "Client",
-          relay: "Relay",
-          server: "Server",
-        },
-        runtimeMode: {
-          "docker-linux": "Docker (Linux)",
-          "native-macos": "Native (macOS)",
-          "native-windows": "Native (Windows)",
-        },
-        runKind: {
-          system: "system",
-          baseline: "baseline",
-          capacity: "capacity",
-          full: "full",
-        },
-        alertKind: {
-          offline: "offline",
-          threshold: "threshold",
-          node_status: "node status",
-          run_failed: "run failed",
-          "data-gap": "data gap",
-        },
-      },
-    };
-    let currentLocale = detectLocale();
-
-    function $(id) { return document.getElementById(id); }
-
-    function detectLocale() {
-      const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-      if (saved && translations[saved]) {
-        return saved;
-      }
-      return navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
-    }
-
-    function lookupTranslation(locale, key) {
-      return key.split(".").reduce((value, segment) => (
-        value && typeof value === "object" ? value[segment] : undefined
-      ), translations[locale]);
-    }
-
-    function t(key, vars = {}) {
-      const template = lookupTranslation(currentLocale, key) ?? lookupTranslation("en-US", key) ?? key;
-      return String(template).replace(/\{(\w+)\}/g, (_, token) => String(vars[token] ?? `{${token}}`));
-    }
-
-    function translateStatus(status) {
-      return lookupTranslation(currentLocale, `status.${status}`) ?? lookupTranslation("en-US", `status.${status}`) ?? status;
-    }
-
-    function translateRole(role) {
-      return lookupTranslation(currentLocale, `role.${role}`) ?? lookupTranslation("en-US", `role.${role}`) ?? role;
-    }
-
-    function translateRuntime(mode) {
-      return lookupTranslation(currentLocale, `runtimeMode.${mode}`) ?? lookupTranslation("en-US", `runtimeMode.${mode}`) ?? mode;
-    }
-
-    function translateRunKind(kind) {
-      return lookupTranslation(currentLocale, `runKind.${kind}`) ?? lookupTranslation("en-US", `runKind.${kind}`) ?? kind;
-    }
-
-    function translateAlertKind(kind) {
-      return lookupTranslation(currentLocale, `alertKind.${kind}`) ?? lookupTranslation("en-US", `alertKind.${kind}`) ?? kind;
-    }
-
-    function translateBool(value) {
-      return t(`bool.${Boolean(value)}`);
-    }
-
-    function applyStaticTranslations() {
-      document.documentElement.lang = currentLocale;
-      document.title = t("pageTitle");
-      $("heroDescription").textContent = t("heroDescription");
-      $("nodesCaption").textContent = t("nodesCaption");
-      document.querySelectorAll("[data-i18n]").forEach((element) => {
-        element.textContent = t(element.dataset.i18n);
-      });
-    }
-
-    function setLocale(locale) {
-      if (!translations[locale]) {
-        return;
-      }
-      currentLocale = locale;
-      window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
-      $("localeSelect").value = locale;
-      applyStaticTranslations();
-      renderDashboard(currentState);
-    }
-
-    function showMessage(kind, text) {
-      const box = $("messageBox");
-      box.className = `message show ${kind}`;
-      box.textContent = text;
-    }
-
-    async function apiJson(url, options = {}) {
-      const response = await fetch(url, options);
-      const data = await response.json();
-      if (response.status === 401) {
-        window.location.href = "/login?next=/admin";
-        throw new Error(t("sessionExpired"));
-      }
-      return { response, data };
-    }
-
-    function nodeCard(role, node) {
-      const status = node ? node.status : "unpaired";
-      const nodeId = node ? node.id : "";
-      const name = node ? node.node_name : role;
-      const runtime = node ? node.runtime_mode : defaultRuntime(role);
-      const agentUrl = node ? (node.agent_url || "") : "";
-      const enabled = node ? Boolean(node.enabled) : true;
-      const paired = node ? Boolean(node.paired) : false;
-      const lastSeen = node && node.last_seen_at ? node.last_seen_at : t("notAvailable");
-      return `
-        <article class="node-card" data-role="${role}" data-node-id="${nodeId}">
-          <div class="split">
-            <h3>${translateRole(role)}</h3>
-            <span class="node-pill ${status}">${translateStatus(status)}</span>
-          </div>
-          <div class="field-grid" style="margin-top:12px;">
-            <label>${t("nodeName")}<input data-field="node_name" type="text" value="${escapeHtml(name)}"></label>
-            <label>${t("runtime")}
-              <select data-field="runtime_mode">
-                ${["docker-linux","native-macos","native-windows"].map((item) => `<option value="${item}" ${item === runtime ? "selected" : ""}>${translateRuntime(item)}</option>`).join("")}
-              </select>
-            </label>
-            <label>${t("agentUrl")}<input data-field="agent_url" type="text" value="${escapeHtml(agentUrl)}" placeholder="http://host:9870"></label>
-            <label class="check"><input data-field="enabled" type="checkbox" ${enabled ? "checked" : ""}>${t("enabled")}</label>
-          </div>
-          <div class="metric-meta">
-            <span>${t("paired")}: ${translateBool(paired)}</span>
-            <span>${t("lastSeen")}: ${escapeHtml(lastSeen)}</span>
-            <span>${t("push")}: ${translateBool(node ? node.last_push_ok : false)}</span>
-            <span>${t("pull")}: ${translateBool(node ? node.last_pull_ok : false)}</span>
-          </div>
-          <div class="actions" style="margin-top:12px;">
-            <button class="primary" type="button" onclick="saveNode('${role}')">${t("saveNode")}</button>
-            <button class="secondary" type="button" onclick="pairNode('${role}')" ${!nodeId ? "disabled" : ""}>${t("generatePairCommand")}</button>
-          </div>
-          <div id="pair_${role}" class="command-box" style="display:none;"></div>
-        </article>
-      `;
-    }
-
-    function defaultRuntime(role) {
-      if (role === "relay") return "docker-linux";
-      if (role === "server") return "native-macos";
-      return "native-windows";
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
-    }
-
-    function fillSettings(settings, schedules) {
-      const s = settings.services;
-      $("relay_probe_host").value = s.relay_probe.host || "";
-      $("relay_probe_port").value = s.relay_probe.port;
-      $("mc_public_host").value = s.mc_public.host || "";
-      $("mc_public_port").value = s.mc_public.port;
-      $("iperf_public_host").value = s.iperf_public.host || "";
-      $("iperf_public_port").value = s.iperf_public.port;
-      $("mc_local_host").value = s.mc_local.host || "";
-      $("mc_local_port").value = s.mc_local.port;
-      $("iperf_local_host").value = s.iperf_local.host || "";
-      $("iperf_local_port").value = s.iperf_local.port;
-
-      $("ping_rtt_avg_max").value = settings.thresholds.ping.rtt_avg_ms_max;
-      $("ping_jitter_max").value = settings.thresholds.ping.jitter_ms_max;
-      $("tcp_connect_avg_max").value = settings.thresholds.tcp.connect_avg_ms_max;
-      $("tcp_timeout_error_max").value = settings.thresholds.tcp.timeout_or_error_pct_max;
-      $("throughput_up_min").value = settings.thresholds.throughput.throughput_up_mbps_min;
-      $("throughput_down_min").value = settings.thresholds.throughput.throughput_down_mbps_min;
-      $("load_delta_max").value = settings.thresholds.load_inflation.load_rtt_inflation_ms_max;
-      $("system_cpu_max").value = settings.thresholds.system.cpu_usage_pct_max;
-
-      $("throughput_duration_sec").value = settings.scenarios.throughput.duration_sec;
-      $("load_duration_sec").value = settings.scenarios.load_inflation.duration_sec;
-      $("tcp_attempts").value = settings.scenarios.tcp.attempts;
-      $("system_sample_sec").value = settings.scenarios.system.sample_interval_sec;
-      $("scheduleMeta").innerHTML = schedules.map((item) => (
-        `<span>${translateRunKind(item.run_kind)}: ${t("everySeconds", { seconds: item.interval_sec })}</span>`
-      )).join("");
-    }
-
-    function collectSettings() {
-      return {
-        topology_name: currentState.settings.topology_name,
-        services: {
-          relay_probe: { host: $("relay_probe_host").value.trim(), port: Number($("relay_probe_port").value) },
-          mc_public: { host: $("mc_public_host").value.trim(), port: Number($("mc_public_port").value) },
-          iperf_public: { host: $("iperf_public_host").value.trim(), port: Number($("iperf_public_port").value) },
-          mc_local: { host: $("mc_local_host").value.trim(), port: Number($("mc_local_port").value) },
-          iperf_local: { host: $("iperf_local_host").value.trim(), port: Number($("iperf_local_port").value) },
-        },
-        thresholds: {
-          ping: {
-            packet_loss_pct_max: currentState.settings.thresholds.ping.packet_loss_pct_max,
-            rtt_avg_ms_max: Number($("ping_rtt_avg_max").value),
-            rtt_p95_ms_max: currentState.settings.thresholds.ping.rtt_p95_ms_max,
-            jitter_ms_max: Number($("ping_jitter_max").value),
-          },
-          tcp: {
-            connect_avg_ms_max: Number($("tcp_connect_avg_max").value),
-            connect_p95_ms_max: currentState.settings.thresholds.tcp.connect_p95_ms_max,
-            timeout_or_error_pct_max: Number($("tcp_timeout_error_max").value),
-          },
-          throughput: {
-            throughput_up_mbps_min: Number($("throughput_up_min").value),
-            throughput_down_mbps_min: Number($("throughput_down_min").value),
-          },
-          load_inflation: {
-            load_rtt_inflation_ms_max: Number($("load_delta_max").value),
-            loaded_timeout_pct_max: currentState.settings.thresholds.load_inflation.loaded_timeout_pct_max,
-          },
-          system: {
-            cpu_usage_pct_max: Number($("system_cpu_max").value),
-            memory_usage_pct_max: currentState.settings.thresholds.system.memory_usage_pct_max,
-          }
-        },
-        scenarios: {
-          ping: currentState.settings.scenarios.ping,
-          tcp: {
-            ...currentState.settings.scenarios.tcp,
-            attempts: Number($("tcp_attempts").value),
-          },
-          throughput: {
-            ...currentState.settings.scenarios.throughput,
-            duration_sec: Number($("throughput_duration_sec").value),
-          },
-          system: {
-            ...currentState.settings.scenarios.system,
-            sample_interval_sec: Number($("system_sample_sec").value),
-          },
-          load_inflation: {
-            ...currentState.settings.scenarios.load_inflation,
-            duration_sec: Number($("load_duration_sec").value),
-          }
-        }
-      };
-    }
-
-    async function saveSettings() {
-      const { response, data } = await apiJson("/api/v1/dashboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(collectSettings()),
-      });
-      if (!response.ok) {
-        showMessage("error", data.detail || data.error || t("saveSettingsFailed"));
-        return;
-      }
-      showMessage("ok", t("saveSettingsOk"));
-      await refreshDashboard();
-    }
-
-    async function saveNode(role) {
-      const card = document.querySelector(`[data-role="${role}"]`);
-      const nodeId = card.getAttribute("data-node-id");
-      const payload = {
-        id: nodeId ? Number(nodeId) : null,
-        node_name: card.querySelector('[data-field="node_name"]').value.trim(),
-        role,
-        runtime_mode: card.querySelector('[data-field="runtime_mode"]').value,
-        agent_url: card.querySelector('[data-field="agent_url"]').value.trim() || null,
-        enabled: card.querySelector('[data-field="enabled"]').checked,
-      };
-      const { response, data } = await apiJson("/api/v1/nodes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        showMessage("error", data.detail || data.error || t("saveNodeFailed"));
-        return;
-      }
-      showMessage("ok", t("saveNodeOk", { role: translateRole(role) }));
-      await refreshDashboard();
-    }
-
-    async function pairNode(role) {
-      const card = document.querySelector(`[data-role="${role}"]`);
-      const nodeId = card.getAttribute("data-node-id");
-      if (!nodeId) {
-        showMessage("warn", t("pairNodeNeedSave"));
-        return;
-      }
-      const { response, data } = await apiJson(`/api/v1/nodes/${nodeId}/pair-code`, { method: "POST" });
-      if (!response.ok) {
-        showMessage("error", data.detail || data.error || t("pairNodeFailed"));
-        return;
-      }
-      const target = $(`pair_${role}`);
-      target.style.display = "block";
-      target.textContent = `${t("pairCode")}: ${data.pair_code}\n${t("expires")}: ${data.expires_at}\n\n${t("primary")}:\n${data.startup_command}\n\n${t("fallback")}:\n${data.fallback_command || t("notAvailable")}`;
-      showMessage("ok", t("pairNodeOk", { role: translateRole(role) }));
-    }
-
-    async function runFull() {
-      const { response, data } = await apiJson("/api/v1/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_kind: "full", source: "manual" }),
-      });
-      if (!response.ok) {
-        showMessage("error", data.detail || data.error || t("triggerRunFailed"));
-        return;
-      }
-      showMessage("ok", t("triggerRunOk", { runId: data.run_id }));
-      await refreshDashboard();
-    }
-
-    function renderRuns(runs) {
-      const target = $("runsList");
-      target.innerHTML = runs.length ? runs.map((run) => `
-        <article class="run-card">
-          <div class="split">
-            <strong>${translateRunKind(run.run_kind)}</strong>
-            <span class="run-pill ${run.status}">${translateStatus(run.status)}</span>
-          </div>
-          <div class="metric-meta">
-            <span>${run.started_at}</span>
-            <span>${t("findings")}: ${run.findings_count || 0}</span>
-          </div>
-          <p style="margin-top:10px;">${escapeHtml((run.error || (run.conclusion && run.conclusion[0]) || t("noSummary")).toString())}</p>
-          <div class="actions" style="margin-top:10px;">
-            ${run.html_path ? `<a href="/${run.html_path}" target="_blank">report.html</a>` : ""}
-            ${run.raw_path ? `<a href="/${run.raw_path}" target="_blank">raw.json</a>` : ""}
-          </div>
-        </article>
-      `).join("") : `<p class="muted">${t("noRunsYet")}</p>`;
-
-      const latestCompleted = runs.find((item) => item.html_path);
-      $("latestReportLink").href = latestCompleted ? `/${latestCompleted.html_path}` : "#";
-    }
-
-    function renderAlerts(alerts) {
-      const target = $("alertsList");
-      target.innerHTML = alerts.length ? alerts.map((alert) => `
-        <article class="alert-card">
-          <div class="split">
-            <strong>${translateAlertKind(alert.kind)}</strong>
-            <span class="node-pill ${alert.severity === "error" ? "offline" : "push-only"}">${translateStatus(alert.severity)}</span>
-          </div>
-          <p style="margin-top:8px;">${escapeHtml(alert.message)}</p>
-          <div class="metric-meta"><span>${alert.created_at}</span><span>${translateStatus(alert.status)}</span></div>
-        </article>
-      `).join("") : `<p class="muted">${t("noAlerts")}</p>`;
-    }
-
-    function renderTrend(samples) {
-      const svg = $("cpuTrend");
-      if (!samples.length) {
-        svg.innerHTML = "";
-        return;
-      }
-      const values = samples.map((item) => Number(item.metric_value));
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const span = Math.max(1, max - min);
-      const points = values.map((value, index) => {
-        const x = (index / Math.max(1, values.length - 1)) * 600;
-        const y = 110 - (((value - min) / span) * 90);
-        return `${x},${y}`;
-      }).join(" ");
-      svg.innerHTML = `
-        <rect x="0" y="0" width="600" height="120" rx="14" fill="rgba(255,255,255,0.78)"></rect>
-        <polyline fill="none" stroke="#285943" stroke-width="3" points="${points}"></polyline>
-        <text x="12" y="18" fill="#5e6b63" font-size="12">${t("min")} ${min.toFixed(1)}%</text>
-        <text x="520" y="18" fill="#5e6b63" font-size="12">${t("max")} ${max.toFixed(1)}%</text>
-      `;
-    }
-
-    function renderNodes(nodes) {
-      const map = Object.fromEntries(nodes.map((node) => [node.role, node]));
-      $("nodesGrid").innerHTML = ["client", "relay", "server"].map((role) => nodeCard(role, map[role] || null)).join("");
-    }
-
-    function renderDashboard(state) {
-      currentState = state;
-      renderNodes(state.nodes || []);
-      fillSettings(state.settings, state.schedules || []);
-      renderRuns(state.latest_runs || []);
-      renderAlerts(state.alerts || []);
-      renderTrend((state.history && state.history.samples) || []);
-    }
-
-    async function refreshDashboard() {
-      const { data } = await apiJson("/api/v1/dashboard");
-      renderDashboard(data);
-    }
-
-    $("saveSettingsBtn").addEventListener("click", saveSettings);
-    $("runFullBtn").addEventListener("click", runFull);
-    $("refreshBtn").addEventListener("click", refreshDashboard);
-    $("localeSelect").addEventListener("change", (event) => setLocale(event.target.value));
-
-    setLocale(currentLocale);
-    setInterval(refreshDashboard, 10000);
-  </script>
+  <script>window.__INITIAL_STATE__ = {{ initial_state_json }};</script>
+  <script src="/assets/echarts.min.js"></script>
+  <script src="/assets/admin-dashboard.js"></script>
 </body>
 </html>

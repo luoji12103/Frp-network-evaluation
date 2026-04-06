@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from controller.panel_models import NodeUpsertRequest
 from controller.webui import create_app
+from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
 
 def build_client(tmp_path: Path) -> TestClient:
@@ -28,6 +30,92 @@ def login_admin(client: TestClient) -> None:
     assert response.headers["location"] == "/admin"
 
 
+def seed_dashboard_data(client: TestClient) -> str:
+    runtime = client.app.state.runtime
+    store = runtime.store
+    nodes = [
+        NodeUpsertRequest(node_name="client-1", role="client", runtime_mode="native-windows", agent_url="http://client.example:9870", enabled=True),
+        NodeUpsertRequest(node_name="relay-1", role="relay", runtime_mode="docker-linux", agent_url="http://relay.example:9870", enabled=True),
+        NodeUpsertRequest(node_name="server-1", role="server", runtime_mode="native-macos", agent_url="http://server.example:9870", enabled=True),
+    ]
+    for payload in nodes:
+        node = store.upsert_node(payload)
+        pair_code, _ = store.create_pair_code(node["id"])
+        store.pair_agent(
+            node_name=node["node_name"],
+            role=node["role"],
+            runtime_mode=node["runtime_mode"],
+            pair_code=pair_code,
+            agent_url=node["agent_url"],
+            advertise_url=node["agent_url"],
+        )
+        store.update_pull_status(node["id"], ok=True)
+
+    created_run_id = store.create_run("full", "test")
+    run_result = RunResult(
+        run_id="run-seeded",
+        project="mc-netprobe-monitor",
+        started_at=now_iso(),
+        finished_at=now_iso(),
+        environment={"platform": "test"},
+        probes=[
+            ProbeResult(
+                name="ping",
+                source="client",
+                target="relay",
+                success=True,
+                metrics={"packet_loss_pct": 0.0, "rtt_avg_ms": 10.0, "rtt_p95_ms": 12.0, "jitter_ms": 1.0},
+                metadata={"path_label": "client_to_relay", "source_node": "client"},
+            ),
+            ProbeResult(
+                name="ping",
+                source="relay",
+                target="server",
+                success=True,
+                metrics={"packet_loss_pct": 0.2, "rtt_avg_ms": 22.0, "rtt_p95_ms": 30.0, "jitter_ms": 4.0},
+                metadata={"path_label": "relay_to_server", "source_node": "relay"},
+            ),
+            ProbeResult(
+                name="tcp_handshake",
+                source="client",
+                target="mc_public",
+                success=True,
+                metrics={"connect_avg_ms": 165.0, "connect_p95_ms": 180.0, "connect_timeout_or_error_pct": 0.0},
+                metadata={"path_label": "client_to_mc_public", "source_node": "client"},
+            ),
+            ProbeResult(
+                name="throughput",
+                source="client",
+                target="iperf_public",
+                success=True,
+                metrics={"throughput_up_mbps": 48.0, "throughput_down_mbps": 52.0},
+                metadata={"path_label": "client_to_iperf_public", "source_node": "client"},
+            ),
+            ProbeResult(
+                name="system_snapshot",
+                source="client",
+                target="client",
+                success=True,
+                metrics={"cpu_usage_pct": 21.0, "memory_usage_pct": 31.0},
+                metadata={"path_label": "client_system", "source_node": "client"},
+            ),
+        ],
+        threshold_findings=[
+            ThresholdFinding(
+                path_label="client_to_mc_public",
+                probe_name="tcp_handshake",
+                metric="connect_avg_ms",
+                threshold=150.0,
+                actual=165.0,
+                message="connect_avg_ms exceeded the configured maximum",
+            )
+        ],
+        conclusion=["seeded run"],
+    )
+    store.finish_run(created_run_id, status="completed", run_result=run_result)
+    return created_run_id
+
+
 def test_public_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         response = client.get("/api/v1/public-dashboard")
@@ -43,10 +131,8 @@ def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None
         assert response.status_code == 200
         body = response.text
         assert 'id="localeSelect"' in body
-        assert '"zh-CN"' in body
-        assert '"en-US"' in body
         assert "Admin Login" in body
-        assert "管理员登录" in body
+        assert "/assets/public-dashboard.js" in body
 
 
 def test_admin_login_required_for_management_routes(tmp_path: Path) -> None:
@@ -66,7 +152,7 @@ def test_admin_login_allows_dashboard_access(tmp_path: Path) -> None:
         page = client.get("/admin")
         assert page.status_code == 200
         assert "Save Global Settings" in page.text
-        assert "保存全局配置" in page.text
+        assert "/assets/admin-dashboard.js" in page.text
 
         api = client.get("/api/v1/dashboard")
         assert api.status_code == 200
@@ -209,3 +295,78 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
         )
         assert second.status_code == 200
         assert runtime.store.get_job(job_id)["status"] == "completed"
+
+
+def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        seed_dashboard_data(client)
+        response = client.get("/api/v1/public-dashboard?time_range=7d")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["paths"]
+        assert payload["summary"]["active_alerts"] >= 1
+        assert "agent_url" not in payload["nodes"][0]
+
+
+def test_admin_analytics_routes_require_login(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        endpoints = [
+            "/api/v1/admin/filters",
+            "/api/v1/admin/overview",
+            "/api/v1/admin/timeseries",
+            "/api/v1/admin/path-health",
+            "/api/v1/admin/runs",
+            "/api/v1/admin/alerts",
+        ]
+        for endpoint in endpoints:
+            response = client.get(endpoint)
+            assert response.status_code == 401
+
+
+def test_admin_analytics_endpoints_and_alert_actions(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        run_id = seed_dashboard_data(client)
+
+        filters = client.get("/api/v1/admin/filters")
+        assert filters.status_code == 200
+        assert "client_to_relay" in filters.json()["paths"]
+
+        overview = client.get("/api/v1/admin/overview?time_range=24h")
+        assert overview.status_code == 200
+        assert overview.json()["kpis"]["active_alerts"] >= 1
+
+        timeseries = client.get("/api/v1/admin/timeseries?time_range=24h&metric_name=connect_avg_ms")
+        assert timeseries.status_code == 200
+        assert timeseries.json()["metric_name"] == "connect_avg_ms"
+        assert timeseries.json()["series"]
+
+        path_health = client.get("/api/v1/admin/path-health?time_range=24h&path_label=client_to_mc_public")
+        assert path_health.status_code == 200
+        assert path_health.json()["paths"][0]["path_label"] == "client_to_mc_public"
+
+        runs = client.get("/api/v1/admin/runs?time_range=24h&run_kind=full")
+        assert runs.status_code == 200
+        assert runs.json()["items"][0]["run_id"] == run_id
+
+        run_detail = client.get(f"/api/v1/admin/runs/{run_id}")
+        assert run_detail.status_code == 200
+        assert run_detail.json()["threshold_findings"]
+        assert run_detail.json()["probes"]
+
+        alerts = client.get("/api/v1/admin/alerts?time_range=24h")
+        assert alerts.status_code == 200
+        items = alerts.json()["items"]
+        assert items
+        alert_id = items[0]["id"]
+
+        ack = client.post(f"/api/v1/admin/alerts/{alert_id}/ack", json={"actor": "test-admin"})
+        assert ack.status_code == 200
+        assert ack.json()["alert"]["acknowledged"] is True
+
+        silence = client.post(
+            f"/api/v1/admin/alerts/{alert_id}/silence",
+            json={"silenced_until": "2099-01-01T00:00:00+00:00", "reason": "maintenance", "actor": "test-admin"},
+        )
+        assert silence.status_code == 200
+        assert silence.json()["alert"]["is_silenced"] is True

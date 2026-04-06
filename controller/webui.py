@@ -19,10 +19,13 @@ from urllib.parse import parse_qs, quote
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 
 from controller.agent_http_client import AgentHttpClient
 from controller.panel_models import (
+    AlertAcknowledgeRequest,
+    AlertSilenceRequest,
     AgentHeartbeatRequest,
     AgentHeartbeatResponse,
     AgentPairRequest,
@@ -44,6 +47,7 @@ RESULTS_DIR = Path("results")
 ADMIN_TEMPLATE_PATH = Path(__file__).with_name("webui_template.html")
 PUBLIC_TEMPLATE_PATH = Path(__file__).with_name("public_webui_template.html")
 LOGIN_TEMPLATE_PATH = Path(__file__).with_name("login_template.html")
+ASSETS_DIR = Path(__file__).with_name("assets")
 ADMIN_COOKIE_NAME = "mc_netprobe_admin"
 
 
@@ -233,6 +237,8 @@ def create_app(
         runtime.stop()
 
     app = FastAPI(title="mc-netprobe-panel", version="1.0", lifespan=lifespan)
+    if ASSETS_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
     def render_template(path: Path, **context: Any) -> HTMLResponse:
         template = Template(path.read_text(encoding="utf-8"))
@@ -298,8 +304,10 @@ def create_app(
         return runtime.store.build_public_dashboard_snapshot()
 
     @app.get("/api/v1/public-dashboard")
-    def public_dashboard() -> PublicDashboardSnapshot:
-        return PublicDashboardSnapshot.model_validate(runtime.store.build_public_dashboard_snapshot())
+    def public_dashboard(time_range: str = "24h") -> PublicDashboardSnapshot:
+        return PublicDashboardSnapshot.model_validate(
+            runtime.store.build_public_dashboard_snapshot(time_range_hours=_parse_time_range(time_range))
+        )
 
     @app.get("/api/v1/dashboard")
     def dashboard(request: Request) -> DashboardSnapshot:
@@ -324,6 +332,139 @@ def create_app(
         require_admin_api(request)
         hours = _parse_time_range(time_range)
         return HistoryResponse(samples=runtime.store.query_history(node=node, probe_name=probe_name, metric_name=metric_name, time_range_hours=hours))
+
+    @app.get("/api/v1/admin/filters")
+    def admin_filters(request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        return runtime.store.list_filter_options()
+
+    @app.get("/api/v1/admin/overview")
+    def admin_overview(
+        request: Request,
+        time_range: str = "24h",
+        role: str | None = None,
+        node: str | None = None,
+        path_label: str | None = None,
+    ) -> dict[str, Any]:
+        require_admin_api(request)
+        return runtime.store.build_admin_overview(
+            time_range_hours=_parse_time_range(time_range),
+            roles=_parse_csv_list(role),
+            nodes=_parse_csv_list(node),
+            path_labels=_parse_csv_list(path_label),
+        )
+
+    @app.get("/api/v1/admin/timeseries")
+    def admin_timeseries(
+        request: Request,
+        time_range: str = "24h",
+        role: str | None = None,
+        node: str | None = None,
+        path_label: str | None = None,
+        probe_name: str | None = None,
+        metric_name: str | None = None,
+        bucket: str = "auto",
+    ) -> dict[str, Any]:
+        require_admin_api(request)
+        return runtime.store.query_metric_series(
+            time_range_hours=_parse_time_range(time_range),
+            roles=_parse_csv_list(role),
+            nodes=_parse_csv_list(node),
+            path_labels=_parse_csv_list(path_label),
+            probe_names=_parse_csv_list(probe_name),
+            metric_name=metric_name,
+            bucket=bucket,
+        )
+
+    @app.get("/api/v1/admin/path-health")
+    def admin_path_health(
+        request: Request,
+        time_range: str = "24h",
+        role: str | None = None,
+        node: str | None = None,
+        path_label: str | None = None,
+    ) -> dict[str, Any]:
+        require_admin_api(request)
+        return runtime.store.build_path_health(
+            time_range_hours=_parse_time_range(time_range),
+            roles=_parse_csv_list(role),
+            nodes=_parse_csv_list(node),
+            path_labels=_parse_csv_list(path_label),
+        )
+
+    @app.get("/api/v1/admin/runs")
+    def admin_runs(
+        request: Request,
+        time_range: str = "24h",
+        run_kind: str | None = None,
+        status: str | None = None,
+        path_label: str | None = None,
+        has_findings: str | None = None,
+    ) -> dict[str, Any]:
+        require_admin_api(request)
+        items = runtime.store.query_runs(
+            time_range_hours=_parse_time_range(time_range),
+            run_kinds=_parse_csv_list(run_kind),
+            statuses=_parse_csv_list(status),
+            path_labels=_parse_csv_list(path_label),
+            has_findings=_parse_optional_bool(has_findings),
+        )
+        return {"items": items}
+
+    @app.get("/api/v1/admin/runs/{run_id}")
+    def admin_run_detail(run_id: str, request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        payload = runtime.store.get_run_detail(run_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return payload
+
+    @app.get("/api/v1/admin/alerts")
+    def admin_alerts(
+        request: Request,
+        time_range: str = "24h",
+        severity: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        path_label: str | None = None,
+        metric_name: str | None = None,
+        acknowledged: str | None = None,
+        anomaly_only: bool = False,
+        fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        require_admin_api(request)
+        return runtime.store.query_alert_events(
+            time_range_hours=_parse_time_range(time_range),
+            severities=_parse_csv_list(severity),
+            statuses=_parse_csv_list(status),
+            kinds=_parse_csv_list(kind),
+            path_labels=_parse_csv_list(path_label),
+            metric_names=_parse_csv_list(metric_name),
+            acknowledged=_parse_optional_bool(acknowledged),
+            anomaly_only=anomaly_only,
+            fingerprint=fingerprint,
+        )
+
+    @app.post("/api/v1/admin/alerts/{alert_id}/ack")
+    def admin_ack_alert(alert_id: int, payload: AlertAcknowledgeRequest, request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        alert = runtime.store.acknowledge_alert(alert_id=alert_id, actor=payload.actor)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return {"ok": True, "alert": alert}
+
+    @app.post("/api/v1/admin/alerts/{alert_id}/silence")
+    def admin_silence_alert(alert_id: int, payload: AlertSilenceRequest, request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        alert = runtime.store.silence_alert(
+            alert_id=alert_id,
+            silenced_until=payload.silenced_until,
+            reason=payload.reason,
+            actor=payload.actor,
+        )
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return {"ok": True, "alert": alert}
 
     @app.post("/api/v1/nodes")
     def upsert_node(payload: NodeUpsertRequest, request: Request) -> dict[str, Any]:
@@ -484,11 +625,37 @@ async def _parse_form_body(request: Request) -> dict[str, str]:
 def _parse_time_range(time_range: str) -> int:
     value = time_range.strip().lower()
     if value.endswith("h"):
-        value = value[:-1]
+        try:
+            return max(1, int(value[:-1]))
+        except ValueError:
+            return 24
+    if value.endswith("d"):
+        try:
+            return max(24, int(value[:-1]) * 24)
+        except ValueError:
+            return 24
     try:
         return max(1, int(value))
     except ValueError:
         return 24
+
+
+def _parse_csv_list(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or None
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    return None
 
 
 def main() -> int:

@@ -145,10 +145,11 @@ class PublicDashboardSnapshot(BaseModel):
 
     topology_id: int
     topology_name: str
-    summary: dict[str, int]
+    summary: dict[str, Any]
     nodes: list[dict[str, Any]]
     latest_runs: list[dict[str, Any]]
     alerts: list[dict[str, Any]]
+    paths: list[dict[str, Any]] = Field(default_factory=list)
     history: dict[str, Any]
 
 
@@ -156,6 +157,20 @@ class HistoryResponse(BaseModel):
     """Metric history query response."""
 
     samples: list[dict[str, Any]]
+
+
+class AlertAcknowledgeRequest(BaseModel):
+    """Acknowledge one or more alerts."""
+
+    actor: str = "admin"
+
+
+class AlertSilenceRequest(BaseModel):
+    """Silence a fingerprinted alert until a fixed time."""
+
+    silenced_until: str
+    reason: str = ""
+    actor: str = "admin"
 
 
 class ManualRunRequest(BaseModel):
