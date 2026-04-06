@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mc-netprobe panel</title>
+  <title>mc-netprobe 企业级网络面板</title>
   <style>
     :root {
       --bg: #edf1ea;
@@ -159,6 +159,14 @@
     .message.ok { background: #dcefe3; color: var(--ok); }
     .message.error { background: #f8ddd8; color: var(--danger); }
     .message.warn { background: #fff0cc; color: var(--warn); }
+    .status-meta {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 13px;
+    }
     .list, .table-wrap { display: grid; gap: 12px; }
     .table-wrap { overflow-x: auto; }
     table {
@@ -203,35 +211,38 @@
     <section class="hero">
       <div class="panel">
         <div class="topline">
-          <div class="pill" data-i18n="panelOnline">Panel online</div>
+          <div class="pill" data-i18n="panelOnline">面板在线</div>
           <div class="toolbar">
-            <label for="localeSelect" data-i18n="language">Language</label>
+            <label for="autoRefreshSelect" data-i18n="autoRefresh">自动刷新</label>
+            <select id="autoRefreshSelect" aria-label="Auto refresh"></select>
+            <label for="localeSelect" data-i18n="language">语言</label>
             <select id="localeSelect" aria-label="Language">
               <option value="zh-CN">中文</option>
               <option value="en-US">English</option>
             </select>
           </div>
         </div>
-        <h1 data-i18n="heroTitle">mc-netprobe Enterprise Network Panel</h1>
+        <h1 data-i18n="heroTitle">mc-netprobe 企业级网络面板</h1>
         <p data-i18n="heroDescription">
-          Persistent panel for role-aware network quality monitoring, anomaly detection, drilldown analysis, alert handling, and node management without storing SSH credentials.
+          常驻 Panel 负责角色化网络质量监控、异常检测、趋势分析、告警处理和节点管理，全程不保存 SSH 凭据。
         </p>
         <div class="toolbar" style="margin-top: 18px;">
           <div class="tab-row">
-            <a class="button" href="/" data-i18n="publicView">Public View</a>
-            <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">Save Global Settings</button>
-            <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">Run Full Monitoring</button>
-            <button type="button" id="refreshBtn" data-i18n="refreshPanel">Refresh Panel</button>
+            <a class="button" href="/" data-i18n="publicView">公开页面</a>
+            <button class="primary" type="button" id="saveSettingsBtn" data-i18n="saveSettings">保存全局配置</button>
+            <button class="danger" type="button" id="runFullBtn" data-i18n="runFull">手动执行完整监测</button>
+            <button type="button" id="refreshBtn" data-i18n="refreshPanel">刷新面板</button>
           </div>
           <form method="post" action="/logout">
-            <button type="submit" data-i18n="logout">Logout</button>
+            <button type="submit" data-i18n="logout">退出登录</button>
           </form>
         </div>
         <div id="messageBox" class="message"></div>
+        <div id="panelStatusMeta" class="status-meta"></div>
       </div>
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="recentAlertHeadline">Alert Pulse</h2>
+          <h2 data-i18n="recentAlertHeadline">告警脉搏</h2>
           <span class="muted" id="topologyCaption"></span>
         </div>
         <div id="headlineAlerts" class="list"></div>
@@ -240,102 +251,103 @@
 
     <section class="panel">
       <div class="section-head">
-        <h2 data-i18n="globalFilters">Global Filters</h2>
+        <h2 data-i18n="globalFilters">全局筛选</h2>
         <div class="toolbar">
-          <button type="button" id="applyFiltersBtn" class="primary" data-i18n="applyFilters">Apply Filters</button>
-          <button type="button" id="resetFiltersBtn" data-i18n="resetFilters">Reset Filters</button>
+          <button type="button" id="applyFiltersBtn" class="primary" data-i18n="applyFilters">应用筛选</button>
+          <button type="button" id="resetFiltersBtn" data-i18n="resetFilters">重置筛选</button>
         </div>
       </div>
       <div class="filters-grid">
-        <label><span data-i18n="timeRange">Time Range</span><select id="filter-time-range"></select></label>
-        <label><span data-i18n="roles">Roles</span><select id="filter-roles" multiple></select></label>
-        <label><span data-i18n="nodes">Nodes</span><select id="filter-nodes" multiple></select></label>
-        <label><span data-i18n="paths">Paths</span><select id="filter-paths" multiple></select></label>
-        <label><span data-i18n="probes">Probes</span><select id="filter-probes" multiple></select></label>
-        <label><span data-i18n="metric">Metric</span><select id="filter-metric"></select></label>
-        <label><span data-i18n="runKinds">Run Kinds</span><select id="filter-run-kinds" multiple></select></label>
-        <label><span data-i18n="severities">Severities</span><select id="filter-severities" multiple></select></label>
-        <label><span data-i18n="alertStatuses">Alert Status</span><select id="filter-alert-statuses" multiple></select></label>
-        <label><span data-i18n="onlyAnomalies">Only anomalies</span><select id="filter-only-anomalies"><option value="false">false</option><option value="true">true</option></select></label>
-        <label><span data-i18n="includeResolved">Include resolved</span><select id="filter-include-resolved"><option value="false">false</option><option value="true">true</option></select></label>
-        <label><span data-i18n="pathFocus">Path focus</span><select id="path-focus-select"></select></label>
+        <label><span data-i18n="timeRange">时间范围</span><select id="filter-time-range"></select></label>
+        <label><span data-i18n="roles">角色</span><select id="filter-roles" multiple></select></label>
+        <label><span data-i18n="nodes">节点</span><select id="filter-nodes" multiple></select></label>
+        <label><span data-i18n="paths">路径</span><select id="filter-paths" multiple></select></label>
+        <label><span data-i18n="probes">探针</span><select id="filter-probes" multiple></select></label>
+        <label><span data-i18n="metric">指标</span><select id="filter-metric"></select></label>
+        <label><span data-i18n="runKinds">运行类型</span><select id="filter-run-kinds" multiple></select></label>
+        <label><span data-i18n="severities">严重级别</span><select id="filter-severities" multiple></select></label>
+        <label><span data-i18n="alertStatuses">告警状态</span><select id="filter-alert-statuses" multiple></select></label>
+        <label><span data-i18n="onlyAnomalies">仅异常</span><select id="filter-only-anomalies"><option value="false">否</option><option value="true">是</option></select></label>
+        <label><span data-i18n="includeResolved">包含已恢复</span><select id="filter-include-resolved"><option value="false">否</option><option value="true">是</option></select></label>
+        <label><span data-i18n="pathFocus">路径聚焦</span><select id="path-focus-select"></select></label>
       </div>
+      <div id="filtersSummary" class="status-meta"></div>
     </section>
 
     <section class="panel">
       <div class="tab-row" id="tabButtons">
-        <button type="button" class="tab-button active" data-tab="overview" data-i18n="tabOverview">Overview</button>
-        <button type="button" class="tab-button" data-tab="path" data-i18n="tabPathExplorer">Path Explorer</button>
-        <button type="button" class="tab-button" data-tab="metric" data-i18n="tabMetricExplorer">Metric Explorer</button>
-        <button type="button" class="tab-button" data-tab="alerts" data-i18n="tabAlerts">Alerts</button>
-        <button type="button" class="tab-button" data-tab="runs" data-i18n="tabRuns">Runs</button>
-        <button type="button" class="tab-button" data-tab="management" data-i18n="tabManagement">Management</button>
+        <button type="button" class="tab-button active" data-tab="overview" data-i18n="tabOverview">总览</button>
+        <button type="button" class="tab-button" data-tab="path" data-i18n="tabPathExplorer">路径分析</button>
+        <button type="button" class="tab-button" data-tab="metric" data-i18n="tabMetricExplorer">指标分析</button>
+        <button type="button" class="tab-button" data-tab="alerts" data-i18n="tabAlerts">告警中心</button>
+        <button type="button" class="tab-button" data-tab="runs" data-i18n="tabRuns">运行记录</button>
+        <button type="button" class="tab-button" data-tab="management" data-i18n="tabManagement">管理</button>
       </div>
     </section>
 
     <section id="tab-overview" class="tab-section">
       <div class="panel">
-        <h2 data-i18n="overviewKpis">Overview KPIs</h2>
+        <h2 data-i18n="overviewKpis">总览 KPI</h2>
         <div id="overviewKpis" class="grid-four"></div>
       </div>
       <div class="grid-two">
         <div class="panel">
-          <h2 data-i18n="statusDistribution">Status Distribution</h2>
+          <h2 data-i18n="statusDistribution">状态分布</h2>
           <div id="statusChart" class="chart"></div>
         </div>
         <div class="panel">
-          <h2 data-i18n="recentAnomalies">Recent Anomalies</h2>
+          <h2 data-i18n="recentAnomalies">最近异常</h2>
           <div id="overviewAnomalies" class="list"></div>
         </div>
       </div>
       <div class="panel">
-        <h2 data-i18n="pathHealthHeat">Path Health Heat</h2>
+        <h2 data-i18n="pathHealthHeat">路径健康热力图</h2>
         <div id="overviewPathGrid" class="grid-four"></div>
       </div>
       <div class="grid-two">
-        <div class="panel"><h2 data-i18n="latencyTrend">Latency Trend</h2><div id="overviewLatencyChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="lossTrend">Loss Trend</h2><div id="overviewLossChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="throughputTrend">Throughput Trend</h2><div id="overviewThroughputChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="systemTrend">System Trend</h2><div id="overviewSystemChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="latencyTrend">延迟趋势</h2><div id="overviewLatencyChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="lossTrend">丢包趋势</h2><div id="overviewLossChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="throughputTrend">吞吐趋势</h2><div id="overviewThroughputChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="systemTrend">系统趋势</h2><div id="overviewSystemChart" class="chart"></div></div>
       </div>
     </section>
 
     <section id="tab-path" class="tab-section hidden">
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="pathExplorerHeadline">Path Explorer</h2>
+          <h2 data-i18n="pathExplorerHeadline">路径分析</h2>
           <span class="muted" id="pathExplorerCaption"></span>
         </div>
         <div id="pathSummaryCards" class="grid-four"></div>
       </div>
       <div class="grid-two">
-        <div class="panel"><h2 data-i18n="latencyTrend">Latency Trend</h2><div id="pathLatencyChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="lossTrend">Loss Trend</h2><div id="pathLossChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="throughputTrend">Throughput Trend</h2><div id="pathThroughputChart" class="chart"></div></div>
-        <div class="panel"><h2 data-i18n="loadTrend">Load Impact</h2><div id="pathLoadChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="latencyTrend">延迟趋势</h2><div id="pathLatencyChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="lossTrend">丢包趋势</h2><div id="pathLossChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="throughputTrend">吞吐趋势</h2><div id="pathThroughputChart" class="chart"></div></div>
+        <div class="panel"><h2 data-i18n="loadTrend">负载影响</h2><div id="pathLoadChart" class="chart"></div></div>
       </div>
     </section>
 
     <section id="tab-metric" class="tab-section hidden">
       <div class="panel">
         <div class="section-head">
-          <h2 data-i18n="metricExplorerHeadline">Metric Explorer</h2>
+          <h2 data-i18n="metricExplorerHeadline">指标分析</h2>
           <span class="muted" id="metricExplorerCaption"></span>
         </div>
         <div class="metric-meta">
-          <span data-i18n="metricExplorerHint">One metric, up to four filtered series, thresholds and anomaly markers included.</span>
+          <span data-i18n="metricExplorerHint">单指标、多序列、阈值线和异常点联动，最多同时对比 4 条序列。</span>
         </div>
         <div id="metricExplorerChart" class="chart"></div>
       </div>
       <div class="panel">
-        <h2 data-i18n="metricSeriesSummary">Metric Series Summary</h2>
+        <h2 data-i18n="metricSeriesSummary">指标序列摘要</h2>
         <div id="metricSeriesSummary" class="grid-four"></div>
       </div>
     </section>
 
     <section id="tab-alerts" class="tab-section hidden">
       <div class="panel">
-        <h2 data-i18n="alertCenter">Alert Center</h2>
+        <h2 data-i18n="alertCenter">告警中心</h2>
         <div id="alertSummaryCards" class="grid-four"></div>
       </div>
       <div class="panel">
@@ -343,14 +355,14 @@
           <table>
             <thead>
               <tr>
-                <th data-i18n="severity">Severity</th>
-                <th data-i18n="kind">Kind</th>
-                <th data-i18n="path">Path</th>
-                <th data-i18n="metric">Metric</th>
-                <th data-i18n="actual">Actual</th>
-                <th data-i18n="threshold">Threshold</th>
-                <th data-i18n="status">Status</th>
-                <th data-i18n="actions">Actions</th>
+                <th data-i18n="severity">严重级别</th>
+                <th data-i18n="kind">类型</th>
+                <th data-i18n="path">路径</th>
+                <th data-i18n="metric">指标</th>
+                <th data-i18n="actual">实际值</th>
+                <th data-i18n="threshold">阈值</th>
+                <th data-i18n="status">状态</th>
+                <th data-i18n="actions">操作</th>
               </tr>
             </thead>
             <tbody id="alertsTableBody"></tbody>
@@ -362,17 +374,17 @@
     <section id="tab-runs" class="tab-section hidden">
       <div class="management-grid">
         <div class="panel">
-          <h2 data-i18n="runsHeadline">Runs</h2>
+          <h2 data-i18n="runsHeadline">运行记录</h2>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th data-i18n="runId">Run</th>
-                  <th data-i18n="runKind">Run Kind</th>
-                  <th data-i18n="status">Status</th>
-                  <th data-i18n="startedAt">Started</th>
-                  <th data-i18n="findings">Findings</th>
-                  <th data-i18n="actions">Actions</th>
+                  <th data-i18n="runId">运行</th>
+                  <th data-i18n="runKind">运行类型</th>
+                  <th data-i18n="status">状态</th>
+                  <th data-i18n="startedAt">开始时间</th>
+                  <th data-i18n="findings">发现项</th>
+                  <th data-i18n="actions">操作</th>
                 </tr>
               </thead>
               <tbody id="runsTableBody"></tbody>
@@ -380,7 +392,7 @@
           </div>
         </div>
         <div class="panel">
-          <h2 data-i18n="runDetail">Run Detail</h2>
+          <h2 data-i18n="runDetail">运行详情</h2>
           <div id="runDetail"></div>
         </div>
       </div>
@@ -389,10 +401,10 @@
     <section id="tab-management" class="tab-section hidden">
       <div class="management-grid">
         <div class="panel">
-          <h2 data-i18n="topologyThresholdsSchedules">Topology, Thresholds & Schedules</h2>
+          <h2 data-i18n="topologyThresholdsSchedules">拓扑、阈值与调度</h2>
           <div class="grid-two">
             <div class="card">
-              <h3 data-i18n="serviceEndpoints">Service Endpoints</h3>
+              <h3 data-i18n="serviceEndpoints">服务端点</h3>
               <div class="grid-two">
                 <label><span data-i18n="field.relayProbeHost">relay_probe host</span><input id="relay_probe_host" type="text"></label>
                 <label><span data-i18n="field.relayProbePort">relay_probe port</span><input id="relay_probe_port" type="number"></label>
@@ -407,7 +419,7 @@
               </div>
             </div>
             <div class="card">
-              <h3 data-i18n="thresholdsDurations">Thresholds & Durations</h3>
+              <h3 data-i18n="thresholdsDurations">阈值与时长</h3>
               <div class="grid-two">
                 <label><span data-i18n="field.pingAvgMax">Ping avg max ms</span><input id="ping_rtt_avg_max" type="number" step="0.1"></label>
                 <label><span data-i18n="field.pingJitterMax">Ping jitter max ms</span><input id="ping_jitter_max" type="number" step="0.1"></label>
@@ -427,18 +439,18 @@
           </div>
         </div>
         <div class="panel">
-          <h2 data-i18n="pairingConsole">Pairing Console</h2>
+          <h2 data-i18n="pairingConsole">配对控制台</h2>
           <div class="metric-meta">
-            <span data-i18n="pairingHint">Generate commands for Linux Docker relay, macOS launchd server, or Windows scheduled task client agents.</span>
+            <span data-i18n="pairingHint">为 Linux Docker relay、macOS launchd server、Windows 计划任务 client 生成命令。</span>
           </div>
           <div class="command-meta" style="margin-top: 12px;">
-            <span class="muted" data-i18n="primaryCommand">Primary Command</span>
-            <button type="button" id="copyPrimaryBtn" data-i18n="copy">Copy</button>
+            <span class="muted" data-i18n="primaryCommand">主命令</span>
+            <button type="button" id="copyPrimaryBtn" data-i18n="copy">复制</button>
           </div>
           <div id="pairPrimaryBox" class="command-box"></div>
           <div class="command-meta" style="margin-top: 14px;">
-            <span class="muted" data-i18n="fallbackCommand">Fallback Command</span>
-            <button type="button" id="copyFallbackBtn" data-i18n="copy">Copy</button>
+            <span class="muted" data-i18n="fallbackCommand">兜底命令</span>
+            <button type="button" id="copyFallbackBtn" data-i18n="copy">复制</button>
           </div>
           <div id="pairFallbackBox" class="command-box"></div>
         </div>
