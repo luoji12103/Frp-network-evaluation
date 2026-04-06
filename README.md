@@ -1,242 +1,236 @@
 # mc-netprobe
 
-`mc-netprobe` is a Python 3.11+ network evaluation toolkit for Minecraft deployments behind FRP.
+`mc-netprobe` is a persistent monitoring toolkit for Minecraft + FRP network paths.
 
-It focuses on three kinds of measurements:
+The repository now uses a `Panel + Agent` architecture:
 
-- end-to-end client to `mc_public`
-- segmented path checks (`client -> relay`, `relay -> server`)
-- load-driven latency inflation while `iperf3` is saturating the path
+- `panel`: central FastAPI dashboard, scheduler, history store, and report exporter
+- `agent`: long-lived node process that runs probes locally and reports back to the panel
+- `probes`: reusable cross-platform measurements for ping, TCP, throughput, and system snapshots
 
-## Supported runtime targets
+The panel no longer stores SSH credentials or private keys.
 
-- Windows 10/11 as a formal `client` node
-- macOS as `client` or `server`
-- Ubuntu/Debian as `relay`
+## Architecture
 
-Windows is supported as a runtime client, not only as a development machine.
+The monitoring topology is still the same logical three-role setup:
 
-## Repository layout
+- `client`: Windows game client node
+- `relay`: Linux FRP relay / public entry node
+- `server`: macOS game server node
 
-The project keeps a strict separation of responsibilities:
+What changed is the execution model:
 
-- `probes/`: parsing and measurement logic
-- `agents/`: single-task wrappers used locally or over SSH
-- `controller/`: orchestration and remote execution
-- `exporters/`: `raw.json`, `summary.csv`, `report.html`
-- `config/`: example YAML inputs
+- The panel schedules work and aggregates results.
+- Each node runs a local agent.
+- Agents either receive direct pull-mode jobs from the panel or fetch queued jobs through heartbeat.
 
-## Quick start
+## Main Capabilities
 
-### Windows PowerShell
+- Continuous node health and network monitoring
+- Threshold-based alerts
+- Historical metric storage in SQLite
+- Manual full-run execution from the panel
+- Exported `raw.json`, `summary.csv`, and `report.html` for each completed run
+- Mixed deployment model:
+  - Linux relay: Docker agent
+  - macOS server: native persistent agent
+  - Windows client: native persistent agent
 
-```powershell
-.\bin\bootstrap_windows.ps1
-python main.py --topology config/topology.example.yaml --thresholds config/thresholds.example.yaml --scenarios config/scenarios.example.yaml
+## Runtime Requirements
+
+- Python 3.11+
+- `iperf3`
+- `ping`
+- Docker + Docker Compose Plugin for the Linux relay or central panel container
+
+## Install Dependencies
+
+### Linux
+
+```bash
+bash bin/bootstrap_linux.sh
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
 ```
 
 ### macOS
 
 ```bash
 bash bin/bootstrap_mac.sh
-python3 main.py --topology config/topology.example.yaml --thresholds config/thresholds.example.yaml --scenarios config/scenarios.example.yaml
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
 ```
-
-### Linux
-
-```bash
-bash bin/bootstrap_linux.sh
-python3 main.py --topology config/topology.example.yaml --thresholds config/thresholds.example.yaml --scenarios config/scenarios.example.yaml
-```
-
-## Web UI
-
-If you want a single page to manage the three-node test architecture and trigger runs without editing YAML manually, start the built-in Web UI.
 
 ### Windows
 
 ```powershell
-.\bin\start_webui.ps1
+.\bin\bootstrap_windows.ps1
+python -m pip install -r requirements-dev.txt
 ```
 
-### macOS / Linux
+## Start The Panel
+
+### Native
 
 ```bash
+source .venv/bin/activate
 bash bin/start_webui.sh
 ```
 
-Then open `http://127.0.0.1:8765`.
-
-The Web UI lets you:
-
-- configure client / relay / server connection details
-- save a reusable YAML-backed topology
-- trigger a background test run
-- watch recent runs and open `report.html` directly from the browser
-
-## Docker one-click startup
-
-If you want the Web UI and Python runtime fully containerized, use Docker Compose.
-
-Prerequisite: Docker Desktop or the Docker daemon must already be running before you start the helper script.
-
-### Windows PowerShell
-
-```powershell
-.\bin\start_webui_docker.ps1
-```
-
-### macOS / Linux
-
-```bash
-bash bin/start_webui_docker.sh
-```
-
-This will:
-
-- build the container image
-- start the Web UI with `docker compose up --build -d`
-- persist Web UI config in `config/webui/`
-- persist run artifacts in `results/`
-- persist runtime logs in `logs/`
-- mount an SSH directory so the container can reach your remote nodes
-
-Default URL:
+Open:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-### SSH keys inside the container
-
-By default the helper script tries to mount your normal SSH directory:
-
-- Windows: `%USERPROFILE%\.ssh`
-- macOS / Linux: `~/.ssh`
-
-If you want to use a dedicated directory instead, set:
-
-```text
-MC_NETPROBE_SSH_DIR
-```
-
-before running the helper script.
-
-If you do not want to mount your normal SSH directory, you can also place keys in:
-
-```text
-docker/ssh/
-```
-
-The Compose service exposes the Web UI only. The actual test traffic still runs against your configured client / relay / server nodes through SSH and direct TCP connectivity.
-
-## Beginner quickstart scripts
-
-For a real three-machine test, start from these role-specific scripts instead of editing YAML by hand.
-
-### 1. Mac server
+### Docker
 
 ```bash
-bash bin/start_server_mac.sh
+bash bin/start_webui_docker.sh
 ```
 
-This script will:
+This starts the central panel container and persists:
 
-- check `sshd`, `iperf3`, and the local Minecraft port
-- optionally let you input a Minecraft startup command and run it in the background
-- write a shareable summary to `config/generated/server-mac.generated.yaml`
+- `./data`
+- `./config/agent`
+- `./results`
+- `./logs`
 
-### 2. Relay Linux / FRPS host
+## Pair Nodes
+
+The operator flow is:
+
+1. Open the panel.
+2. Save one card for each role: `client`, `relay`, `server`.
+3. Click `生成配对命令`.
+4. Run the generated command on the target node.
+5. Wait for the agent to appear as `online`, `push-only`, or `heartbeat-degraded`.
+
+The panel stores:
+
+- node metadata
+- pair code hashes
+- node token hashes
+- schedules
+- runs
+- history
+- alerts
+
+The panel does not store:
+
+- SSH usernames
+- SSH private keys
+- system passwords
+
+## Relay Agent On Linux Docker
+
+The recommended relay deployment is Docker:
 
 ```bash
-bash bin/start_relay_linux.sh
+PANEL_URL="http://panel-host:8765" \
+PAIR_CODE="<from-panel>" \
+NODE_NAME="relay-1" \
+ROLE="relay" \
+RUNTIME_MODE="docker-linux" \
+AGENT_PORT="9870" \
+docker compose -f docker/relay-agent.compose.yml up -d --build
 ```
 
-This script will:
+## Server Agent On macOS
 
-- check `sshd`, `frps`, and the public FRP ports
-- optionally let you input an `frps` startup command
-- write a shareable summary to `config/generated/relay-linux.generated.yaml`
+Recommended default:
 
-### 3. Windows client
+```bash
+bash bin/install_server_agent_launchd.sh \
+  --panel-url "http://panel-host:8765" \
+  --pair-code "<from-panel>" \
+  --node-name "server-1" \
+  --role "server" \
+  --listen-port 9870
+```
+
+Simple fallback:
+
+```bash
+bash bin/start_agent_tmux.sh \
+  --config config/agent/server.yaml \
+  --panel-url "http://panel-host:8765" \
+  --pair-code "<from-panel>" \
+  --node-name "server-1" \
+  --role server \
+  --runtime-mode native-macos \
+  --listen-port 9870
+```
+
+## Client Agent On Windows
+
+Recommended default:
 
 ```powershell
-.\bin\start_client_windows.ps1
+powershell -ExecutionPolicy Bypass -File bin/install_client_agent.ps1 `
+  -PanelUrl "http://panel-host:8765" `
+  -PairCode "<from-panel>" `
+  -NodeName "client-1" `
+  -Role "client" `
+  -ListenPort 9870
 ```
 
-This script will:
+## Panel API
 
-- ask for relay/server/public entry information if it is still missing
-- generate `config/topology.quickstart.yaml`
-- optionally launch a full test immediately from the Windows client
+Implemented panel endpoints:
 
-The quickstart scripts are designed for small-step manual setup. If an IP, username, path, or port is not known yet, they will prompt for it.
+- `GET /api/v1/dashboard`
+- `POST /api/v1/dashboard`
+- `POST /api/v1/nodes`
+- `GET /api/v1/nodes/{id}`
+- `POST /api/v1/nodes/{id}/pair-code`
+- `POST /api/v1/agents/pair`
+- `POST /api/v1/agents/heartbeat`
+- `POST /api/v1/runs`
+- `GET /api/v1/history`
 
-## Configuration
+Compatibility health endpoint:
 
-### `config/topology.example.yaml`
+- `GET /api/state`
 
-Defines:
+## Agent API
 
-- `nodes.client`
-- `nodes.relay`
-- `nodes.server`
-- `services.relay_probe`
-- `services.mc_public`
-- `services.iperf_public`
-- `services.mc_local`
-- `services.iperf_local`
+Implemented agent endpoints:
 
-Each node must define:
+- `GET /api/v1/status`
+- `POST /api/v1/pair`
+- `POST /api/v1/heartbeat`
+- `POST /api/v1/jobs/run`
+- `GET /api/v1/results/{run_id}`
 
-- `role`
-- `host`
-- `os` with one of `windows`, `macos`, `linux`
-
-Remote nodes additionally need:
-
-- `ssh_user`
-- `ssh_port`
-- `project_root`
-- `python_bin`
-
-For local debug you can mark nodes as `local: true`.
-
-## Notes
-
-- `iperf3` is required for throughput and load-inflation probes.
-- If `iperf3` is missing, the run still completes and records the failure clearly in `raw.json`.
-- Windows system snapshots intentionally report `load_avg_* = null` with `unsupported_on_windows` metadata.
-
-## Agent examples
+## Testing
 
 ```bash
-python -m agents.agent_client --task ping --host 127.0.0.1 --count 4 --json
-python -m agents.agent_server --task start_iperf_server --port 5201 --one-off --json
-python -m agents.agent_relay --task tcp_probe --host 192.168.1.20 --port 25565 --attempts 6 --json
+source .venv/bin/activate
+python -m pytest -q
 ```
 
-## Output
+Current automated coverage includes:
 
-Every run creates a dedicated directory:
+- panel defaults and pairing
+- heartbeat job leasing and completion
+- agent direct task execution and cached result lookup
+- composite full-run persistence
+- probe parsing and exporters
 
-```text
-results/run-YYYYMMDD-HHMMSS/
+## Legacy One-Shot CLI
+
+The old one-shot YAML CLI still exists for local debugging:
+
+```bash
+python main.py \
+  --topology config/topology.example.yaml \
+  --thresholds config/thresholds.example.yaml \
+  --scenarios config/scenarios.example.yaml
 ```
 
-And writes:
-
-- `raw.json`
-- `summary.csv`
-- `report.html`
-
-## Local skill
-
-The repository-local `skill/codex-change-trace` skill has been copied into the Codex skills directory.
-Restart Codex to pick it up in a new session.
+It is no longer the primary deployment path.
 
 ## Handoff
-
-If you want to continue development and testing on a Linux server, see:
 
 - `docs/HANDOFF-LINUX.md`

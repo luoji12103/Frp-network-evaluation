@@ -1,428 +1,299 @@
-"""Simple built-in Web UI for configuring and running network tests."""
+"""FastAPI-based monitoring panel for persistent agents."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import threading
-import traceback
-import webbrowser
-from dataclasses import dataclass, field
-from datetime import datetime
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-import yaml
+import uvicorn
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from jinja2 import Template
 
-from controller.pipeline import RunArtifacts, execute_run
-from controller.scenario import (
-    ScenariosConfig,
-    ThresholdsConfig,
-    TopologyConfig,
-    load_scenarios,
-    load_thresholds,
+from controller.agent_http_client import AgentHttpClient
+from controller.panel_models import (
+    AgentHeartbeatRequest,
+    AgentHeartbeatResponse,
+    AgentPairRequest,
+    AgentPairResponse,
+    DashboardSnapshot,
+    HistoryResponse,
+    ManualRunRequest,
+    NodeUpsertRequest,
+    PairCodeResponse,
+    PanelJobDispatch,
+    PanelSettings,
 )
+from controller.panel_orchestrator import PanelOrchestrator
+from controller.panel_store import PanelStore
 
 
-WEBUI_CONFIG_DIR = Path("config/webui")
-WEBUI_TOPOLOGY_PATH = WEBUI_CONFIG_DIR / "topology.webui.yaml"
-WEBUI_THRESHOLDS_PATH = WEBUI_CONFIG_DIR / "thresholds.webui.yaml"
-WEBUI_SCENARIOS_PATH = WEBUI_CONFIG_DIR / "scenarios.webui.yaml"
 RESULTS_DIR = Path("results")
 TEMPLATE_PATH = Path(__file__).with_name("webui_template.html")
 
 
-@dataclass(slots=True)
-class RunRecord:
-    """Serializable run metadata for the dashboard."""
+class PanelRuntime:
+    """Own long-lived services backing the FastAPI panel."""
 
-    run_id: str
-    status: str
-    started_at: str
-    finished_at: str | None = None
-    error: str | None = None
-    output_dir: str | None = None
-    report_url: str | None = None
-    raw_url: str | None = None
-    findings_count: int = 0
-    conclusion: list[str] = field(default_factory=list)
+    def __init__(self, db_path: str | Path = "data/monitor.db", start_background: bool = True) -> None:
+        self.store = PanelStore(db_path=db_path)
+        self.orchestrator = PanelOrchestrator(store=self.store, output_root=RESULTS_DIR)
+        self.http = AgentHttpClient(store=self.store)
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._start_background = start_background
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "status": self.status,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-            "error": self.error,
-            "output_dir": self.output_dir,
-            "report_url": self.report_url,
-            "raw_url": self.raw_url,
-            "findings_count": self.findings_count,
-            "conclusion": self.conclusion,
-        }
+    def start(self) -> None:
+        if not self._start_background or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
 
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
 
-class WebUIState:
-    """In-memory state and persisted config for the dashboard."""
+    def _loop(self) -> None:
+        while not self._stop_event.is_set():
+            self.store.mark_stale_nodes(stale_after_sec=45)
+            self._refresh_pull_health()
+            if not self.store.has_active_run():
+                for schedule in self.store.due_schedules():
+                    self.store.mark_schedule_dispatched(schedule_id=int(schedule["id"]), interval_sec=int(schedule["interval_sec"]))
+                    if not self._schedule_ready(str(schedule["run_kind"])):
+                        continue
+                    started = self.orchestrator.run_scheduled_due(run_kind=str(schedule["run_kind"]))
+                    if started is not None:
+                        break
+            self._stop_event.wait(3.0)
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._runs: list[RunRecord] = []
-        self._is_running = False
-        self.config = load_dashboard_payload()
+    def _refresh_pull_health(self) -> None:
+        for node in self.store.list_nodes():
+            if not node["paired"] or not node["agent_url"]:
+                continue
+            try:
+                self.http.check_status(node)
+                self.store.update_pull_status(int(node["id"]), ok=True)
+            except Exception as exc:
+                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc))
 
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            latest = self._runs[0].to_dict() if self._runs else None
-            return {
-                "config": self.config,
-                "is_running": self._is_running,
-                "latest_run": latest,
-                "runs": [record.to_dict() for record in self._runs[:10]],
-            }
-
-    def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        warnings = collect_config_warnings(payload)
-        topology = TopologyConfig.model_validate(payload["topology"])
-        thresholds = ThresholdsConfig.model_validate(payload["thresholds"])
-        scenarios = ScenariosConfig.model_validate(payload["scenarios"])
-
-        WEBUI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        WEBUI_TOPOLOGY_PATH.write_text(yaml.safe_dump(topology.model_dump(), sort_keys=False, allow_unicode=True), encoding="utf-8")
-        WEBUI_THRESHOLDS_PATH.write_text(yaml.safe_dump(thresholds.model_dump(), sort_keys=False, allow_unicode=True), encoding="utf-8")
-        WEBUI_SCENARIOS_PATH.write_text(yaml.safe_dump(scenarios.model_dump(), sort_keys=False, allow_unicode=True), encoding="utf-8")
-        with self._lock:
-            self.config = payload
-        return {"warnings": warnings}
-
-    def start_run(self, payload: dict[str, Any]) -> RunRecord:
-        errors = collect_run_blockers(payload)
-        if errors:
-            raise ValueError("\n".join(errors))
-
-        self.save_config(payload)
-        with self._lock:
-            if self._is_running:
-                raise RuntimeError("A test run is already in progress.")
-            self._is_running = True
-            run_id = datetime.now().astimezone().strftime("run-%Y%m%d-%H%M%S")
-            record = RunRecord(
-                run_id=run_id,
-                status="running",
-                started_at=datetime.now().astimezone().isoformat(),
-            )
-            self._runs.insert(0, record)
-
-        thread = threading.Thread(target=self._run_background, args=(record.run_id,), daemon=True)
-        thread.start()
-        return record
-
-    def _run_background(self, run_id: str) -> None:
-        try:
-            topology = TopologyConfig.model_validate(self.config["topology"])
-            thresholds = ThresholdsConfig.model_validate(self.config["thresholds"])
-            scenarios = ScenariosConfig.model_validate(self.config["scenarios"])
-            artifacts = run_async_pipeline(
-                topology=topology,
-                thresholds=thresholds,
-                scenarios=scenarios,
-                run_id=run_id,
-            )
-            self._mark_run_completed(run_id, artifacts)
-        except Exception as exc:  # pragma: no cover - defensive path
-            self._mark_run_failed(run_id, f"{exc}\n\n{traceback.format_exc()}")
-
-    def _mark_run_completed(self, run_id: str, artifacts: RunArtifacts) -> None:
-        with self._lock:
-            self._is_running = False
-            record = self._find_record(run_id)
-            record.status = "completed"
-            record.finished_at = datetime.now().astimezone().isoformat()
-            record.output_dir = str(artifacts.output_dir)
-            record.report_url = "/" + artifacts.html_path.as_posix()
-            record.raw_url = "/" + artifacts.raw_path.as_posix()
-            record.findings_count = len(artifacts.run_result.threshold_findings)
-            record.conclusion = artifacts.run_result.conclusion
-
-    def _mark_run_failed(self, run_id: str, error: str) -> None:
-        with self._lock:
-            self._is_running = False
-            record = self._find_record(run_id)
-            record.status = "failed"
-            record.finished_at = datetime.now().astimezone().isoformat()
-            record.error = error
-
-    def _find_record(self, run_id: str) -> RunRecord:
-        for record in self._runs:
-            if record.run_id == run_id:
-                return record
-        raise KeyError(run_id)
-
-
-def run_async_pipeline(
-    topology: TopologyConfig,
-    thresholds: ThresholdsConfig,
-    scenarios: ScenariosConfig,
-    run_id: str,
-) -> RunArtifacts:
-    """Run the async pipeline from a background thread."""
-    import asyncio
-
-    return asyncio.run(
-        execute_run(
-            topology=topology,
-            thresholds=thresholds,
-            scenarios=scenarios,
-            output_root=RESULTS_DIR,
-            run_id=run_id,
-        )
-    )
+    def _schedule_ready(self, run_kind: str) -> bool:
+        nodes = {role: self.store.get_node_by_role(role) for role in ("client", "relay", "server")}
+        paired_enabled = [node for node in nodes.values() if node and node["paired"] and node["enabled"]]
+        if run_kind == "system":
+            return bool(paired_enabled)
+        return len(paired_enabled) == 3
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI parser for the Web UI server."""
-    parser = argparse.ArgumentParser(description="mc-netprobe Web UI")
-    parser.add_argument("--host", default=os.environ.get("MC_NETPROBE_WEBUI_HOST", "127.0.0.1"))
-    parser.add_argument("--port", default=int(os.environ.get("MC_NETPROBE_WEBUI_PORT", "8765")), type=int)
-    parser.add_argument("--open-browser", action="store_true")
+    """Build CLI args for the panel server."""
+    parser = argparse.ArgumentParser(description="mc-netprobe monitoring panel")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", default=8765, type=int)
+    parser.add_argument("--db-path", default="data/monitor.db")
     return parser
 
 
-def main() -> int:
-    """Run the Web UI HTTP server."""
-    args = build_parser().parse_args()
-    state = WebUIState()
-    handler = build_handler(state)
-    server = ThreadingHTTPServer((args.host, args.port), handler)
-    url = f"http://{args.host}:{args.port}"
-    print(f"Web UI running at {url}")
-    if args.open_browser:
-        webbrowser.open(url)
+def create_app(db_path: str | Path = "data/monitor.db", start_background: bool = True) -> FastAPI:
+    runtime = PanelRuntime(db_path=db_path, start_background=start_background)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.runtime = runtime
+        runtime.start()
+        yield
+        runtime.stop()
+
+    app = FastAPI(title="mc-netprobe-panel", version="1.0", lifespan=lifespan)
+
+    @app.get("/", response_class=HTMLResponse)
+    def dashboard_page() -> HTMLResponse:
+        template = Template(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        snapshot = runtime.store.build_dashboard_snapshot()
+        body = template.render(initial_state_json=json.dumps(snapshot, ensure_ascii=False))
+        return HTMLResponse(content=body)
+
+    @app.get("/api/state")
+    def legacy_state() -> dict[str, Any]:
+        return runtime.store.build_dashboard_snapshot()
+
+    @app.get("/api/v1/dashboard")
+    def dashboard() -> DashboardSnapshot:
+        return DashboardSnapshot.model_validate(runtime.store.build_dashboard_snapshot())
+
+    @app.post("/api/v1/dashboard")
+    def save_dashboard_settings(payload: PanelSettings) -> dict[str, Any]:
+        runtime.store.update_settings(payload)
+        runtime.store.update_schedule_intervals(payload)
+        return {"ok": True, "settings": runtime.store.get_settings().model_dump()}
+
+    @app.get("/api/v1/history")
+    def history(node: str | None = None, probe_name: str | None = None, metric_name: str | None = None, time_range: str = "24h") -> HistoryResponse:
+        hours = _parse_time_range(time_range)
+        return HistoryResponse(samples=runtime.store.query_history(node=node, probe_name=probe_name, metric_name=metric_name, time_range_hours=hours))
+
+    @app.post("/api/v1/nodes")
+    def upsert_node(payload: NodeUpsertRequest) -> dict[str, Any]:
+        return {"ok": True, "node": runtime.store.upsert_node(payload)}
+
+    @app.get("/api/v1/nodes/{node_id}")
+    def get_node(node_id: int) -> dict[str, Any]:
+        node = runtime.store.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+        return node
+
+    @app.post("/api/v1/nodes/{node_id}/pair-code")
+    def create_pair_code(node_id: int, request: Request) -> PairCodeResponse:
+        node = runtime.store.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+        pair_code, expires_at = runtime.store.create_pair_code(node_id=node_id)
+        panel_url = str(request.base_url).rstrip("/")
+        startup_command, fallback_command = build_startup_commands(node=node, panel_url=panel_url, pair_code=pair_code)
+        return PairCodeResponse(
+            node_id=node_id,
+            node_name=str(node["node_name"]),
+            pair_code=pair_code,
+            expires_at=expires_at,
+            startup_command=startup_command,
+            fallback_command=fallback_command,
+        )
+
+    @app.post("/api/v1/agents/pair")
+    def pair_agent(payload: AgentPairRequest, request: Request) -> AgentPairResponse:
+        node, node_token = runtime.store.pair_agent(
+            node_name=payload.node_name,
+            role=payload.role,
+            runtime_mode=payload.runtime_mode,
+            pair_code=payload.pair_code,
+            agent_url=payload.agent_url,
+            advertise_url=payload.advertise_url,
+        )
+        advertise_url = payload.advertise_url or payload.agent_url or node.get("agent_url")
+        return AgentPairResponse(
+            node_id=int(node["id"]),
+            topology_id=int(node["topology_id"]),
+            node_token=node_token,
+            panel_url=str(request.base_url).rstrip("/"),
+            node_name=payload.node_name,
+            role=payload.role,
+            listen_host=payload.listen_host,
+            listen_port=payload.listen_port,
+            advertise_url=advertise_url,
+        )
+
+    @app.post("/api/v1/agents/heartbeat")
+    def agent_heartbeat(payload: AgentHeartbeatRequest, x_node_token: str | None = Header(default=None)) -> AgentHeartbeatResponse:
+        if not x_node_token:
+            raise HTTPException(status_code=401, detail="Missing node token")
+        try:
+            node = runtime.store.resolve_node_from_token(payload.node_name, x_node_token)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+        for completed in payload.completed_jobs:
+            runtime.store.complete_job(job_id=completed.job_id, result=completed.result)
+
+        runtime.store.record_heartbeat(node_id=int(node["id"]), agent_url=payload.advertise_url or payload.agent_url, status=payload.status)
+        jobs = [
+            PanelJobDispatch(
+                job_id=int(job["id"]),
+                task=str(job["job_kind"]),
+                payload=json.loads(job["payload_json"]),
+                created_at=str(job["created_at"]),
+            )
+            for job in runtime.store.lease_jobs(node_id=int(node["id"]))
+        ]
+        return AgentHeartbeatResponse(ok=True, jobs=jobs)
+
+    @app.post("/api/v1/runs")
+    def start_manual_run(payload: ManualRunRequest) -> JSONResponse:
+        if runtime.store.has_active_run():
+            raise HTTPException(status_code=409, detail="A monitoring run is already in progress")
+        run_id = runtime.orchestrator.start_run_in_background(run_kind=payload.run_kind, source=payload.source)
+        return JSONResponse(status_code=202, content={"ok": True, "run_id": run_id, "status": "running"})
+
+    @app.get("/results/{relative_path:path}")
+    def serve_result(relative_path: str) -> FileResponse:
+        target = (RESULTS_DIR / relative_path).resolve()
+        if RESULTS_DIR.resolve() not in target.parents and target != RESULTS_DIR.resolve():
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="Result not found")
+        return FileResponse(target)
+
+    return app
+
+
+def build_startup_commands(node: dict[str, Any], panel_url: str, pair_code: str) -> tuple[str, str | None]:
+    """Build primary and fallback node startup commands."""
+    quoted_panel = panel_url
+    node_name = str(node["node_name"])
+    role = str(node["role"])
+    runtime_mode = str(node["runtime_mode"])
+    if runtime_mode == "docker-linux":
+        command = (
+            f"PANEL_URL='{quoted_panel}' PAIR_CODE='{pair_code}' NODE_NAME='{node_name}' ROLE='{role}' "
+            "RUNTIME_MODE='docker-linux' AGENT_PORT='9870' "
+            "docker compose -f docker/relay-agent.compose.yml up -d --build"
+        )
+        fallback = (
+            f"python3 -m agents.service --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
+            f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' --runtime-mode 'docker-linux' "
+            "--listen-host 0.0.0.0 --listen-port 9870"
+        )
+        return command, fallback
+    if runtime_mode == "native-macos":
+        command = (
+            f"bash bin/install_server_agent_launchd.sh --panel-url '{quoted_panel}' --pair-code '{pair_code}' "
+            f"--node-name '{node_name}' --role '{role}' --listen-port 9870"
+        )
+        fallback = (
+            f"bash bin/start_agent_tmux.sh --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
+            f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' "
+            "--runtime-mode native-macos --listen-port 9870"
+        )
+        return command, fallback
+    command = (
+        "powershell -ExecutionPolicy Bypass -File bin/install_client_agent.ps1 "
+        f"-PanelUrl '{quoted_panel}' -PairCode '{pair_code}' -NodeName '{node_name}' "
+        f"-Role '{role}' -ListenPort 9870"
+    )
+    fallback = (
+        "powershell -ExecutionPolicy Bypass -Command "
+        f"\"python -m agents.service --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
+        f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' "
+        "--runtime-mode native-windows --listen-host 0.0.0.0 --listen-port 9870\""
+    )
+    return command, fallback
+
+
+def _parse_time_range(time_range: str) -> int:
+    value = time_range.strip().lower()
+    if value.endswith("h"):
+        value = value[:-1]
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down Web UI.")
-    finally:
-        server.server_close()
+        return max(1, int(value))
+    except ValueError:
+        return 24
+
+
+def main() -> int:
+    """Run the monitoring panel."""
+    args = build_parser().parse_args()
+    app = create_app(db_path=args.db_path, start_background=True)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
-def build_handler(state: WebUIState) -> type[BaseHTTPRequestHandler]:
-    """Bind app state into a request handler type."""
-
-    class DashboardHandler(BaseHTTPRequestHandler):
-        server_version = "mc-netprobe-webui/0.1"
-
-        def do_GET(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            if parsed.path == "/":
-                self._render_dashboard()
-                return
-            if parsed.path == "/api/state":
-                self._send_json(HTTPStatus.OK, state.snapshot())
-                return
-            if parsed.path.startswith("/results/"):
-                self._serve_file(parsed.path.lstrip("/"))
-                return
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-
-        def do_POST(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            payload = self._read_json_payload()
-            if parsed.path == "/api/save":
-                try:
-                    result = state.save_config(payload)
-                    self._send_json(HTTPStatus.OK, {"ok": True, **result})
-                except Exception as exc:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
-                return
-            if parsed.path == "/api/run":
-                try:
-                    record = state.start_run(payload)
-                    self._send_json(HTTPStatus.ACCEPTED, {"ok": True, "run": record.to_dict()})
-                except RuntimeError as exc:
-                    self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
-                except Exception as exc:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
-                return
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
-            return
-
-        def _render_dashboard(self) -> None:
-            snapshot = state.snapshot()
-            template = Template(TEMPLATE_PATH.read_text(encoding="utf-8"))
-            html = template.render(
-                initial_config_json=json.dumps(snapshot["config"], ensure_ascii=False),
-                initial_state_json=json.dumps(snapshot, ensure_ascii=False),
-            )
-            body = html.encode("utf-8")
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _read_json_payload(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length > 0 else b"{}"
-            return json.loads(raw.decode("utf-8") or "{}")
-
-        def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _serve_file(self, relative_path: str) -> None:
-            file_path = (Path.cwd() / relative_path).resolve()
-            results_root = RESULTS_DIR.resolve()
-            if results_root not in file_path.parents and file_path != results_root:
-                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Forbidden"})
-                return
-            if not file_path.exists() or not file_path.is_file():
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "File not found"})
-                return
-
-            data = file_path.read_bytes()
-            content_type = "text/plain; charset=utf-8"
-            if file_path.suffix == ".html":
-                content_type = "text/html; charset=utf-8"
-            elif file_path.suffix == ".json":
-                content_type = "application/json; charset=utf-8"
-            elif file_path.suffix == ".csv":
-                content_type = "text/csv; charset=utf-8"
-
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-    return DashboardHandler
-
-
-def load_dashboard_payload() -> dict[str, Any]:
-    """Load persisted dashboard config or build a remote-ready default."""
-    topology_payload = None
-    thresholds_payload = None
-    scenarios_payload = None
-
-    if WEBUI_TOPOLOGY_PATH.exists():
-        topology_payload = yaml.safe_load(WEBUI_TOPOLOGY_PATH.read_text(encoding="utf-8"))
-    if WEBUI_THRESHOLDS_PATH.exists():
-        thresholds_payload = yaml.safe_load(WEBUI_THRESHOLDS_PATH.read_text(encoding="utf-8"))
-    if WEBUI_SCENARIOS_PATH.exists():
-        scenarios_payload = yaml.safe_load(WEBUI_SCENARIOS_PATH.read_text(encoding="utf-8"))
-
-    if topology_payload is None:
-        topology_payload = build_default_topology_payload()
-    if thresholds_payload is None:
-        thresholds_payload = load_thresholds("config/thresholds.example.yaml").model_dump()
-    if scenarios_payload is None:
-        scenarios_payload = load_scenarios("config/scenarios.example.yaml").model_dump()
-
-    return {
-        "topology": topology_payload,
-        "thresholds": thresholds_payload,
-        "scenarios": scenarios_payload,
-    }
-
-
-def build_default_topology_payload() -> dict[str, Any]:
-    """Build a remote-oriented default topology for the dashboard."""
-    return {
-        "project_name": "mc-frp-netprobe-webui",
-        "nodes": {
-            "client": {
-                "role": "client",
-                "host": "",
-                "os": "windows",
-                "local": False,
-                "ssh_user": "",
-                "ssh_port": 22,
-                "project_root": "",
-                "python_bin": "python",
-            },
-            "relay": {
-                "role": "relay",
-                "host": "",
-                "os": "linux",
-                "local": False,
-                "ssh_user": "",
-                "ssh_port": 22,
-                "project_root": "",
-                "python_bin": "python3",
-            },
-            "server": {
-                "role": "server",
-                "host": "",
-                "os": "macos",
-                "local": False,
-                "ssh_user": "",
-                "ssh_port": 22,
-                "project_root": "",
-                "python_bin": "python3",
-            },
-        },
-        "services": {
-            "relay_probe": {"host": "", "port": 22},
-            "mc_public": {"host": "", "port": 25565},
-            "iperf_public": {"host": "", "port": 5201},
-            "mc_local": {"host": "127.0.0.1", "port": 25565},
-            "iperf_local": {"host": "0.0.0.0", "port": 5201},
-        },
-    }
-
-
-def collect_config_warnings(payload: dict[str, Any]) -> list[str]:
-    """Return soft warnings for incomplete dashboard values."""
-    warnings: list[str] = []
-    for node_name, node in payload.get("topology", {}).get("nodes", {}).items():
-        host = str(node.get("host", "")).strip()
-        if not host:
-            warnings.append(f"{node_name}.host is empty")
-        if not node.get("local", False):
-            for field_name in ("ssh_user", "project_root", "python_bin"):
-                if not str(node.get(field_name, "")).strip():
-                    warnings.append(f"{node_name}.{field_name} is empty")
-    for service_name in ("mc_public", "iperf_public"):
-        service = payload.get("topology", {}).get("services", {}).get(service_name, {})
-        if not str(service.get("host", "")).strip():
-            warnings.append(f"services.{service_name}.host is empty")
-    return warnings
-
-
-def collect_run_blockers(payload: dict[str, Any]) -> list[str]:
-    """Return blocking validation errors before starting a run."""
-    blockers: list[str] = []
-    topology = payload.get("topology", {})
-    nodes = topology.get("nodes", {})
-    services = topology.get("services", {})
-
-    for node_name in ("client", "relay", "server"):
-        node = nodes.get(node_name, {})
-        if not str(node.get("host", "")).strip():
-            blockers.append(f"{node_name} host is required")
-        if not node.get("local", False):
-            for field_name in ("ssh_user", "project_root", "python_bin"):
-                if not str(node.get(field_name, "")).strip():
-                    blockers.append(f"{node_name} {field_name} is required for remote execution")
-    for service_name in ("relay_probe", "mc_public", "iperf_public", "mc_local", "iperf_local"):
-        service = services.get(service_name, {})
-        if not str(service.get("host", "")).strip():
-            blockers.append(f"{service_name} host is required")
-        if not service.get("port"):
-            blockers.append(f"{service_name} port is required")
-    return blockers
+app = create_app()
 
 
 if __name__ == "__main__":

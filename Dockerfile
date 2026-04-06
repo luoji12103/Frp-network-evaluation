@@ -10,7 +10,6 @@ RUN apt-get update \
         ca-certificates \
         iperf3 \
         iputils-ping \
-        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash app
@@ -23,10 +22,10 @@ RUN python -m pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /app/config/webui /app/results /app/logs /home/app/.ssh \
-    && chown -R app:app /app /home/app
+RUN mkdir -p /app/config/agent /app/results /app/logs /app/data \
+    && chown -R app:app /app
 
-USER app
+USER root
 
 EXPOSE 8765
 
