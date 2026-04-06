@@ -83,6 +83,10 @@ Open:
 http://127.0.0.1:8765
 ```
 
+- Public board: `/`
+- Admin login: `/login`
+- Admin panel: `/admin`
+
 ### Docker
 
 ```bash
@@ -96,11 +100,33 @@ This starts the central panel container and persists:
 - `./results`
 - `./logs`
 
+## Admin Authentication
+
+The public board is open at `/` and only shows network quality information.
+
+The management UI is protected:
+
+- `/login`: admin sign-in
+- `/admin`: protected management page
+
+Credentials come from either:
+
+- `MC_NETPROBE_ADMIN_USERNAME` and `MC_NETPROBE_ADMIN_PASSWORD`
+- or an auto-generated password stored at `data/admin-password.txt` with default username `admin`
+
+For Docker, the simplest setup is:
+
+```bash
+export MC_NETPROBE_ADMIN_USERNAME=admin
+export MC_NETPROBE_ADMIN_PASSWORD='change-me'
+docker compose up --build -d
+```
+
 ## Pair Nodes
 
 The operator flow is:
 
-1. Open the panel.
+1. Open `/admin` and sign in.
 2. Save one card for each role: `client`, `relay`, `server`.
 3. Click `生成配对命令`.
 4. Run the generated command on the target node.
@@ -179,19 +205,23 @@ powershell -ExecutionPolicy Bypass -File bin/install_client_agent.ps1 `
 
 Implemented panel endpoints:
 
-- `GET /api/v1/dashboard`
-- `POST /api/v1/dashboard`
-- `POST /api/v1/nodes`
-- `GET /api/v1/nodes/{id}`
-- `POST /api/v1/nodes/{id}/pair-code`
+- Public:
+  - `GET /api/v1/public-dashboard`
+- Admin session required:
+  - `GET /api/v1/dashboard`
+  - `POST /api/v1/dashboard`
+  - `POST /api/v1/nodes`
+  - `GET /api/v1/nodes/{id}`
+  - `POST /api/v1/nodes/{id}/pair-code`
+  - `POST /api/v1/runs`
+  - `GET /api/v1/history`
+- Agent traffic:
 - `POST /api/v1/agents/pair`
 - `POST /api/v1/agents/heartbeat`
-- `POST /api/v1/runs`
-- `GET /api/v1/history`
 
 Compatibility health endpoint:
 
-- `GET /api/state`
+- `GET /api/state` (public-safe snapshot)
 
 ## Agent API
 

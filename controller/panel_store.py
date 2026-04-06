@@ -5,10 +5,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import sqlite3
+import statistics
 import threading
 import time
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +25,47 @@ DEFAULT_SCHEDULES = (
     ("baseline", 60),
     ("capacity", 300),
 )
+
+DEFAULT_PATH_ORDER = (
+    "client_to_relay",
+    "relay_to_server",
+    "client_to_mc_public",
+    "client_to_iperf_public",
+    "client_to_mc_public_load",
+    "client_system",
+    "relay_system",
+    "server_system",
+    "server_to_local_mc",
+    "server_iperf_direct",
+    "server_iperf_public",
+)
+
+ANOMALY_HIGH_METRICS = {
+    "packet_loss_pct",
+    "rtt_avg_ms",
+    "rtt_p95_ms",
+    "jitter_ms",
+    "connect_avg_ms",
+    "connect_p95_ms",
+    "connect_timeout_or_error_pct",
+    "load_rtt_inflation_ms",
+    "cpu_usage_pct",
+    "memory_usage_pct",
+}
+
+ANOMALY_LOW_METRICS = {
+    "throughput_up_mbps",
+    "throughput_down_mbps",
+}
+
+PATH_CATEGORY_METRICS = {
+    "latency": ("rtt_avg_ms", "connect_avg_ms"),
+    "jitter": ("jitter_ms",),
+    "loss": ("packet_loss_pct", "connect_timeout_or_error_pct"),
+    "throughput": ("throughput_up_mbps", "throughput_down_mbps"),
+    "load": ("load_rtt_inflation_ms",),
+    "system": ("cpu_usage_pct", "memory_usage_pct"),
+}
 
 
 class PanelStore:
@@ -548,7 +593,7 @@ class PanelStore:
                 """
                 UPDATE run
                 SET status = ?, finished_at = ?, raw_path = ?, csv_path = ?, html_path = ?,
-                    error = ?, findings_count = ?, conclusion_json = ?
+                    error = ?, findings_count = ?, conclusion_json = ?, threshold_findings_json = ?
                 WHERE id = ?
                 """,
                 (
@@ -560,29 +605,34 @@ class PanelStore:
                     error,
                     len(run_result.threshold_findings) if run_result else 0,
                     _dumps(run_result.conclusion if run_result else []),
+                    _dumps([finding.to_dict() for finding in run_result.threshold_findings] if run_result else []),
                     run_id,
                 ),
             )
             if run_result is not None:
                 conn.execute("DELETE FROM probe_result WHERE run_id = ?", (run_id,))
+                conn.execute("DELETE FROM metric_sample WHERE run_id = ?", (run_id,))
+                inserted_samples: list[dict[str, Any]] = []
                 for probe in run_result.probes:
+                    path_label = probe.metadata.get("path_label")
                     row = conn.execute(
                         """
                         INSERT INTO probe_result (
                             run_id, node_id, probe_name, path_label, success, error,
-                            metrics_json, metadata_json, started_at, duration_ms
+                            metrics_json, metadata_json, samples_json, started_at, duration_ms
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             run_id,
                             self._node_id_from_role(probe.metadata.get("source_node")),
                             probe.name,
-                            probe.metadata.get("path_label"),
+                            path_label,
                             1 if probe.success else 0,
                             probe.error,
                             _dumps(probe.metrics),
                             _dumps(probe.metadata),
+                            _dumps(probe.samples),
                             probe.started_at,
                             probe.duration_ms,
                         ),
@@ -593,9 +643,9 @@ class PanelStore:
                             conn.execute(
                                 """
                                 INSERT INTO metric_sample (
-                                    node_id, run_id, probe_result_id, probe_name, metric_name, metric_value, captured_at
+                                    node_id, run_id, probe_result_id, probe_name, metric_name, metric_value, path_label, captured_at
                                 )
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 (
                                     self._node_id_from_role(probe.metadata.get("source_node")),
@@ -604,26 +654,49 @@ class PanelStore:
                                     probe.name,
                                     metric_name,
                                     float(metric_value),
+                                    path_label,
                                     finished_at,
                                 ),
                             )
+                            sample_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                            inserted_samples.append(
+                                {
+                                    "id": sample_id,
+                                    "node_id": self._node_id_from_role(probe.metadata.get("source_node")),
+                                    "run_id": run_id,
+                                    "probe_name": probe.name,
+                                    "metric_name": metric_name,
+                                    "metric_value": float(metric_value),
+                                    "path_label": path_label,
+                                    "captured_at": finished_at,
+                                }
+                            )
                 for finding in run_result.threshold_findings:
-                    conn.execute(
-                        """
-                        INSERT INTO alert_event (
-                            topology_id, node_id, run_id, kind, severity, status, message, created_at
-                        )
-                        VALUES (?, ?, ?, 'threshold', ?, 'open', ?, ?)
-                        """,
-                        (
-                            self.get_topology_id(),
-                            self._node_id_from_path(finding.path_label),
-                            run_id,
-                            finding.severity,
-                            f"{finding.path_label} {finding.metric} actual={finding.actual} threshold={finding.threshold}",
-                            finished_at,
-                        ),
+                    fingerprint = self._alert_fingerprint(
+                        kind="threshold",
+                        path_label=finding.path_label,
+                        probe_name=finding.probe_name,
+                        metric_name=finding.metric,
                     )
+                    if self._is_fingerprint_silenced(conn, fingerprint=fingerprint, current_time=finished_at):
+                        continue
+                    self._insert_alert_row(
+                        conn=conn,
+                        kind="threshold",
+                        severity=finding.severity,
+                        status="open",
+                        message=f"{finding.path_label} {finding.metric} actual={finding.actual} threshold={finding.threshold}",
+                        created_at=finished_at,
+                        node_id=self._node_id_from_path(finding.path_label),
+                        run_id=run_id,
+                        path_label=finding.path_label,
+                        probe_name=finding.probe_name,
+                        metric_name=finding.metric,
+                        actual_value=float(finding.actual),
+                        threshold_value=float(finding.threshold),
+                        fingerprint=fingerprint,
+                    )
+                self._detect_metric_anomalies(conn=conn, inserted_samples=inserted_samples)
             conn.commit()
 
     def list_recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -634,7 +707,7 @@ class PanelStore:
     def list_recent_alerts(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM alert_event ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(row) for row in rows]
+        return [self._decorate_alert(dict(row)) for row in rows]
 
     def insert_alert(
         self,
@@ -644,16 +717,445 @@ class PanelStore:
         message: str,
         node_id: int | None = None,
         run_id: str | None = None,
+        path_label: str | None = None,
+        probe_name: str | None = None,
+        metric_name: str | None = None,
+        actual_value: float | None = None,
+        threshold_value: float | None = None,
+        fingerprint: str | None = None,
+        acknowledged_at: str | None = None,
+        acknowledged_by: str | None = None,
+        silenced_until: str | None = None,
+        silence_reason: str | None = None,
     ) -> None:
         with self._lock, self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO alert_event (topology_id, node_id, run_id, kind, severity, status, message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (self.get_topology_id(), node_id, run_id, kind, severity, status, message, now_iso()),
+            self._insert_alert_row(
+                conn=conn,
+                kind=kind,
+                severity=severity,
+                status=status,
+                message=message,
+                created_at=now_iso(),
+                node_id=node_id,
+                run_id=run_id,
+                path_label=path_label,
+                probe_name=probe_name,
+                metric_name=metric_name,
+                actual_value=actual_value,
+                threshold_value=threshold_value,
+                fingerprint=fingerprint,
+                acknowledged_at=acknowledged_at,
+                acknowledged_by=acknowledged_by,
+                silenced_until=silenced_until,
+                silence_reason=silence_reason,
             )
             conn.commit()
+
+    def list_filter_options(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            node_rows = conn.execute(
+                "SELECT role, node_name FROM node ORDER BY CASE role WHEN 'client' THEN 1 WHEN 'relay' THEN 2 ELSE 3 END, node_name"
+            ).fetchall()
+            path_rows = conn.execute(
+                """
+                SELECT DISTINCT COALESCE(ms.path_label, pr.path_label) AS path_label
+                FROM metric_sample ms
+                LEFT JOIN probe_result pr ON pr.id = ms.probe_result_id
+                WHERE COALESCE(ms.path_label, pr.path_label) IS NOT NULL
+                ORDER BY path_label
+                """
+            ).fetchall()
+            probe_rows = conn.execute("SELECT DISTINCT probe_name FROM probe_result ORDER BY probe_name").fetchall()
+            metric_rows = conn.execute("SELECT DISTINCT metric_name FROM metric_sample ORDER BY metric_name").fetchall()
+            run_kind_rows = conn.execute("SELECT DISTINCT run_kind FROM run ORDER BY run_kind").fetchall()
+            severity_rows = conn.execute("SELECT DISTINCT severity FROM alert_event ORDER BY severity").fetchall()
+            status_rows = conn.execute("SELECT DISTINCT status FROM alert_event ORDER BY status").fetchall()
+
+        paths = [row["path_label"] for row in path_rows if row["path_label"]]
+        ordered_paths = [path for path in DEFAULT_PATH_ORDER if path in paths]
+        ordered_paths.extend(path for path in paths if path not in ordered_paths)
+        return {
+            "roles": ["client", "relay", "server"],
+            "nodes": [{"role": row["role"], "node_name": row["node_name"]} for row in node_rows],
+            "paths": ordered_paths,
+            "probes": [row["probe_name"] for row in probe_rows if row["probe_name"]],
+            "metrics": [row["metric_name"] for row in metric_rows if row["metric_name"]],
+            "run_kinds": [row["run_kind"] for row in run_kind_rows if row["run_kind"]],
+            "severities": [row["severity"] for row in severity_rows if row["severity"]],
+            "statuses": [row["status"] for row in status_rows if row["status"]],
+            "time_ranges": ["1h", "6h", "24h", "7d", "30d"],
+        }
+
+    def build_admin_overview(
+        self,
+        time_range_hours: int,
+        roles: list[str] | None = None,
+        nodes: list[str] | None = None,
+        path_labels: list[str] | None = None,
+    ) -> dict[str, Any]:
+        all_nodes = self.list_nodes()
+        filtered_nodes = [
+            node
+            for node in all_nodes
+            if (not roles or node["role"] in roles) and (not nodes or node["node_name"] in nodes)
+        ]
+        alerts_payload = self.query_alert_events(
+            time_range_hours=time_range_hours,
+            severities=None,
+            statuses=["open", "acknowledged", "resolved"],
+            kinds=None,
+            path_labels=path_labels,
+            metric_names=None,
+            acknowledged=None,
+            anomaly_only=False,
+            limit=20,
+        )
+        anomalies_payload = self.query_alert_events(
+            time_range_hours=time_range_hours,
+            severities=None,
+            statuses=["open", "acknowledged"],
+            kinds=["anomaly"],
+            path_labels=path_labels,
+            metric_names=None,
+            acknowledged=None,
+            anomaly_only=True,
+            limit=12,
+        )
+        path_summaries = self._build_path_summaries(
+            time_range_hours=time_range_hours,
+            roles=roles,
+            nodes=nodes,
+            path_labels=path_labels,
+        )
+        latest_full = next((run for run in self.list_recent_runs(limit=20) if run["run_kind"] == "full"), None)
+        online_nodes = sum(1 for node in filtered_nodes if node["status"] == "online")
+        degraded_nodes = sum(1 for node in filtered_nodes if node["status"] in {"push-only", "heartbeat-degraded"})
+        offline_nodes = sum(1 for node in filtered_nodes if node["status"] in {"offline", "unpaired", "disabled"})
+        total_nodes = len(filtered_nodes)
+        active_alerts = sum(1 for item in alerts_payload["items"] if item["status"] in {"open", "acknowledged"} and not item["is_silenced"])
+        health_score = max(0, 100 - (offline_nodes * 30) - (degraded_nodes * 12) - (active_alerts * 4))
+        return {
+            "kpis": {
+                "total_nodes": total_nodes,
+                "online_rate_pct": round((online_nodes / total_nodes) * 100.0, 1) if total_nodes else 0.0,
+                "degraded_nodes": degraded_nodes,
+                "offline_nodes": offline_nodes,
+                "active_alerts": active_alerts,
+                "health_score": health_score,
+                "last_full_run_started_at": latest_full.get("started_at") if latest_full else None,
+                "last_full_run_status": latest_full.get("status") if latest_full else None,
+            },
+            "status_distribution": {
+                "online": online_nodes,
+                "degraded": degraded_nodes,
+                "offline": offline_nodes,
+            },
+            "recent_anomalies": anomalies_payload["items"],
+            "path_health": path_summaries,
+            "trend_groups": self._build_trend_groups(time_range_hours=time_range_hours, public_mode=False),
+            "alert_summary": alerts_payload["summary"],
+        }
+
+    def query_metric_series(
+        self,
+        time_range_hours: int,
+        roles: list[str] | None = None,
+        nodes: list[str] | None = None,
+        path_labels: list[str] | None = None,
+        probe_names: list[str] | None = None,
+        metric_name: str | None = None,
+        bucket: str = "auto",
+        limit: int = 2000,
+    ) -> dict[str, Any]:
+        rows = self._select_metric_rows(
+            time_range_hours=time_range_hours,
+            roles=roles,
+            nodes=nodes,
+            path_labels=path_labels,
+            probe_names=probe_names,
+            metric_names=[metric_name] if metric_name else None,
+            limit=limit,
+        )
+        threshold_value = self._metric_threshold(metric_name) if metric_name else None
+        if not rows:
+            return {
+                "metric_name": metric_name,
+                "threshold": threshold_value,
+                "direction": self._metric_direction(metric_name),
+                "unit": self._metric_unit(metric_name),
+                "series": [],
+            }
+
+        bucket_sec = self._bucket_seconds_for(time_range_hours, bucket)
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            series_name = row["path_label"] or row.get("node_name") or row["probe_name"]
+            grouped[series_name].append(row)
+
+        alert_rows = self._select_alert_rows(
+            time_range_hours=time_range_hours,
+            severities=None,
+            statuses=["open", "acknowledged", "resolved"],
+            kinds=["anomaly"],
+            path_labels=path_labels,
+            metric_names=[metric_name] if metric_name else None,
+            acknowledged=None,
+            anomaly_only=True,
+            limit=300,
+        )
+        alert_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for alert in alert_rows:
+            alert_groups[alert.get("path_label") or ""].append(alert)
+
+        series_payload = []
+        for series_name, series_rows in grouped.items():
+            series_points = self._bucket_metric_rows(series_rows, bucket_sec=bucket_sec)
+            values = [point["value"] for point in series_points]
+            series_payload.append(
+                {
+                    "name": series_name,
+                    "metric_name": metric_name,
+                    "path_label": series_rows[0].get("path_label"),
+                    "probe_name": series_rows[0].get("probe_name"),
+                    "points": series_points,
+                    "summary": {
+                        "latest": values[-1] if values else None,
+                        "min": min(values) if values else None,
+                        "max": max(values) if values else None,
+                        "avg": round(sum(values) / len(values), 3) if values else None,
+                    },
+                    "anomalies": [
+                        {
+                            "id": alert["id"],
+                            "timestamp": alert["created_at"],
+                            "value": alert.get("actual_value"),
+                            "message": alert["message"],
+                            "severity": alert["severity"],
+                        }
+                        for alert in alert_groups.get(series_rows[0].get("path_label") or "", [])
+                    ],
+                }
+            )
+
+        return {
+            "metric_name": metric_name,
+            "threshold": threshold_value,
+            "direction": self._metric_direction(metric_name),
+            "unit": self._metric_unit(metric_name),
+            "series": sorted(series_payload, key=lambda item: DEFAULT_PATH_ORDER.index(item["name"]) if item["name"] in DEFAULT_PATH_ORDER else 999),
+        }
+
+    def build_path_health(
+        self,
+        time_range_hours: int,
+        roles: list[str] | None = None,
+        nodes: list[str] | None = None,
+        path_labels: list[str] | None = None,
+    ) -> dict[str, Any]:
+        summaries = self._build_path_summaries(
+            time_range_hours=time_range_hours,
+            roles=roles,
+            nodes=nodes,
+            path_labels=path_labels,
+        )
+        return {
+            "paths": summaries,
+            "trend_groups": {
+                "latency": self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=roles,
+                    nodes=nodes,
+                    path_labels=path_labels,
+                    metric_name="connect_avg_ms",
+                    bucket="auto",
+                ),
+                "throughput_down": self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=roles,
+                    nodes=nodes,
+                    path_labels=path_labels,
+                    metric_name="throughput_down_mbps",
+                    bucket="auto",
+                ),
+                "throughput_up": self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=roles,
+                    nodes=nodes,
+                    path_labels=path_labels,
+                    metric_name="throughput_up_mbps",
+                    bucket="auto",
+                ),
+                "loss": self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=roles,
+                    nodes=nodes,
+                    path_labels=path_labels,
+                    metric_name="packet_loss_pct",
+                    bucket="auto",
+                ),
+                "load": self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=roles,
+                    nodes=nodes,
+                    path_labels=path_labels,
+                    metric_name="load_rtt_inflation_ms",
+                    bucket="auto",
+                ),
+            },
+        }
+
+    def query_runs(
+        self,
+        time_range_hours: int,
+        run_kinds: list[str] | None = None,
+        statuses: list[str] | None = None,
+        path_labels: list[str] | None = None,
+        has_findings: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [self._cutoff_iso(time_range_hours)]
+        clauses = ["r.started_at >= ?"]
+        if run_kinds:
+            clauses.append(_sql_in_clause("r.run_kind", run_kinds, params))
+        if statuses:
+            clauses.append(_sql_in_clause("r.status", statuses, params))
+        if has_findings is True:
+            clauses.append("r.findings_count > 0")
+        if has_findings is False:
+            clauses.append("r.findings_count = 0")
+        if path_labels:
+            clauses.append(
+                f"""EXISTS (
+                        SELECT 1 FROM probe_result pr
+                        WHERE pr.run_id = r.id AND { _sql_in_clause('pr.path_label', path_labels, params) }
+                    )"""
+            )
+        params.append(limit)
+        sql = f"""
+            SELECT r.*
+            FROM run r
+            WHERE {' AND '.join(clauses)}
+            ORDER BY r.started_at DESC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._decorate_run(dict(row)) for row in rows]
+
+    def get_run_detail(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            run_row = conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            probe_rows = conn.execute(
+                """
+                SELECT pr.*, n.node_name, n.role
+                FROM probe_result pr
+                LEFT JOIN node n ON n.id = pr.node_id
+                WHERE pr.run_id = ?
+                ORDER BY COALESCE(pr.path_label, ''), pr.probe_name, pr.id
+                """,
+                (run_id,),
+            ).fetchall()
+            alert_rows = conn.execute(
+                "SELECT * FROM alert_event WHERE run_id = ? ORDER BY created_at DESC",
+                (run_id,),
+            ).fetchall()
+        if run_row is None:
+            return None
+        run = self._decorate_run(dict(run_row))
+        if not run["threshold_findings"] and run.get("raw_path"):
+            threshold_findings = self._load_threshold_findings_from_raw(run["raw_path"])
+            if threshold_findings:
+                run["threshold_findings"] = threshold_findings
+        run["probes"] = [self._decorate_probe_result(dict(row)) for row in probe_rows]
+        run["alerts"] = [self._decorate_alert(dict(row)) for row in alert_rows]
+        return run
+
+    def query_alert_events(
+        self,
+        time_range_hours: int,
+        severities: list[str] | None = None,
+        statuses: list[str] | None = None,
+        kinds: list[str] | None = None,
+        path_labels: list[str] | None = None,
+        metric_names: list[str] | None = None,
+        acknowledged: bool | None = None,
+        anomaly_only: bool = False,
+        fingerprint: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        rows = self._select_alert_rows(
+            time_range_hours=time_range_hours,
+            severities=severities,
+            statuses=statuses,
+            kinds=kinds,
+            path_labels=path_labels,
+            metric_names=metric_names,
+            acknowledged=acknowledged,
+            anomaly_only=anomaly_only,
+            fingerprint=fingerprint,
+            limit=limit,
+        )
+        decorated = [self._decorate_alert(dict(row)) for row in rows]
+        summary = {
+            "total": len(decorated),
+            "open": sum(1 for item in decorated if item["status"] == "open"),
+            "acknowledged": sum(1 for item in decorated if item["status"] == "acknowledged"),
+            "resolved": sum(1 for item in decorated if item["status"] == "resolved"),
+            "silenced": sum(1 for item in decorated if item["is_silenced"]),
+        }
+        return {"items": decorated, "summary": summary}
+
+    def acknowledge_alert(self, alert_id: int, actor: str = "admin") -> dict[str, Any] | None:
+        current = now_iso()
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM alert_event WHERE id = ?", (alert_id,)).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE alert_event
+                SET status = CASE WHEN status = 'open' THEN 'acknowledged' ELSE status END,
+                    acknowledged_at = COALESCE(acknowledged_at, ?),
+                    acknowledged_by = COALESCE(acknowledged_by, ?)
+                WHERE id = ?
+                """,
+                (current, actor, alert_id),
+            )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM alert_event WHERE id = ?", (alert_id,)).fetchone()
+        return self._decorate_alert(dict(updated)) if updated is not None else None
+
+    def silence_alert(self, alert_id: int, silenced_until: str, reason: str = "", actor: str = "admin") -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM alert_event WHERE id = ?", (alert_id,)).fetchone()
+            if row is None:
+                return None
+            fingerprint = row["fingerprint"]
+            if fingerprint:
+                conn.execute(
+                    """
+                    UPDATE alert_event
+                    SET silenced_until = ?, silence_reason = ?, acknowledged_at = COALESCE(acknowledged_at, ?),
+                        acknowledged_by = COALESCE(acknowledged_by, ?),
+                        status = CASE WHEN status = 'open' THEN 'acknowledged' ELSE status END
+                    WHERE fingerprint = ?
+                    """,
+                    (silenced_until, reason, now_iso(), actor, fingerprint),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE alert_event
+                    SET silenced_until = ?, silence_reason = ?, acknowledged_at = COALESCE(acknowledged_at, ?),
+                        acknowledged_by = COALESCE(acknowledged_by, ?),
+                        status = CASE WHEN status = 'open' THEN 'acknowledged' ELSE status END
+                    WHERE id = ?
+                    """,
+                    (silenced_until, reason, now_iso(), actor, alert_id),
+                )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM alert_event WHERE id = ?", (alert_id,)).fetchone()
+        return self._decorate_alert(dict(updated)) if updated is not None else None
 
     def query_history(
         self,
@@ -663,31 +1165,15 @@ class PanelStore:
         time_range_hours: int = 24,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
-        params: list[Any] = []
-        clauses = ["ms.captured_at >= ?"]
-        cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - (time_range_hours * 3600))) + "+00:00"
-        params.append(cutoff)
-        if node:
-            clauses.append("(n.node_name = ? OR CAST(ms.node_id AS TEXT) = ?)")
-            params.extend([node, node])
-        if probe_name:
-            clauses.append("ms.probe_name = ?")
-            params.append(probe_name)
-        if metric_name:
-            clauses.append("ms.metric_name = ?")
-            params.append(metric_name)
-        params.append(limit)
-        sql = f"""
-            SELECT ms.*, n.node_name
-            FROM metric_sample ms
-            LEFT JOIN node n ON n.id = ms.node_id
-            WHERE {' AND '.join(clauses)}
-            ORDER BY ms.captured_at DESC
-            LIMIT ?
-        """
-        with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return self._select_metric_rows(
+            time_range_hours=time_range_hours,
+            roles=None,
+            nodes=[node] if node else None,
+            path_labels=None,
+            probe_names=[probe_name] if probe_name else None,
+            metric_names=[metric_name] if metric_name else None,
+            limit=limit,
+        )
 
     def build_dashboard_snapshot(self) -> dict[str, Any]:
         topology_id = self.get_topology_id()
@@ -703,6 +1189,539 @@ class PanelStore:
             "history": {
                 "samples": self.query_history(metric_name="cpu_usage_pct", time_range_hours=24, limit=180),
             },
+        }
+
+    def build_public_dashboard_snapshot(self, time_range_hours: int = 24) -> dict[str, Any]:
+        settings = self.get_settings().model_dump()
+        nodes = [self._public_node(node) for node in self.list_nodes()]
+        runs = [self._public_run(run) for run in self.list_recent_runs(limit=12)]
+        alerts = [self._public_alert(alert) for alert in self.list_recent_alerts(limit=12)]
+        degraded_statuses = {"push-only", "heartbeat-degraded"}
+        offline_statuses = {"offline", "unpaired", "disabled"}
+        online_nodes = sum(1 for node in nodes if node["status"] == "online")
+        abnormal_nodes = sum(1 for node in nodes if node["status"] in degraded_statuses | offline_statuses)
+        last_full = next((run for run in runs if run["run_kind"] == "full"), None)
+        return {
+            "topology_id": self.get_topology_id(),
+            "topology_name": settings["topology_name"],
+            "summary": {
+                "total_nodes": len(nodes),
+                "online_nodes": online_nodes,
+                "degraded_nodes": sum(1 for node in nodes if node["status"] in degraded_statuses),
+                "offline_nodes": sum(1 for node in nodes if node["status"] in offline_statuses),
+                "active_alerts": sum(1 for alert in alerts if alert["status"] == "open"),
+                "online_rate_pct": round((online_nodes / len(nodes)) * 100.0, 1) if nodes else 0.0,
+                "abnormal_nodes": abnormal_nodes,
+                "last_full_run_started_at": last_full.get("started_at") if last_full else None,
+                "last_full_run_status": last_full.get("status") if last_full else None,
+            },
+            "nodes": nodes,
+            "latest_runs": runs,
+            "alerts": alerts[:8],
+            "paths": self._build_path_summaries(
+                time_range_hours=time_range_hours,
+                roles=None,
+                nodes=None,
+                path_labels=["client_to_relay", "relay_to_server", "client_to_mc_public", "client_to_iperf_public"],
+            ),
+            "history": {
+                "time_range_hours": time_range_hours,
+                "trend_groups": self._build_trend_groups(time_range_hours=time_range_hours, public_mode=True),
+            },
+        }
+
+    def _select_metric_rows(
+        self,
+        time_range_hours: int,
+        roles: list[str] | None,
+        nodes: list[str] | None,
+        path_labels: list[str] | None,
+        probe_names: list[str] | None,
+        metric_names: list[str] | None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [self._cutoff_iso(time_range_hours)]
+        clauses = ["ms.captured_at >= ?"]
+        if roles:
+            clauses.append(_sql_in_clause("n.role", roles, params))
+        if nodes:
+            clauses.append(_sql_in_clause("n.node_name", nodes, params))
+        if path_labels:
+            clauses.append(_sql_in_clause("ms.path_label", path_labels, params))
+        if probe_names:
+            clauses.append(_sql_in_clause("ms.probe_name", probe_names, params))
+        if metric_names:
+            clauses.append(_sql_in_clause("ms.metric_name", metric_names, params))
+        params.append(limit)
+        sql = f"""
+            SELECT ms.*, n.node_name, n.role
+            FROM metric_sample ms
+            LEFT JOIN node n ON n.id = ms.node_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY ms.captured_at ASC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def _select_alert_rows(
+        self,
+        time_range_hours: int,
+        severities: list[str] | None,
+        statuses: list[str] | None,
+        kinds: list[str] | None,
+        path_labels: list[str] | None,
+        metric_names: list[str] | None,
+        acknowledged: bool | None,
+        anomaly_only: bool,
+        fingerprint: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [self._cutoff_iso(time_range_hours)]
+        clauses = ["ae.created_at >= ?"]
+        if severities:
+            clauses.append(_sql_in_clause("ae.severity", severities, params))
+        if statuses:
+            clauses.append(_sql_in_clause("ae.status", statuses, params))
+        if kinds:
+            clauses.append(_sql_in_clause("ae.kind", kinds, params))
+        if anomaly_only:
+            clauses.append("ae.kind = 'anomaly'")
+        if path_labels:
+            clauses.append(_sql_in_clause("ae.path_label", path_labels, params))
+        if metric_names:
+            clauses.append(_sql_in_clause("ae.metric_name", metric_names, params))
+        if fingerprint:
+            clauses.append("ae.fingerprint = ?")
+            params.append(fingerprint)
+        if acknowledged is True:
+            clauses.append("ae.acknowledged_at IS NOT NULL")
+        if acknowledged is False:
+            clauses.append("ae.acknowledged_at IS NULL")
+        params.append(limit)
+        sql = f"""
+            SELECT ae.*, n.node_name, n.role
+            FROM alert_event ae
+            LEFT JOIN node n ON n.id = ae.node_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY ae.created_at DESC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def _build_path_summaries(
+        self,
+        time_range_hours: int,
+        roles: list[str] | None,
+        nodes: list[str] | None,
+        path_labels: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        metric_names = list({metric for metrics in PATH_CATEGORY_METRICS.values() for metric in metrics})
+        rows = self._select_metric_rows(
+            time_range_hours=time_range_hours,
+            roles=roles,
+            nodes=nodes,
+            path_labels=path_labels,
+            probe_names=None,
+            metric_names=metric_names,
+            limit=4000,
+        )
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            label = row.get("path_label")
+            if label:
+                grouped[label].append(row)
+
+        alert_rows = self._select_alert_rows(
+            time_range_hours=time_range_hours,
+            severities=None,
+            statuses=["open", "acknowledged"],
+            kinds=None,
+            path_labels=path_labels,
+            metric_names=None,
+            acknowledged=None,
+            anomaly_only=False,
+            limit=500,
+        )
+        alert_counts: dict[str, int] = defaultdict(int)
+        anomaly_counts: dict[str, int] = defaultdict(int)
+        for alert in alert_rows:
+            if alert.get("path_label"):
+                alert_counts[alert["path_label"]] += 1
+                if alert["kind"] == "anomaly":
+                    anomaly_counts[alert["path_label"]] += 1
+
+        ordered_labels = path_labels[:] if path_labels else list(grouped.keys())
+        ordered = [label for label in DEFAULT_PATH_ORDER if label in ordered_labels or label in grouped]
+        ordered.extend(label for label in ordered_labels if label not in ordered)
+
+        payload = []
+        for label in ordered:
+            label_rows = grouped.get(label, [])
+            latest_by_metric: dict[str, float] = {}
+            avg_by_metric: dict[str, float] = {}
+            for metric in metric_names:
+                metric_rows = [row for row in label_rows if row["metric_name"] == metric]
+                if metric_rows:
+                    latest_by_metric[metric] = float(metric_rows[-1]["metric_value"])
+                    avg_by_metric[metric] = round(sum(float(row["metric_value"]) for row in metric_rows) / len(metric_rows), 3)
+            path_status = "healthy"
+            if alert_counts.get(label):
+                path_status = "degraded"
+            if any(alert["severity"] == "error" for alert in alert_rows if alert.get("path_label") == label):
+                path_status = "critical"
+            payload.append(
+                {
+                    "path_label": label,
+                    "status": path_status,
+                    "latest": latest_by_metric,
+                    "averages": avg_by_metric,
+                    "open_alerts": alert_counts.get(label, 0),
+                    "open_anomalies": anomaly_counts.get(label, 0),
+                    "last_captured_at": label_rows[-1]["captured_at"] if label_rows else None,
+                }
+            )
+        return payload
+
+    def _build_trend_groups(self, time_range_hours: int, public_mode: bool) -> dict[str, Any]:
+        if public_mode:
+            specs = {
+                "latency": [
+                    ("client_to_relay", "rtt_avg_ms"),
+                    ("relay_to_server", "rtt_avg_ms"),
+                    ("client_to_mc_public", "connect_avg_ms"),
+                ],
+                "jitter": [
+                    ("client_to_relay", "jitter_ms"),
+                    ("relay_to_server", "jitter_ms"),
+                ],
+                "loss": [
+                    ("client_to_relay", "packet_loss_pct"),
+                    ("relay_to_server", "packet_loss_pct"),
+                    ("client_to_mc_public", "connect_timeout_or_error_pct"),
+                ],
+                "throughput": [
+                    ("client_to_iperf_public", "throughput_down_mbps"),
+                    ("client_to_iperf_public", "throughput_up_mbps"),
+                    ("relay_to_server", "throughput_down_mbps"),
+                ],
+            }
+        else:
+            specs = {
+                "latency": [
+                    ("client_to_relay", "rtt_avg_ms"),
+                    ("relay_to_server", "rtt_avg_ms"),
+                    ("client_to_mc_public", "connect_avg_ms"),
+                ],
+                "loss": [
+                    ("client_to_relay", "packet_loss_pct"),
+                    ("relay_to_server", "packet_loss_pct"),
+                    ("client_to_mc_public", "connect_timeout_or_error_pct"),
+                ],
+                "throughput": [
+                    ("client_to_iperf_public", "throughput_down_mbps"),
+                    ("client_to_iperf_public", "throughput_up_mbps"),
+                    ("relay_to_server", "throughput_down_mbps"),
+                    ("relay_to_server", "throughput_up_mbps"),
+                ],
+                "system": [
+                    ("client_system", "cpu_usage_pct"),
+                    ("relay_system", "cpu_usage_pct"),
+                    ("server_system", "cpu_usage_pct"),
+                ],
+            }
+
+        payload: dict[str, Any] = {}
+        for group_name, group_specs in specs.items():
+            series_items = []
+            for path_label, metric_name in group_specs:
+                result = self.query_metric_series(
+                    time_range_hours=time_range_hours,
+                    roles=None,
+                    nodes=None,
+                    path_labels=[path_label],
+                    probe_names=None,
+                    metric_name=metric_name,
+                    bucket="auto",
+                    limit=800,
+                )
+                if result["series"]:
+                    series_items.extend(result["series"])
+            payload[group_name] = {
+                "metric_names": [metric_name for _, metric_name in group_specs],
+                "series": series_items,
+            }
+        return payload
+
+    def _bucket_metric_rows(self, rows: list[dict[str, Any]], bucket_sec: int | None) -> list[dict[str, Any]]:
+        if not bucket_sec:
+            return [
+                {
+                    "timestamp": row["captured_at"],
+                    "value": round(float(row["metric_value"]), 4),
+                }
+                for row in rows
+            ]
+        buckets: dict[int, list[float]] = defaultdict(list)
+        for row in rows:
+            timestamp = _parse_iso_timestamp(str(row["captured_at"]))
+            bucket_key = int(timestamp.timestamp()) // bucket_sec
+            buckets[bucket_key].append(float(row["metric_value"]))
+        payload = []
+        for bucket_key in sorted(buckets):
+            bucket_time = datetime.fromtimestamp(bucket_key * bucket_sec, tz=timezone.utc).isoformat()
+            values = buckets[bucket_key]
+            payload.append({"timestamp": bucket_time, "value": round(sum(values) / len(values), 4)})
+        return payload
+
+    def _bucket_seconds_for(self, time_range_hours: int, bucket: str) -> int | None:
+        if bucket == "raw":
+            return None
+        if time_range_hours <= 1:
+            return 60
+        if time_range_hours <= 6:
+            return 300
+        if time_range_hours <= 24:
+            return 900
+        if time_range_hours <= 24 * 7:
+            return 3600
+        return 14400
+
+    def _metric_threshold(self, metric_name: str | None) -> float | None:
+        if not metric_name:
+            return None
+        thresholds = self.get_settings().thresholds
+        mapping = {
+            "packet_loss_pct": thresholds.ping.packet_loss_pct_max,
+            "rtt_avg_ms": thresholds.ping.rtt_avg_ms_max,
+            "rtt_p95_ms": thresholds.ping.rtt_p95_ms_max,
+            "jitter_ms": thresholds.ping.jitter_ms_max,
+            "connect_avg_ms": thresholds.tcp.connect_avg_ms_max,
+            "connect_p95_ms": thresholds.tcp.connect_p95_ms_max,
+            "connect_timeout_or_error_pct": thresholds.tcp.timeout_or_error_pct_max,
+            "throughput_up_mbps": thresholds.throughput.throughput_up_mbps_min,
+            "throughput_down_mbps": thresholds.throughput.throughput_down_mbps_min,
+            "load_rtt_inflation_ms": thresholds.load_inflation.load_rtt_inflation_ms_max,
+            "cpu_usage_pct": thresholds.system.cpu_usage_pct_max,
+            "memory_usage_pct": thresholds.system.memory_usage_pct_max,
+        }
+        return mapping.get(metric_name)
+
+    def _metric_direction(self, metric_name: str | None) -> str:
+        if metric_name in ANOMALY_LOW_METRICS:
+            return "low"
+        return "high"
+
+    def _metric_unit(self, metric_name: str | None) -> str:
+        if not metric_name:
+            return ""
+        if metric_name.endswith("_pct"):
+            return "%"
+        if metric_name.endswith("_mbps"):
+            return "Mbps"
+        if metric_name.endswith("_ms"):
+            return "ms"
+        if metric_name.endswith("_sec"):
+            return "sec"
+        return ""
+
+    def _cutoff_iso(self, time_range_hours: int) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - (time_range_hours * 3600))) + "+00:00"
+
+    def _load_threshold_findings_from_raw(self, raw_path: str) -> list[dict[str, Any]]:
+        try:
+            target = Path(raw_path)
+            if not target.exists():
+                target = Path.cwd() / raw_path
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            return list(payload.get("threshold_findings") or [])
+        except Exception:
+            return []
+
+    def _detect_metric_anomalies(self, conn: sqlite3.Connection, inserted_samples: list[dict[str, Any]]) -> None:
+        current_time = now_iso()
+        for sample in inserted_samples:
+            metric_name = str(sample["metric_name"])
+            if metric_name not in ANOMALY_HIGH_METRICS and metric_name not in ANOMALY_LOW_METRICS:
+                continue
+            path_label = sample.get("path_label")
+            if not path_label:
+                continue
+            cutoff = (_parse_iso_timestamp(sample["captured_at"]) - timedelta(hours=24)).isoformat()
+            history_rows = conn.execute(
+                """
+                SELECT metric_value
+                FROM metric_sample
+                WHERE path_label = ? AND probe_name = ? AND metric_name = ? AND captured_at >= ? AND id < ?
+                ORDER BY captured_at DESC
+                LIMIT 500
+                """,
+                (path_label, sample["probe_name"], metric_name, cutoff, sample["id"]),
+            ).fetchall()
+            values = [float(row["metric_value"]) for row in history_rows]
+            if len(values) < 12:
+                continue
+            median = statistics.median(values)
+            deviations = [abs(value - median) for value in values]
+            mad = statistics.median(deviations)
+            actual = float(sample["metric_value"])
+            if mad == 0:
+                if math.isclose(actual, median, rel_tol=0.0, abs_tol=1e-9):
+                    continue
+                robust_z = 999.0
+            else:
+                robust_z = 0.6745 * (actual - median) / mad
+            direction = self._metric_direction(metric_name)
+            if direction == "high" and robust_z < 3.5:
+                continue
+            if direction == "low" and robust_z > -3.5:
+                continue
+            threshold_value = median + ((3.5 * mad) / 0.6745) if direction == "high" else median - ((3.5 * mad) / 0.6745)
+            fingerprint = self._alert_fingerprint(
+                kind="anomaly",
+                path_label=str(path_label),
+                probe_name=str(sample["probe_name"]),
+                metric_name=metric_name,
+            )
+            if self._is_fingerprint_silenced(conn, fingerprint=fingerprint, current_time=current_time):
+                continue
+            if self._has_recent_fingerprint(conn, fingerprint=fingerprint, current_time=current_time, within_minutes=30):
+                continue
+            self._insert_alert_row(
+                conn=conn,
+                kind="anomaly",
+                severity="error" if abs(robust_z) >= 5.0 else "warning",
+                status="open",
+                message=f"{path_label} {metric_name} anomaly actual={actual:.3f} expected={threshold_value:.3f} z={robust_z:.2f}",
+                created_at=current_time,
+                node_id=sample.get("node_id"),
+                run_id=sample.get("run_id"),
+                path_label=str(path_label),
+                probe_name=str(sample["probe_name"]),
+                metric_name=metric_name,
+                actual_value=actual,
+                threshold_value=float(threshold_value),
+                fingerprint=fingerprint,
+            )
+
+    def _insert_alert_row(
+        self,
+        conn: sqlite3.Connection,
+        kind: str,
+        severity: str,
+        status: str,
+        message: str,
+        created_at: str,
+        node_id: int | None = None,
+        run_id: str | None = None,
+        path_label: str | None = None,
+        probe_name: str | None = None,
+        metric_name: str | None = None,
+        actual_value: float | None = None,
+        threshold_value: float | None = None,
+        fingerprint: str | None = None,
+        acknowledged_at: str | None = None,
+        acknowledged_by: str | None = None,
+        silenced_until: str | None = None,
+        silence_reason: str | None = None,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO alert_event (
+                topology_id, node_id, run_id, kind, severity, status, message, created_at,
+                path_label, probe_name, metric_name, actual_value, threshold_value, fingerprint,
+                acknowledged_at, acknowledged_by, silenced_until, silence_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                self.get_topology_id(),
+                node_id,
+                run_id,
+                kind,
+                severity,
+                status,
+                message,
+                created_at,
+                path_label,
+                probe_name,
+                metric_name,
+                actual_value,
+                threshold_value,
+                fingerprint,
+                acknowledged_at,
+                acknowledged_by,
+                silenced_until,
+                silence_reason,
+            ),
+        )
+
+    def _alert_fingerprint(self, kind: str, path_label: str | None, probe_name: str | None, metric_name: str | None) -> str:
+        payload = "|".join([kind or "", path_label or "", probe_name or "", metric_name or ""])
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _has_recent_fingerprint(self, conn: sqlite3.Connection, fingerprint: str, current_time: str, within_minutes: int) -> bool:
+        cutoff = (_parse_iso_timestamp(current_time) - timedelta(minutes=within_minutes)).isoformat()
+        row = conn.execute(
+            "SELECT 1 FROM alert_event WHERE fingerprint = ? AND created_at >= ? LIMIT 1",
+            (fingerprint, cutoff),
+        ).fetchone()
+        return row is not None
+
+    def _is_fingerprint_silenced(self, conn: sqlite3.Connection, fingerprint: str, current_time: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT silenced_until
+            FROM alert_event
+            WHERE fingerprint = ? AND silenced_until IS NOT NULL
+            ORDER BY silenced_until DESC
+            LIMIT 1
+            """,
+            (fingerprint,),
+        ).fetchone()
+        return bool(row and row["silenced_until"] and str(row["silenced_until"]) > current_time)
+
+    def _public_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": int(node["id"]),
+            "role": str(node["role"]),
+            "node_name": str(node["node_name"]),
+            "status": str(node["status"]),
+            "enabled": bool(node["enabled"]),
+            "paired": bool(node["paired"]),
+            "last_seen_at": node.get("last_seen_at"),
+            "last_push_ok": bool(node.get("last_push_ok")),
+            "last_pull_ok": bool(node.get("last_pull_ok")),
+        }
+
+    def _public_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": str(run["run_id"]),
+            "run_kind": str(run["run_kind"]),
+            "status": str(run["status"]),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+            "findings_count": int(run.get("findings_count") or 0),
+            "conclusion": list(run.get("conclusion") or []),
+            "error": run.get("error"),
+            "html_path": run.get("html_path"),
+        }
+
+    def _public_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": int(alert["id"]),
+            "kind": str(alert["kind"]),
+            "severity": str(alert["severity"]),
+            "status": str(alert["status"]),
+            "message": str(alert["message"]),
+            "created_at": alert.get("created_at"),
+            "path_label": alert.get("path_label"),
+            "metric_name": alert.get("metric_name"),
+            "actual_value": alert.get("actual_value"),
+            "threshold_value": alert.get("threshold_value"),
         }
 
     def _initialize(self) -> None:
@@ -770,7 +1789,8 @@ class PanelStore:
                     csv_path TEXT,
                     html_path TEXT,
                     findings_count INTEGER NOT NULL DEFAULT 0,
-                    conclusion_json TEXT DEFAULT '[]'
+                    conclusion_json TEXT DEFAULT '[]',
+                    threshold_findings_json TEXT DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS job (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -797,6 +1817,7 @@ class PanelStore:
                     error TEXT,
                     metrics_json TEXT NOT NULL,
                     metadata_json TEXT NOT NULL,
+                    samples_json TEXT DEFAULT '[]',
                     started_at TEXT,
                     duration_ms REAL NOT NULL DEFAULT 0
                 );
@@ -808,6 +1829,7 @@ class PanelStore:
                     probe_name TEXT NOT NULL,
                     metric_name TEXT NOT NULL,
                     metric_value REAL NOT NULL,
+                    path_label TEXT,
                     captured_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS alert_event (
@@ -819,9 +1841,57 @@ class PanelStore:
                     severity TEXT NOT NULL,
                     status TEXT NOT NULL,
                     message TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    path_label TEXT,
+                    probe_name TEXT,
+                    metric_name TEXT,
+                    actual_value REAL,
+                    threshold_value REAL,
+                    fingerprint TEXT,
+                    acknowledged_at TEXT,
+                    acknowledged_by TEXT,
+                    silenced_until TEXT,
+                    silence_reason TEXT
                 );
                 """
+            )
+            self._ensure_column(conn, "run", "threshold_findings_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(conn, "probe_result", "samples_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(conn, "metric_sample", "path_label", "TEXT")
+            self._ensure_column(conn, "alert_event", "path_label", "TEXT")
+            self._ensure_column(conn, "alert_event", "probe_name", "TEXT")
+            self._ensure_column(conn, "alert_event", "metric_name", "TEXT")
+            self._ensure_column(conn, "alert_event", "actual_value", "REAL")
+            self._ensure_column(conn, "alert_event", "threshold_value", "REAL")
+            self._ensure_column(conn, "alert_event", "fingerprint", "TEXT")
+            self._ensure_column(conn, "alert_event", "acknowledged_at", "TEXT")
+            self._ensure_column(conn, "alert_event", "acknowledged_by", "TEXT")
+            self._ensure_column(conn, "alert_event", "silenced_until", "TEXT")
+            self._ensure_column(conn, "alert_event", "silence_reason", "TEXT")
+            conn.execute("UPDATE run SET threshold_findings_json = '[]' WHERE threshold_findings_json IS NULL")
+            conn.execute("UPDATE probe_result SET samples_json = '[]' WHERE samples_json IS NULL")
+            conn.execute(
+                """
+                UPDATE metric_sample
+                SET path_label = (
+                    SELECT pr.path_label
+                    FROM probe_result pr
+                    WHERE pr.id = metric_sample.probe_result_id
+                )
+                WHERE path_label IS NULL AND probe_result_id IS NOT NULL
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metric_sample_metric_path_time ON metric_sample(metric_name, path_label, captured_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metric_sample_node_probe_time ON metric_sample(node_id, probe_name, captured_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_alert_event_status_severity_time ON alert_event(status, severity, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_alert_event_fingerprint_status ON alert_event(fingerprint, status)"
             )
             conn.commit()
         if self.get_topology_id() <= 0:
@@ -883,8 +1953,30 @@ class PanelStore:
         return node
 
     def _decorate_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        run["run_id"] = str(run.get("id") or "")
+        run["findings_count"] = int(run.get("findings_count") or 0)
         run["conclusion"] = _loads(run.get("conclusion_json") or "[]")
+        run["threshold_findings"] = _loads(run.get("threshold_findings_json") or "[]")
         return run
+
+    def _decorate_probe_result(self, probe_result: dict[str, Any]) -> dict[str, Any]:
+        probe_result["success"] = bool(probe_result.get("success"))
+        probe_result["metrics"] = _loads(probe_result.get("metrics_json") or "{}")
+        probe_result["metadata"] = _loads(probe_result.get("metadata_json") or "{}")
+        probe_result["samples"] = _loads(probe_result.get("samples_json") or "[]")
+        return probe_result
+
+    def _decorate_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        alert["actual_value"] = float(alert["actual_value"]) if alert.get("actual_value") is not None else None
+        alert["threshold_value"] = float(alert["threshold_value"]) if alert.get("threshold_value") is not None else None
+        alert["acknowledged"] = alert.get("acknowledged_at") is not None
+        alert["is_silenced"] = bool(
+            alert.get("silenced_until") and str(alert.get("silenced_until")) > now_iso()
+        )
+        alert["legacy_unstructured"] = not any(
+            alert.get(key) for key in ("path_label", "probe_name", "metric_name", "fingerprint")
+        )
+        return alert
 
     def _node_id_from_role(self, role: Any) -> int | None:
         if not role:
@@ -905,6 +1997,14 @@ class PanelStore:
             return int(node["id"]) if node else None
         return None
 
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        existing = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
 
 def _dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
@@ -918,3 +2018,17 @@ def _loads(value: str | bytes | bytearray | None) -> Any:
 
 def _hash_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sql_in_clause(field: str, values: list[Any], params: list[Any]) -> str:
+    placeholders = ", ".join("?" for _ in values)
+    params.extend(values)
+    return f"{field} IN ({placeholders})"
+
+
+def _parse_iso_timestamp(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

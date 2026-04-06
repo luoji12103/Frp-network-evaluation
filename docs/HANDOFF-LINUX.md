@@ -106,6 +106,15 @@ bash bin/start_webui.sh
 http://127.0.0.1:8765
 ```
 
+页面分工：
+
+- `/`
+  公开网络质量看板。
+- `/login`
+  管理员登录入口。
+- `/admin`
+  需要登录后访问的管理页面。
+
 远程 Linux 服务器建议通过本地端口转发访问：
 
 ```bash
@@ -132,7 +141,7 @@ docker compose up --build -d
 
 ```bash
 docker compose ps
-curl http://127.0.0.1:8765/api/v1/dashboard
+curl http://127.0.0.1:8765/api/v1/public-dashboard
 docker compose logs -f panel
 ```
 
@@ -169,10 +178,11 @@ curl http://127.0.0.1:9870/api/v1/status
 统一流程：
 
 1. 先启动 Panel。
-2. 在 Panel 中创建 `client / relay / server` 三个节点卡片。
-3. 点击 `生成配对命令`。
-4. 在目标机器上执行命令。
-5. 等待节点状态从 `unpaired` 变成：
+2. 访问 `/login` 或 `/admin`，使用管理员账号登录。
+3. 在管理页面中创建 `client / relay / server` 三个节点卡片。
+4. 点击 `生成配对命令`。
+5. 在目标机器上执行命令。
+6. 等待节点状态从 `unpaired` 变成：
    - `online`
    - `push-only`
    - `heartbeat-degraded`
@@ -191,7 +201,7 @@ curl http://127.0.0.1:9870/api/v1/status
 ## 7. 推荐的 Linux 验证顺序
 
 1. `python -m pytest -q`
-2. 原生启动 Panel 并访问 `/api/v1/dashboard`
+2. 原生启动 Panel 并访问 `/`、`/login`、`/api/v1/public-dashboard`
 3. Docker 启动 Panel 并确认 `healthy`
 4. 在 Linux relay 上用 `docker/relay-agent.compose.yml` 起 Agent
 5. 在 macOS server 上执行 `bin/install_server_agent_launchd.sh`
@@ -201,6 +211,7 @@ curl http://127.0.0.1:9870/api/v1/status
 
 ## 8. 已知事项
 
+- 如果没有设置 `MC_NETPROBE_ADMIN_PASSWORD`，Panel 会自动生成管理员密码并写入 `data/admin-password.txt`，默认用户名是 `admin`。
 - `iperf3` 缺失时，吞吐相关 probe 会明确失败，但其他 probe 继续执行。
 - macOS server 不建议强行使用 Docker Desktop 采集宿主机网络指标；默认改用原生 Agent。
 - Windows client 作为正式监控节点仍支持，但推荐通过计划任务常驻，而不是 Docker。
