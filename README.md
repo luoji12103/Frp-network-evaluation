@@ -175,6 +175,22 @@ bash bin/install_server_agent_launchd.sh \
   --listen-port 9870
 ```
 
+The installer now:
+
+- validates `launchctl`, `plutil`, and the configured `PYTHON_BIN`
+- writes `~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist`
+- writes agent logs to `logs/server-agent.launchd.log`
+- prefers `bootout/bootstrap/kickstart` and falls back to `unload/load`
+
+Recommended post-install checks:
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
+launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
+tail -n 50 logs/server-agent.launchd.log
+curl http://127.0.0.1:9870/api/v1/status
+```
+
 Simple fallback:
 
 ```bash
@@ -236,8 +252,8 @@ Implemented agent endpoints:
 ## Testing
 
 ```bash
-source .venv/bin/activate
-python -m pytest -q
+.venv/bin/python -m pytest -q tests/test_launchd.py tests/test_agent_service.py tests/test_quickstart.py
+.venv/bin/python -m pytest -q
 ```
 
 Current automated coverage includes:

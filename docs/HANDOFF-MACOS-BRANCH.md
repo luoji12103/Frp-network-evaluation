@@ -220,17 +220,35 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 ## 8. macOS 本地测试建议
 
-### 8.1 只测 Agent，不碰 WebUI 接口
+### 8.1 先准备本地 Python 环境
 
 ```bash
-python -m pytest -q tests/test_agent_service.py
-python -m pytest -q
+bash bin/bootstrap_mac.sh
+.venv/bin/pip install -r requirements-dev.txt
 ```
 
-### 8.2 本地启动 macOS Agent
+### 8.2 只测 Agent，不碰 WebUI 接口
 
 ```bash
-python -m agents.service \
+.venv/bin/python -m pytest -q tests/test_launchd.py tests/test_agent_service.py tests/test_quickstart.py
+.venv/bin/python -m pytest -q
+```
+
+### 8.3 推荐先走 launchd 安装链路
+
+```bash
+bash bin/install_server_agent_launchd.sh \
+  --panel-url "http://panel-host:8765" \
+  --pair-code "<from-panel>" \
+  --node-name "server-1" \
+  --role "server" \
+  --listen-port 9870
+```
+
+### 8.4 本地启动 macOS Agent
+
+```bash
+.venv/bin/python -m agents.service \
   --config config/agent/server.yaml \
   --node-name server-1 \
   --role server \
@@ -239,9 +257,12 @@ python -m agents.service \
   --listen-port 9870
 ```
 
-### 8.3 只验证冻结接口
+### 8.5 只验证冻结接口和 launchd 安装结果
 
 ```bash
+plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
+launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
+tail -n 50 logs/server-agent.launchd.log
 curl http://127.0.0.1:9870/api/v1/status
 curl -X POST http://127.0.0.1:9870/api/v1/heartbeat
 ```
