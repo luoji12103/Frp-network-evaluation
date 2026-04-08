@@ -422,6 +422,8 @@ def test_admin_analytics_routes_require_login(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         endpoints = [
             "/api/v1/admin/filters",
+            "/api/v1/admin/runtime",
+            "/api/v1/admin/actions",
             "/api/v1/admin/overview",
             "/api/v1/admin/timeseries",
             "/api/v1/admin/path-health",

@@ -43,6 +43,7 @@ class PanelOrchestrator:
 
     def _run_and_persist(self, run_id: str, run_kind: str, source: str) -> None:
         try:
+            self.store.record_run_event(run_id, "run_started", f"{run_kind} run started", {"source": source})
             run_result = self.execute_run(run_id=run_id, run_kind=run_kind, source=source)
             output_dir = self.output_root / run_id
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -69,11 +70,11 @@ class PanelOrchestrator:
         started_at = now_iso()
 
         if run_kind in {"system", "full"}:
-            self._run_system(probes, findings, nodes)
+            self._run_system(run_id, probes, findings, nodes)
         if run_kind in {"baseline", "full"}:
-            self._run_baseline(probes, findings, settings.model_dump()["services"], nodes)
+            self._run_baseline(run_id, probes, findings, settings.model_dump()["services"], nodes)
         if run_kind in {"capacity", "full"}:
-            self._run_capacity(probes, findings, settings.model_dump()["services"], settings.model_dump()["scenarios"], nodes)
+            self._run_capacity(run_id, probes, findings, settings.model_dump()["services"], settings.model_dump()["scenarios"], nodes)
 
         finished_at = now_iso()
         return RunResult(
@@ -87,13 +88,15 @@ class PanelOrchestrator:
             conclusion=build_conclusion(probes, findings),
         )
 
-    def _run_system(self, probes: list[ProbeResult], findings: list[Any], nodes: dict[str, dict[str, Any] | None]) -> None:
+    def _run_system(self, run_id: str, probes: list[ProbeResult], findings: list[Any], nodes: dict[str, dict[str, Any] | None]) -> None:
         settings = self.store.get_settings()
+        self.store.record_run_event(run_id, "phase_started", "system phase started", {"phase": "system"})
         for role in ("client", "relay", "server"):
             node = self._require_node(nodes, role)
             result = self._dispatch_probe(
                 node=node,
                 run_id=f"system-{int(time.time() * 1000)}",
+                event_run_id=run_id,
                 task="system_snapshot",
                 payload={
                     "sample_interval_sec": settings.scenarios.system.sample_interval_sec,
@@ -103,15 +106,18 @@ class PanelOrchestrator:
             )
             probes.append(result)
             findings.extend(evaluate_probe_thresholds(result, settings.thresholds))
+        self.store.record_run_event(run_id, "phase_completed", "system phase completed", {"phase": "system"})
 
     def _run_baseline(
         self,
+        run_id: str,
         probes: list[ProbeResult],
         findings: list[Any],
         services: dict[str, Any],
         nodes: dict[str, dict[str, Any] | None],
     ) -> None:
         settings = self.store.get_settings()
+        self.store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
         client = self._require_node(nodes, "client")
         relay = self._require_node(nodes, "relay")
         server = self._require_node(nodes, "server")
@@ -127,6 +133,7 @@ class PanelOrchestrator:
                 probe = self._dispatch_probe(
                     node=node,
                     run_id=f"ping-{role}-{int(time.time() * 1000)}",
+                    event_run_id=run_id,
                     task="ping",
                     payload={
                         "host": host,
@@ -195,12 +202,21 @@ class PanelOrchestrator:
                 ),
             )
             for node, task, payload, label in tcp_jobs:
-                probe = self._dispatch_probe(node=node, run_id=f"{task}-{int(time.time() * 1000)}", task=task, payload=payload, path_label=label)
+                probe = self._dispatch_probe(
+                    node=node,
+                    run_id=f"{task}-{int(time.time() * 1000)}",
+                    event_run_id=run_id,
+                    task=task,
+                    payload=payload,
+                    path_label=label,
+                )
                 probes.append(probe)
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
+        self.store.record_run_event(run_id, "phase_completed", "baseline phase completed", {"phase": "baseline"})
 
     def _run_capacity(
         self,
+        run_id: str,
         probes: list[ProbeResult],
         findings: list[Any],
         services: dict[str, Any],
@@ -208,6 +224,7 @@ class PanelOrchestrator:
         nodes: dict[str, dict[str, Any] | None],
     ) -> None:
         settings = self.store.get_settings()
+        self.store.record_run_event(run_id, "phase_started", "capacity phase started", {"phase": "capacity"})
         client = self._require_node(nodes, "client")
         relay = self._require_node(nodes, "relay")
         server = self._require_node(nodes, "server")
@@ -215,10 +232,11 @@ class PanelOrchestrator:
 
         if settings.scenarios.throughput.enabled:
             for reverse in (False, True):
-                self._start_iperf_server(server, services, probes, findings, "server_iperf_direct", settings)
+                self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_direct", settings)
                 probe = self._dispatch_probe(
                     node=relay,
                     run_id=f"relay-throughput-{int(time.time() * 1000)}",
+                    event_run_id=run_id,
                     task="throughput",
                     payload={
                         "host": server_host,
@@ -234,10 +252,11 @@ class PanelOrchestrator:
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
 
             for reverse in (False, True):
-                self._start_iperf_server(server, services, probes, findings, "server_iperf_public", settings)
+                self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_public", settings)
                 probe = self._dispatch_probe(
                     node=client,
                     run_id=f"client-throughput-{int(time.time() * 1000)}",
+                    event_run_id=run_id,
                     task="throughput",
                     payload={
                         "host": services["iperf_public"]["host"],
@@ -256,6 +275,7 @@ class PanelOrchestrator:
             idle_probe = self._dispatch_probe(
                 node=client,
                 run_id=f"idle-{int(time.time() * 1000)}",
+                event_run_id=run_id,
                 task="mc_tcp_probe",
                 payload={
                     "host": services["mc_public"]["host"],
@@ -271,10 +291,11 @@ class PanelOrchestrator:
             probes.append(idle_probe)
             findings.extend(evaluate_probe_thresholds(idle_probe, settings.thresholds))
 
-            self._start_iperf_server(server, services, probes, findings, "server_iperf_public_load", settings)
+            self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_public_load", settings)
             throughput_probe = self._dispatch_probe(
                 node=client,
                 run_id=f"load-throughput-{int(time.time() * 1000)}",
+                event_run_id=run_id,
                 task="throughput",
                 payload={
                     "host": services["iperf_public"]["host"],
@@ -295,6 +316,7 @@ class PanelOrchestrator:
             loaded_probe = self._dispatch_probe(
                 node=client,
                 run_id=f"loaded-{int(time.time() * 1000)}",
+                event_run_id=run_id,
                 task="mc_tcp_probe",
                 payload={
                     "host": services["mc_public"]["host"],
@@ -316,9 +338,11 @@ class PanelOrchestrator:
             load_result.metadata["path_label"] = "client_to_mc_public_load"
             probes.append(load_result)
             findings.extend(evaluate_probe_thresholds(load_result, settings.thresholds))
+        self.store.record_run_event(run_id, "phase_completed", "capacity phase completed", {"phase": "capacity"})
 
     def _start_iperf_server(
         self,
+        run_id: str,
         server: dict[str, Any],
         services: dict[str, Any],
         probes: list[ProbeResult],
@@ -329,6 +353,7 @@ class PanelOrchestrator:
         probe = self._dispatch_probe(
             node=server,
             run_id=f"iperf-server-{int(time.time() * 1000)}",
+            event_run_id=run_id,
             task="start_iperf_server",
             payload={
                 "port": int(services["iperf_local"]["port"]),
@@ -341,23 +366,40 @@ class PanelOrchestrator:
         findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
         time.sleep(0.3)
 
-    def _dispatch_probe(self, node: dict[str, Any], run_id: str, task: str, payload: dict[str, Any], path_label: str) -> ProbeResult:
+    def _dispatch_probe(
+        self,
+        node: dict[str, Any],
+        run_id: str,
+        task: str,
+        payload: dict[str, Any],
+        path_label: str,
+        event_run_id: str | None = None,
+    ) -> ProbeResult:
+        action_run_id = event_run_id or run_id
         timeout_sec = self._timeout_for_task(task, payload)
         payload = dict(payload)
         payload.setdefault("source", node["role"])
         payload.setdefault("platform_name", self._platform_for_runtime(node["runtime_mode"]))
         can_pull = self._node_can_pull(node)
         can_queue = self._node_can_queue(node)
+        self.store.record_run_event(
+            action_run_id,
+            "probe_dispatched",
+            f"{task} dispatched to {node['node_name']}",
+            {"task": task, "node_name": node["node_name"], "path_label": path_label, "can_pull": can_pull, "can_queue": can_queue},
+        )
 
         if can_pull:
             try:
                 response = self.http.run_job(node=node, job_id=None, run_id=run_id, task=task, payload=payload)
                 self.store.update_pull_status(int(node["id"]), ok=True)
                 result = ProbeResult.from_dict(response["result"])
+                transport = "pull"
             except Exception as exc:
                 self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc))
                 if can_queue:
                     result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+                    transport = "queue-fallback"
                 else:
                     result = make_error_probe(
                         name=task,
@@ -365,9 +407,11 @@ class PanelOrchestrator:
                         target=str(payload.get("host", node["node_name"])),
                         error=str(exc),
                     )
+                    transport = "pull-error"
         elif can_queue:
             self.store.reset_pull_status(int(node["id"]))
             result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+            transport = "queue"
         else:
             self.store.reset_pull_status(int(node["id"]))
             result = make_error_probe(
@@ -376,10 +420,24 @@ class PanelOrchestrator:
                 target=str(payload.get("host", node["node_name"])),
                 error=f"{node['node_name']} is not reachable through pull or push mode",
             )
+            transport = "unavailable"
 
         result.metadata.setdefault("path_label", path_label)
         result.metadata.setdefault("source_node", node["role"])
         result.metadata.setdefault("node_runtime_mode", node["runtime_mode"])
+        self.store.record_run_event(
+            action_run_id,
+            "probe_completed",
+            f"{task} completed on {node['node_name']} via {transport}",
+            {
+                "task": task,
+                "node_name": node["node_name"],
+                "path_label": path_label,
+                "transport": transport,
+                "success": result.success,
+                "error": result.error,
+            },
+        )
         return result
 
     def _dispatch_via_queue(self, node: dict[str, Any], run_id: str, task: str, payload: dict[str, Any], timeout_sec: float) -> ProbeResult:

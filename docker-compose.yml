@@ -14,6 +14,8 @@ services:
       MC_NETPROBE_ADMIN_USERNAME: "${MC_NETPROBE_ADMIN_USERNAME:-admin}"
       MC_NETPROBE_ADMIN_PASSWORD: "${MC_NETPROBE_ADMIN_PASSWORD:-}"
       MC_NETPROBE_ADMIN_PASSWORD_FILE: "data/admin-password.txt"
+      MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL: "http://panel-control-bridge:8877"
+      MC_NETPROBE_PANEL_CONTROL_BRIDGE_TOKEN_FILE: "data/panel-control-bridge-token.txt"
       TZ: "${TZ:-UTC}"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -31,3 +33,36 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+  panel-control-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mc-netprobe-panel-control-bridge
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - controller.control_bridge
+      - --mode
+      - panel
+      - --adapter
+      - docker-container
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8877"
+      - --token-file
+      - /app/data/panel-control-bridge-token.txt
+      - --container-name
+      - mc-netprobe-panel
+      - --log-path
+      - docker://mc-netprobe-panel
+      - --bridge-url
+      - http://panel-control-bridge:8877
+    environment:
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock

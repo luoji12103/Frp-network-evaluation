@@ -16,6 +16,9 @@ RuntimeMode = Literal["docker-linux", "native-macos", "native-windows"]
 RunKind = Literal["system", "baseline", "capacity", "full"]
 ChannelStateValue = Literal["unknown", "ok", "error"]
 NodeSummaryStatus = Literal["online", "push-only", "pull-only", "offline", "unpaired", "disabled"]
+ControlTargetKind = Literal["node", "panel"]
+ControlActionName = Literal["status", "start", "stop", "restart", "tail_log", "sync_runtime", "pause_scheduler", "resume_scheduler"]
+ControlActionStatus = Literal["queued", "running", "completed", "failed", "canceled"]
 
 
 class PanelSettings(BaseModel):
@@ -75,6 +78,8 @@ class AgentEndpointReport(BaseModel):
     listen_host: str = "0.0.0.0"
     listen_port: int = 9870
     advertise_url: str | None = None
+    control_listen_port: int | None = None
+    control_url: str | None = None
 
 
 class AgentCapabilities(BaseModel):
@@ -170,6 +175,100 @@ class AgentHealthResponse(BaseModel):
     ok: bool = True
     status: str = "healthy"
     started_at: str
+
+
+class RuntimeSummary(BaseModel):
+    """Structured runtime summary for a managed process or service."""
+
+    state: str = "unknown"
+    checked_at: str | None = None
+    last_error: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class SupervisorSummary(BaseModel):
+    """Supervisor-facing state resolved by a host control bridge."""
+
+    control_available: bool = False
+    bridge_url: str | None = None
+    supervisor_state: str = "unknown"
+    process_state: str = "unknown"
+    pid_or_container_id: str | None = None
+    log_location: str | None = None
+    last_error: str | None = None
+    checked_at: str | None = None
+
+
+class BridgeActionRequest(BaseModel):
+    """Allowlisted action request sent to a control bridge."""
+
+    action: ControlActionName
+    tail_lines: int | None = Field(default=None, ge=1, le=200)
+
+
+class BridgeActionResponse(BaseModel):
+    """Normalized response returned by a control bridge."""
+
+    ok: bool = True
+    accepted: bool = False
+    state: str = "unknown"
+    human_summary: str
+    raw_runtime: dict[str, Any] = Field(default_factory=dict)
+    runtime: RuntimeSummary = Field(default_factory=RuntimeSummary)
+    supervisor: SupervisorSummary = Field(default_factory=SupervisorSummary)
+    log_location: str | None = None
+    log_excerpt: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class AdminControlActionRequest(BaseModel):
+    """Admin-triggered lifecycle or runtime action."""
+
+    action: ControlActionName
+    actor: str = "admin-ui"
+    tail_lines: int | None = Field(default=None, ge=1, le=200)
+    confirmation_token: str | None = None
+
+
+class ControlActionEnvelope(BaseModel):
+    """Persisted control action returned by admin APIs."""
+
+    id: int
+    target_kind: ControlTargetKind
+    target_id: int | None = None
+    action: ControlActionName
+    status: ControlActionStatus
+    confirmation_required: bool = False
+    requested_by: str
+    requested_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    transport: str | None = None
+    result_summary: str | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
+    audit_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminControlActionCreateResponse(BaseModel):
+    """Response returned when an admin submits a control action."""
+
+    ok: bool = True
+    queued: bool = False
+    confirmation_required: bool = False
+    confirmation_token: str | None = None
+    action: ControlActionEnvelope | None = None
+
+
+class RunEventEnvelope(BaseModel):
+    """Lightweight event emitted during a monitoring run."""
+
+    id: int
+    run_id: str
+    event_kind: str
+    message: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
 
 
 class DashboardSnapshot(BaseModel):

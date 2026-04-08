@@ -13,6 +13,7 @@ DEFAULT_CONFIG_PATH = Path("config/agent/server.yaml")
 DEFAULT_LOG_PATH = Path("logs/server-agent.launchd.log")
 DEFAULT_LISTEN_HOST = "0.0.0.0"
 DEFAULT_LISTEN_PORT = 9870
+DEFAULT_CONTROL_PORT = DEFAULT_LISTEN_PORT + 1
 DEFAULT_NODE_NAME = "server"
 DEFAULT_ROLE = "server"
 DEFAULT_RUNTIME_MODE = "native-macos"
@@ -68,6 +69,7 @@ def build_launchd_plist(
     runtime_mode: str = DEFAULT_RUNTIME_MODE,
     listen_host: str = DEFAULT_LISTEN_HOST,
     listen_port: int = DEFAULT_LISTEN_PORT,
+    control_port: int | None = DEFAULT_CONTROL_PORT,
     label: str = DEFAULT_LABEL,
 ) -> dict[str, object]:
     """Construct the plist payload for the launch agent."""
@@ -93,6 +95,8 @@ def build_launchd_plist(
             listen_host,
             "--listen-port",
             str(listen_port),
+            "--control-port",
+            str(control_port if control_port is not None else listen_port + 1),
         ],
         "WorkingDirectory": str(paths.repo_root),
         "RunAtLoad": True,
@@ -124,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-mode", default=DEFAULT_RUNTIME_MODE)
     parser.add_argument("--listen-host", default=DEFAULT_LISTEN_HOST)
     parser.add_argument("--listen-port", type=int, default=DEFAULT_LISTEN_PORT)
+    parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--label", default=DEFAULT_LABEL)
     return parser
@@ -148,6 +153,7 @@ def main() -> int:
         runtime_mode=args.runtime_mode,
         listen_host=args.listen_host,
         listen_port=args.listen_port,
+        control_port=args.control_port,
         label=args.label,
     )
     write_launchd_plist(paths.plist_path, payload)

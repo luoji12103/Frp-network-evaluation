@@ -77,7 +77,7 @@
     .status-pill.push-only, .status-pill.degraded, .status-pill.warning, .status-pill.acknowledged { background: #fff0cc; color: var(--warn); }
     .status-pill.pull-only, .status-pill.offline, .status-pill.critical, .status-pill.error, .status-pill.open { background: #f8ddd8; color: var(--danger); }
     .status-pill.resolved, .status-pill.info, .status-pill.completed { background: #dcefe3; color: var(--ok); }
-    .status-pill.unpaired, .status-pill.running, .status-pill.disabled { background: #e8e8e8; color: #555; }
+    .status-pill.unpaired, .status-pill.running, .status-pill.queued, .status-pill.disabled, .status-pill.canceled { background: #e8e8e8; color: #555; }
     button, .button, select, input, textarea {
       font: inherit;
     }
@@ -394,11 +394,38 @@
         <div class="panel">
           <h2 data-i18n="runDetail">运行详情</h2>
           <div id="runDetail"></div>
+          <div style="margin-top: 16px;">
+            <h3 data-i18n="runEvents">运行事件</h3>
+            <div id="runEvents"></div>
+          </div>
         </div>
       </div>
     </section>
 
     <section id="tab-management" class="tab-section hidden">
+      <div class="management-grid">
+        <div class="panel">
+          <h2 data-i18n="runtimeControl">运行控制</h2>
+          <div id="panelRuntimeCard"></div>
+        </div>
+        <div class="panel">
+          <h2 data-i18n="actionHistory">操作历史</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="target">目标</th>
+                  <th data-i18n="actions">操作</th>
+                  <th data-i18n="status">状态</th>
+                  <th data-i18n="startedAt">开始时间</th>
+                  <th data-i18n="result">结果</th>
+                </tr>
+              </thead>
+              <tbody id="actionsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div class="management-grid">
         <div class="panel">
           <h2 data-i18n="topologyThresholdsSchedules">拓扑、阈值与调度</h2>

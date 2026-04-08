@@ -15,8 +15,18 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from controller.panel_models import AgentCapabilities, AgentEndpointReport, AgentIdentity, AgentRuntimeStatus, NodeUpsertRequest, PanelSettings
+from controller.panel_models import (
+    AgentCapabilities,
+    AgentEndpointReport,
+    AgentIdentity,
+    AgentRuntimeStatus,
+    NodeUpsertRequest,
+    PanelSettings,
+    RuntimeSummary,
+    SupervisorSummary,
+)
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
 
@@ -526,6 +536,187 @@ class PanelStore:
             raise KeyError(node_id)
         return refreshed
 
+    def update_node_runtime_summaries(
+        self,
+        node_id: int,
+        runtime_summary: RuntimeSummary | dict[str, Any],
+        supervisor_summary: SupervisorSummary | dict[str, Any],
+    ) -> dict[str, Any]:
+        runtime_payload = RuntimeSummary.model_validate(runtime_summary).model_dump()
+        supervisor_payload = SupervisorSummary.model_validate(supervisor_summary).model_dump()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE node
+                SET runtime_summary_json = ?,
+                    supervisor_summary_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (_dumps(runtime_payload), _dumps(supervisor_payload), now_iso(), node_id),
+            )
+            conn.commit()
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(node_id)
+        return node
+
+    def create_control_action(
+        self,
+        target_kind: str,
+        target_id: int | None,
+        action: str,
+        requested_by: str,
+        confirmation_required: bool,
+        audit_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        requested_at = now_iso()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO control_action (
+                    target_kind, target_id, action, status, confirmation_required,
+                    requested_by, requested_at, audit_payload_json
+                )
+                VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)
+                """,
+                (
+                    target_kind,
+                    target_id,
+                    action,
+                    1 if confirmation_required else 0,
+                    requested_by,
+                    requested_at,
+                    _dumps(audit_payload or {}),
+                ),
+            )
+            action_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.commit()
+        created = self.get_control_action(action_id)
+        if created is None:
+            raise KeyError(action_id)
+        return created
+
+    def list_control_actions(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM control_action ORDER BY requested_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+        return [self._decorate_control_action(dict(row)) for row in rows]
+
+    def list_pending_control_actions(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM control_action
+                WHERE status = 'queued'
+                ORDER BY requested_at, id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._decorate_control_action(dict(row)) for row in rows]
+
+    def get_control_action(self, action_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM control_action WHERE id = ?", (action_id,)).fetchone()
+        return self._decorate_control_action(dict(row)) if row is not None else None
+
+    def start_control_action(self, action_id: int, transport: str) -> dict[str, Any]:
+        started_at = now_iso()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE control_action
+                SET status = 'running', started_at = ?, transport = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (started_at, transport, action_id),
+            )
+            conn.commit()
+        action = self.get_control_action(action_id)
+        if action is None:
+            raise KeyError(action_id)
+        return action
+
+    def finish_control_action(
+        self,
+        action_id: int,
+        status: str,
+        result_summary: str | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        transport: str | None = None,
+        audit_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        finished_at = now_iso()
+        with self._lock, self._connect() as conn:
+            existing = conn.execute("SELECT audit_payload_json FROM control_action WHERE id = ?", (action_id,)).fetchone()
+            merged_payload = _loads(existing["audit_payload_json"]) if existing is not None else {}
+            if audit_payload:
+                merged_payload.update(audit_payload)
+            conn.execute(
+                """
+                UPDATE control_action
+                SET status = ?,
+                    finished_at = ?,
+                    result_summary = ?,
+                    error_code = ?,
+                    error_detail = ?,
+                    transport = COALESCE(?, transport),
+                    audit_payload_json = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    finished_at,
+                    result_summary,
+                    error_code,
+                    error_detail,
+                    transport,
+                    _dumps(merged_payload),
+                    action_id,
+                ),
+            )
+            conn.commit()
+        action = self.get_control_action(action_id)
+        if action is None:
+            raise KeyError(action_id)
+        return action
+
+    def record_run_event(self, run_id: str, event_kind: str, message: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        created_at = now_iso()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO run_event (run_id, event_kind, message, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (run_id, event_kind, message, _dumps(payload or {}), created_at),
+            )
+            event_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.commit()
+        event = self.get_run_event(event_id)
+        if event is None:
+            raise KeyError(event_id)
+        return event
+
+    def list_run_events(self, run_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM run_event
+                WHERE run_id = ?
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        return [self._decorate_run_event(dict(row)) for row in rows]
+
+    def get_run_event(self, event_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM run_event WHERE id = ?", (event_id,)).fetchone()
+        return self._decorate_run_event(dict(row)) if row is not None else None
+
     def enqueue_job(self, node_id: int, run_id: str, task: str, payload: dict[str, Any], timeout_sec: float | None = None) -> int:
         with self._lock, self._connect() as conn:
             conn.execute(
@@ -652,6 +843,7 @@ class PanelStore:
                 (run_id, self.get_topology_id(), run_kind, source, now_iso()),
             )
             conn.commit()
+        self.record_run_event(run_id=run_id, event_kind="run_created", message=f"{run_kind} run created", payload={"source": source})
         return run_id
 
     def has_active_run(self) -> bool:
@@ -780,6 +972,12 @@ class PanelStore:
                     )
                 self._detect_metric_anomalies(conn=conn, inserted_samples=inserted_samples)
             conn.commit()
+        self.record_run_event(
+            run_id=run_id,
+            event_kind="run_finished" if status == "completed" else "run_failed",
+            message=f"Run finished with status {status}",
+            payload={"status": status, "error": error, "findings_count": len(run_result.threshold_findings) if run_result else 0},
+        )
 
     def list_recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1857,6 +2055,8 @@ class PanelStore:
                     identity_json TEXT DEFAULT '{}',
                     capabilities_json TEXT DEFAULT '{}',
                     runtime_status_json TEXT DEFAULT '{}',
+                    runtime_summary_json TEXT DEFAULT '{}',
+                    supervisor_summary_json TEXT DEFAULT '{}',
                     push_state TEXT NOT NULL DEFAULT 'unknown',
                     push_checked_at TEXT,
                     push_error TEXT,
@@ -1961,6 +2161,31 @@ class PanelStore:
                     silenced_until TEXT,
                     silence_reason TEXT
                 );
+                CREATE TABLE IF NOT EXISTS control_action (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_kind TEXT NOT NULL,
+                    target_id INTEGER,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confirmation_required INTEGER NOT NULL DEFAULT 0,
+                    requested_by TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    transport TEXT,
+                    result_summary TEXT,
+                    error_code TEXT,
+                    error_detail TEXT,
+                    audit_payload_json TEXT DEFAULT '{}'
+                );
+                CREATE TABLE IF NOT EXISTS run_event (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    event_kind TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    payload_json TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(conn, "node", "configured_pull_url", "TEXT")
@@ -1969,6 +2194,8 @@ class PanelStore:
             self._ensure_column(conn, "node", "identity_json", "TEXT DEFAULT '{}'")
             self._ensure_column(conn, "node", "capabilities_json", "TEXT DEFAULT '{}'")
             self._ensure_column(conn, "node", "runtime_status_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "runtime_summary_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "supervisor_summary_json", "TEXT DEFAULT '{}'")
             self._ensure_column(conn, "node", "push_state", "TEXT NOT NULL DEFAULT 'unknown'")
             self._ensure_column(conn, "node", "push_checked_at", "TEXT")
             self._ensure_column(conn, "node", "push_error", "TEXT")
@@ -1996,6 +2223,8 @@ class PanelStore:
             conn.execute("UPDATE node SET capabilities_json = '{}' WHERE capabilities_json IS NULL")
             conn.execute("UPDATE node SET endpoint_report_json = '{}' WHERE endpoint_report_json IS NULL")
             conn.execute("UPDATE node SET runtime_status_json = '{}' WHERE runtime_status_json IS NULL")
+            conn.execute("UPDATE node SET runtime_summary_json = '{}' WHERE runtime_summary_json IS NULL")
+            conn.execute("UPDATE node SET supervisor_summary_json = '{}' WHERE supervisor_summary_json IS NULL")
             conn.execute(
                 """
                 UPDATE node
@@ -2017,6 +2246,8 @@ class PanelStore:
                     SET advertised_pull_url = NULL,
                         endpoint_report_json = '{}',
                         runtime_status_json = '{}',
+                        runtime_summary_json = '{}',
+                        supervisor_summary_json = '{}',
                         push_state = 'unknown',
                         push_checked_at = NULL,
                         push_error = NULL,
@@ -2049,6 +2280,12 @@ class PanelStore:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_alert_event_fingerprint_status ON alert_event(fingerprint, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_control_action_status_requested ON control_action(status, requested_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_run_event_run_created ON run_event(run_id, created_at)"
             )
             conn.commit()
         if self.get_topology_id() <= 0:
@@ -2113,21 +2350,33 @@ class PanelStore:
         capabilities = AgentCapabilities.model_validate(capabilities or {}).model_dump()
         endpoint_report = _loads(node.get("endpoint_report_json") or "{}")
         endpoint_report.setdefault("advertise_url", node.get("advertised_pull_url"))
+        endpoint_report.setdefault("control_listen_port", None)
         runtime_status = _loads(node.get("runtime_status_json") or "{}")
         runtime_status.setdefault("paired", bool(node.get("paired")))
         runtime_status.setdefault("last_heartbeat_at", node.get("last_heartbeat_at"))
+        runtime_summary = RuntimeSummary.model_validate(_loads(node.get("runtime_summary_json") or "{}") or {}).model_dump()
+        supervisor_summary = SupervisorSummary.model_validate(_loads(node.get("supervisor_summary_json") or "{}") or {}).model_dump()
         configured_pull_url = node.get("configured_pull_url")
         advertised_pull_url = node.get("advertised_pull_url") or endpoint_report.get("advertise_url")
         effective_pull_url = configured_pull_url or advertised_pull_url
+        control_bridge_url = endpoint_report.get("control_url") or _derive_control_bridge_url(
+            base_url=effective_pull_url,
+            control_port=endpoint_report.get("control_listen_port"),
+        )
+        supervisor_summary.setdefault("bridge_url", control_bridge_url)
+        endpoint_report.setdefault("control_url", control_bridge_url)
         endpoint_mismatch = bool(configured_pull_url and advertised_pull_url and not _urls_match(configured_pull_url, advertised_pull_url))
         node["identity"] = identity
         node["capabilities"] = capabilities
         node["endpoint_report"] = endpoint_report
         node["runtime_status"] = runtime_status
+        node["runtime"] = runtime_summary
+        node["supervisor"] = supervisor_summary
         node["endpoints"] = {
             "configured_pull_url": configured_pull_url,
             "advertised_pull_url": advertised_pull_url,
             "effective_pull_url": effective_pull_url,
+            "control_bridge_url": control_bridge_url,
         }
         node["connectivity"] = {
             "status": self._classify_node(node),
@@ -2158,6 +2407,8 @@ class PanelStore:
             "identity_json",
             "capabilities_json",
             "runtime_status_json",
+            "runtime_summary_json",
+            "supervisor_summary_json",
             "endpoint_report_json",
         ):
             node.pop(key, None)
@@ -2189,6 +2440,17 @@ class PanelStore:
             alert.get(key) for key in ("path_label", "probe_name", "metric_name", "fingerprint")
         )
         return alert
+
+    def _decorate_control_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        action["confirmation_required"] = bool(action.get("confirmation_required"))
+        action["audit_payload"] = _loads(action.get("audit_payload_json") or "{}")
+        action.pop("audit_payload_json", None)
+        return action
+
+    def _decorate_run_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        event["payload"] = _loads(event.get("payload_json") or "{}")
+        event.pop("payload_json", None)
+        return event
 
     def _node_id_from_role(self, role: Any) -> int | None:
         if not role:
@@ -2251,3 +2513,15 @@ def _parse_iso_timestamp(value: str) -> datetime:
 
 def _urls_match(left: str, right: str) -> bool:
     return left.rstrip("/") == right.rstrip("/")
+
+
+def _derive_control_bridge_url(base_url: str | None, control_port: Any) -> str | None:
+    if not base_url or control_port in {None, ""}:
+        return None
+    try:
+        parsed = urlparse(str(base_url))
+        if not parsed.scheme or not parsed.hostname:
+            return None
+        return parsed._replace(netloc=f"{parsed.hostname}:{int(control_port)}").geturl()
+    except Exception:
+        return None

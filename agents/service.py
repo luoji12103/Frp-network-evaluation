@@ -10,6 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import uvicorn
@@ -58,6 +59,8 @@ class AgentConfig(BaseModel):
     listen_host: str = "0.0.0.0"
     listen_port: int = 9870
     advertise_url: str | None = None
+    control_port: int | None = None
+    control_url: str | None = None
     node_token: str | None = None
     pair_code: str | None = None
     protocol_version: str = SUPPORTED_AGENT_PROTOCOL_VERSION
@@ -99,6 +102,8 @@ class AgentRuntime:
             listen_host=self.config.listen_host,
             listen_port=self.config.listen_port,
             advertise_url=self.config.advertise_url,
+            control_listen_port=self.config.control_port,
+            control_url=self._resolved_control_url(),
         )
 
     def capabilities(self) -> AgentCapabilities:
@@ -218,9 +223,24 @@ class AgentRuntime:
         self.config.panel_url = panel_url
         self.config.node_token = str(data.node_token)
         self.config.advertise_url = data.endpoint.advertise_url or advertise_url or self.config.advertise_url
+        self.config.control_url = data.endpoint.control_url or self.config.control_url
         self.config.pair_code = None
         self._save_config()
         return self.config
+
+    def _resolved_control_url(self) -> str | None:
+        if self.config.control_url:
+            return self.config.control_url
+        if not self.config.control_port:
+            return None
+        if self.config.advertise_url:
+            parsed = urlparse(self.config.advertise_url)
+            if parsed.scheme and parsed.hostname:
+                control = parsed._replace(netloc=f"{parsed.hostname}:{self.config.control_port}")
+                return urlunparse(control)
+        if self.config.listen_host not in {"0.0.0.0", "::"}:
+            return f"http://{self.config.listen_host}:{self.config.control_port}"
+        return None
 
     def _execute_task(self, task: str, payload: dict[str, Any]) -> dict[str, Any]:
         merged_payload = dict(payload)
@@ -350,6 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--listen-host", dest="listen_host", default=None)
     parser.add_argument("--listen-port", dest="listen_port", type=int, default=None)
     parser.add_argument("--advertise-url", dest="advertise_url")
+    parser.add_argument("--control-port", dest="control_port", type=int)
+    parser.add_argument("--control-url", dest="control_url")
     parser.add_argument("--node-token", dest="node_token")
     return parser
 

@@ -23,7 +23,10 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 
 from controller.agent_http_client import AgentHttpClient
+from controller.control_bridge_client import ControlBridgeClient, ControlBridgeError
 from controller.panel_models import (
+    AdminControlActionCreateResponse,
+    AdminControlActionRequest,
     AlertAcknowledgeRequest,
     AlertSilenceRequest,
     AgentHeartbeatRequest,
@@ -39,10 +42,13 @@ from controller.panel_models import (
     PairCodeResponse,
     PanelSettings,
     PublicDashboardSnapshot,
+    BridgeActionResponse,
+    RunEventEnvelope,
     SUPPORTED_AGENT_PROTOCOL_VERSION,
 )
 from controller.panel_orchestrator import PanelOrchestrator
 from controller.panel_store import PanelStore
+from probes.common import now_iso
 
 
 RESULTS_DIR = Path("results")
@@ -60,9 +66,34 @@ class PanelRuntime:
         self.store = PanelStore(db_path=db_path)
         self.orchestrator = PanelOrchestrator(store=self.store, output_root=RESULTS_DIR)
         self.http = AgentHttpClient(store=self.store)
+        self.control = ControlBridgeClient(
+            store=self.store,
+            panel_bridge_url=os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+            panel_bridge_token_path=os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_TOKEN_FILE", "data/panel-control-bridge-token.txt"),
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._start_background = start_background
+        self._started_at = now_iso()
+        self._scheduler_paused = False
+        self._last_loop_at: str | None = None
+        self._last_loop_error: str | None = None
+        self._last_runtime_sync_at = 0.0
+        self._panel_bridge_state: dict[str, Any] = {
+            "runtime": {"state": "unknown", "checked_at": None, "last_error": None, "details": {}},
+            "supervisor": {
+                "control_available": False,
+                "bridge_url": os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+                "supervisor_state": "unknown",
+                "process_state": "unknown",
+                "pid_or_container_id": None,
+                "log_location": None,
+                "last_error": None,
+                "checked_at": None,
+            },
+        }
+        if os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"):
+            self.control.ensure_panel_bridge_token()
 
     def start(self) -> None:
         if not self._start_background or self._thread is not None:
@@ -77,9 +108,17 @@ class PanelRuntime:
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
+            self.run_maintenance_cycle()
+            self._stop_event.wait(3.0)
+
+    def run_maintenance_cycle(self, force_runtime_sync: bool = False) -> None:
+        self._last_loop_at = now_iso()
+        try:
             self.store.mark_stale_nodes(stale_after_sec=45)
             self._refresh_pull_health()
-            if not self.store.has_active_run():
+            self._refresh_runtime_state(force=force_runtime_sync)
+            self._process_control_actions()
+            if not self._scheduler_paused and not self.store.has_active_run():
                 for schedule in self.store.due_schedules():
                     self.store.mark_schedule_dispatched(schedule_id=int(schedule["id"]), interval_sec=int(schedule["interval_sec"]))
                     if not self._schedule_ready(str(schedule["run_kind"])):
@@ -87,7 +126,9 @@ class PanelRuntime:
                     started = self.orchestrator.run_scheduled_due(run_kind=str(schedule["run_kind"]))
                     if started is not None:
                         break
-            self._stop_event.wait(3.0)
+            self._last_loop_error = None
+        except Exception as exc:  # pragma: no cover - defensive loop protection
+            self._last_loop_error = str(exc)
 
     def _refresh_pull_health(self) -> None:
         for node in self.store.list_nodes():
@@ -108,6 +149,161 @@ class PanelRuntime:
         if run_kind == "system":
             return bool(paired_enabled)
         return len(paired_enabled) == 3
+
+    def pause_scheduler(self) -> dict[str, Any]:
+        self._scheduler_paused = True
+        return self.runtime_snapshot()
+
+    def resume_scheduler(self) -> dict[str, Any]:
+        self._scheduler_paused = False
+        return self.runtime_snapshot()
+
+    def runtime_snapshot(self) -> dict[str, Any]:
+        return {
+            "runtime": {
+                "state": "running",
+                "checked_at": now_iso(),
+                "last_error": self._last_loop_error,
+                "details": {
+                    "started_at": self._started_at,
+                    "last_loop_at": self._last_loop_at,
+                    "scheduler_paused": self._scheduler_paused,
+                    "background_loop_active": self._thread is not None,
+                },
+            },
+            "supervisor": dict(self._panel_bridge_state.get("supervisor") or {}),
+        }
+
+    def admin_runtime_payload(self) -> dict[str, Any]:
+        return {
+            "panel": self.runtime_snapshot(),
+            "nodes": self.store.list_nodes(),
+        }
+
+    def refresh_runtime_snapshots(self, force: bool = True) -> None:
+        self._refresh_runtime_state(force=force)
+
+    def _refresh_runtime_state(self, force: bool = False) -> None:
+        if not force and (time.time() - self._last_runtime_sync_at) < 12.0:
+            return
+        self._last_runtime_sync_at = time.time()
+        for node in self.store.list_nodes():
+            if not node.get("paired"):
+                continue
+            try:
+                bridge_state = self.control.node_runtime(node)
+                self.store.update_node_runtime_summaries(
+                    node_id=int(node["id"]),
+                    runtime_summary=bridge_state.runtime.model_dump(),
+                    supervisor_summary=bridge_state.supervisor.model_dump(),
+                )
+            except Exception as exc:
+                self.store.update_node_runtime_summaries(
+                    node_id=int(node["id"]),
+                    runtime_summary={
+                        "state": "unknown",
+                        "checked_at": now_iso(),
+                        "last_error": str(exc),
+                        "details": {},
+                    },
+                    supervisor_summary={
+                        "control_available": False,
+                        "bridge_url": node.get("endpoints", {}).get("control_bridge_url"),
+                        "supervisor_state": "unknown",
+                        "process_state": "unknown",
+                        "pid_or_container_id": None,
+                        "log_location": None,
+                        "last_error": str(exc),
+                        "checked_at": now_iso(),
+                    },
+                )
+        try:
+            response = self.control.panel_runtime()
+            self._panel_bridge_state = {
+                "runtime": response.runtime.model_dump(),
+                "supervisor": response.supervisor.model_dump(),
+            }
+        except Exception as exc:
+            self._panel_bridge_state = {
+                "runtime": {
+                    "state": "running",
+                    "checked_at": now_iso(),
+                    "last_error": str(exc),
+                    "details": {
+                        "started_at": self._started_at,
+                        "last_loop_at": self._last_loop_at,
+                        "scheduler_paused": self._scheduler_paused,
+                    },
+                },
+                "supervisor": {
+                    "control_available": False,
+                    "bridge_url": os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+                    "supervisor_state": "unknown",
+                    "process_state": "unknown",
+                    "pid_or_container_id": None,
+                    "log_location": None,
+                    "last_error": str(exc),
+                    "checked_at": now_iso(),
+                },
+            }
+
+    def _process_control_actions(self) -> None:
+        for action in self.store.list_pending_control_actions(limit=8):
+            self._execute_control_action(action)
+
+    def _execute_control_action(self, action: dict[str, Any]) -> None:
+        target_kind = str(action["target_kind"])
+        target_id = action.get("target_id")
+        name = str(action["action"])
+        tail_lines = action.get("audit_payload", {}).get("request", {}).get("tail_lines")
+        transport = "panel_internal" if target_kind == "panel" and name in {"pause_scheduler", "resume_scheduler"} else f"{target_kind}_bridge"
+        self.store.start_control_action(int(action["id"]), transport=transport)
+        try:
+            if target_kind == "panel":
+                response, result_summary = self._execute_panel_action(name=name, tail_lines=tail_lines)
+            else:
+                node = self.store.get_node(int(target_id))
+                if node is None:
+                    raise KeyError(f"Node {target_id} not found")
+                response = self.control.node_action(node=node, action=name, tail_lines=tail_lines)
+                self.store.update_node_runtime_summaries(
+                    node_id=int(node["id"]),
+                    runtime_summary=response.runtime.model_dump(),
+                    supervisor_summary=response.supervisor.model_dump(),
+                )
+                result_summary = response.human_summary
+            self.store.finish_control_action(
+                int(action["id"]),
+                status="completed",
+                result_summary=result_summary,
+                transport=transport,
+                audit_payload={"response": response.model_dump()},
+            )
+        except Exception as exc:
+            error_code = exc.code if isinstance(exc, (ControlBridgeError,)) else "control_action_failed"
+            self.store.finish_control_action(
+                int(action["id"]),
+                status="failed",
+                result_summary=None,
+                error_code=error_code,
+                error_detail=str(exc),
+                transport=transport,
+                audit_payload={"response": {"error": str(exc)}},
+            )
+
+    def _execute_panel_action(self, name: str, tail_lines: int | None) -> tuple[Any, str]:
+        if name == "pause_scheduler":
+            runtime_payload = self.pause_scheduler()
+            return _panel_internal_bridge_response(runtime_payload, "Scheduler paused"), "Scheduler paused"
+        if name == "resume_scheduler":
+            runtime_payload = self.resume_scheduler()
+            return _panel_internal_bridge_response(runtime_payload, "Scheduler resumed"), "Scheduler resumed"
+        response = self.control.panel_action(action=name, tail_lines=tail_lines)
+        self._panel_bridge_state = {
+            "runtime": response.runtime.model_dump(),
+            "supervisor": response.supervisor.model_dump(),
+        }
+        return response, response.human_summary
 
 
 class AdminAuth:
@@ -343,6 +539,25 @@ def create_app(
         require_admin_api(request)
         return runtime.store.list_filter_options()
 
+    @app.get("/api/v1/admin/runtime")
+    def admin_runtime(request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        runtime.refresh_runtime_snapshots(force=True)
+        return runtime.admin_runtime_payload()
+
+    @app.get("/api/v1/admin/actions")
+    def admin_actions(request: Request, limit: int = 50) -> dict[str, Any]:
+        require_admin_api(request)
+        return {"items": runtime.store.list_control_actions(limit=max(1, min(limit, 200)))}
+
+    @app.get("/api/v1/admin/actions/{action_id}")
+    def admin_action_detail(action_id: int, request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        action = runtime.store.get_control_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail="Action not found")
+        return action
+
     @app.get("/api/v1/admin/overview")
     def admin_overview(
         request: Request,
@@ -424,6 +639,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="Run not found")
         return payload
 
+    @app.get("/api/v1/admin/runs/{run_id}/events")
+    def admin_run_events(run_id: str, request: Request) -> dict[str, Any]:
+        require_admin_api(request)
+        if runtime.store.get_run_detail(run_id) is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        items = [RunEventEnvelope.model_validate(item).model_dump() for item in runtime.store.list_run_events(run_id)]
+        return {"items": items}
+
     @app.get("/api/v1/admin/alerts")
     def admin_alerts(
         request: Request,
@@ -501,6 +724,65 @@ def create_app(
             startup_command=startup_command,
             fallback_command=fallback_command,
         )
+
+    @app.post("/api/v1/admin/nodes/{node_id}/actions")
+    def admin_node_action(node_id: int, payload: AdminControlActionRequest, request: Request) -> AdminControlActionCreateResponse:
+        require_admin_api(request)
+        node = runtime.store.get_node(node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+        confirmation_token = _validate_or_issue_confirmation_token(
+            admin_auth=admin_auth,
+            target_kind="node",
+            target_id=node_id,
+            action=payload.action,
+            confirmation_token=payload.confirmation_token,
+        )
+        if confirmation_token is not None:
+            return AdminControlActionCreateResponse(
+                queued=False,
+                confirmation_required=True,
+                confirmation_token=confirmation_token,
+                action=None,
+            )
+        action = runtime.store.create_control_action(
+            target_kind="node",
+            target_id=node_id,
+            action=payload.action,
+            requested_by=payload.actor,
+            confirmation_required=_action_requires_confirmation(payload.action),
+            audit_payload={"request": payload.model_dump(exclude_none=True), "target_name": node["node_name"]},
+        )
+        return AdminControlActionCreateResponse(queued=True, action=action)
+
+    @app.post("/api/v1/admin/panel/actions")
+    def admin_panel_action(payload: AdminControlActionRequest, request: Request) -> AdminControlActionCreateResponse:
+        require_admin_api(request)
+        if payload.action == "start":
+            raise HTTPException(status_code=400, detail="Panel start is only available through the host bridge, not the WebUI")
+        confirmation_token = _validate_or_issue_confirmation_token(
+            admin_auth=admin_auth,
+            target_kind="panel",
+            target_id=None,
+            action=payload.action,
+            confirmation_token=payload.confirmation_token,
+        )
+        if confirmation_token is not None:
+            return AdminControlActionCreateResponse(
+                queued=False,
+                confirmation_required=True,
+                confirmation_token=confirmation_token,
+                action=None,
+            )
+        action = runtime.store.create_control_action(
+            target_kind="panel",
+            target_id=None,
+            action=payload.action,
+            requested_by=payload.actor,
+            confirmation_required=_action_requires_confirmation(payload.action),
+            audit_payload={"request": payload.model_dump(exclude_none=True), "target_name": "panel"},
+        )
+        return AdminControlActionCreateResponse(queued=True, action=action)
 
     @app.post("/api/v1/agents/pair")
     def pair_agent(payload: AgentPairRequest, request: Request) -> AgentPairResponse:
@@ -585,16 +867,17 @@ def build_startup_commands(node: dict[str, Any], panel_url: str, pair_code: str)
     node_name = str(node["node_name"])
     role = str(node["role"])
     runtime_mode = str(node["runtime_mode"])
+    control_port = 9871
     if runtime_mode == "docker-linux":
         command = (
             f"PANEL_URL='{quoted_panel}' PAIR_CODE='{pair_code}' NODE_NAME='{node_name}' ROLE='{role}' "
-            "RUNTIME_MODE='docker-linux' AGENT_PORT='9870' "
+            "RUNTIME_MODE='docker-linux' AGENT_PORT='9870' CONTROL_PORT='9871' "
             "docker compose -f docker/relay-agent.compose.yml up -d --build"
         )
         fallback = (
             f"python3 -m agents.service --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
             f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' --runtime-mode 'docker-linux' "
-            "--listen-host 0.0.0.0 --listen-port 9870"
+            f"--listen-host 0.0.0.0 --listen-port 9870 --control-port {control_port}"
         )
         return command, fallback
     if runtime_mode == "native-macos":
@@ -605,7 +888,7 @@ def build_startup_commands(node: dict[str, Any], panel_url: str, pair_code: str)
         fallback = (
             f"bash bin/start_agent_tmux.sh --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
             f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' "
-            "--runtime-mode native-macos --listen-port 9870"
+            f"--runtime-mode native-macos --listen-port 9870 --control-port {control_port}"
         )
         return command, fallback
     command = (
@@ -617,7 +900,7 @@ def build_startup_commands(node: dict[str, Any], panel_url: str, pair_code: str)
         "powershell -ExecutionPolicy Bypass -Command "
         f"\"python -m agents.service --config config/agent/{role}.yaml --panel-url '{quoted_panel}' "
         f"--pair-code '{pair_code}' --node-name '{node_name}' --role '{role}' "
-        "--runtime-mode native-windows --listen-host 0.0.0.0 --listen-port 9870\""
+        f"--runtime-mode native-windows --listen-host 0.0.0.0 --listen-port 9870 --control-port {control_port}\""
     )
     return command, fallback
 
@@ -671,6 +954,67 @@ def _parse_optional_bool(value: str | None) -> bool | None:
     if normalized in {"0", "false", "no", "n"}:
         return False
     return None
+
+
+def _action_requires_confirmation(action: str) -> bool:
+    return action in {"stop", "restart", "pause_scheduler", "resume_scheduler"}
+
+
+def _validate_or_issue_confirmation_token(
+    admin_auth: AdminAuth,
+    target_kind: str,
+    target_id: int | None,
+    action: str,
+    confirmation_token: str | None,
+) -> str | None:
+    if not _action_requires_confirmation(action):
+        return None
+    payload = json.dumps(
+        {
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "action": action,
+            "expires_at": int(time.time()) + 300,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    signature = hmac.new(admin_auth.secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    issued_token = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=") + "." + signature
+    if confirmation_token is None:
+        return issued_token
+    if "." not in confirmation_token:
+        raise HTTPException(status_code=400, detail="Invalid confirmation token")
+    encoded, provided_signature = confirmation_token.rsplit(".", 1)
+    padded = encoded + ("=" * (-len(encoded) % 4))
+    try:
+        raw_payload = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid confirmation token") from exc
+    expected_signature = hmac.new(admin_auth.secret.encode("utf-8"), raw_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(provided_signature, expected_signature):
+        raise HTTPException(status_code=400, detail="Invalid confirmation token")
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid confirmation token") from exc
+    if int(decoded.get("expires_at") or 0) < int(time.time()):
+        raise HTTPException(status_code=400, detail="Confirmation token has expired")
+    if decoded.get("target_kind") != target_kind or decoded.get("target_id") != target_id or decoded.get("action") != action:
+        raise HTTPException(status_code=400, detail="Confirmation token does not match the requested action")
+    return None
+
+
+def _panel_internal_bridge_response(runtime_payload: dict[str, Any], summary: str) -> BridgeActionResponse:
+    return BridgeActionResponse(
+        accepted=True,
+        state=str(runtime_payload.get("runtime", {}).get("state") or "running"),
+        human_summary=summary,
+        runtime=runtime_payload.get("runtime", {}),
+        supervisor=runtime_payload.get("supervisor", {}),
+        raw_runtime=runtime_payload,
+        log_location=runtime_payload.get("supervisor", {}).get("log_location"),
+    )
 
 
 def main() -> int:

@@ -74,4 +74,6 @@ def test_write_launchd_plist_contains_expected_program_arguments(tmp_path: Path)
         "0.0.0.0",
         "--listen-port",
         "9870",
+        "--control-port",
+        "9871",
     ]

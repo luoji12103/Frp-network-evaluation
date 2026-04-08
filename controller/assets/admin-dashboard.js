@@ -130,6 +130,26 @@
       copied: "已复制到剪贴板。",
       copyFailed: "复制失败，请手动复制。",
       sessionExpired: "登录已失效，请刷新后重新登录。",
+      runtimeControl: "运行控制",
+      actionHistory: "操作历史",
+      target: "目标",
+      result: "结果",
+      runEvents: "运行事件",
+      start: "启动",
+      stop: "停止",
+      restart: "重启",
+      tailLog: "日志",
+      syncRuntime: "同步运行态",
+      runtimeState: "运行态",
+      supervisorState: "Supervisor",
+      processState: "进程状态",
+      schedulerPaused: "调度已暂停",
+      schedulerRunning: "调度运行中",
+      pauseScheduler: "暂停调度",
+      resumeScheduler: "恢复调度",
+      actionQueuedOk: "操作已入队。",
+      actionQueuedFailed: "发起操作失败",
+      panelTarget: "Panel",
       findings: "发现项",
       actions: "操作",
       severity: "严重级别",
@@ -230,7 +250,9 @@
         acknowledged: "已确认",
         resolved: "已恢复",
         running: "运行中",
+        queued: "已排队",
         completed: "完成",
+        canceled: "已取消",
         failed: "失败",
         healthy: "健康",
         degraded: "降级",
@@ -329,6 +351,26 @@
       copied: "Copied to clipboard.",
       copyFailed: "Copy failed. Please copy manually.",
       sessionExpired: "Session expired. Refresh and log in again.",
+      runtimeControl: "Runtime controls",
+      actionHistory: "Action history",
+      target: "Target",
+      result: "Result",
+      runEvents: "Run events",
+      start: "Start",
+      stop: "Stop",
+      restart: "Restart",
+      tailLog: "Logs",
+      syncRuntime: "Sync runtime",
+      runtimeState: "Runtime state",
+      supervisorState: "Supervisor",
+      processState: "Process state",
+      schedulerPaused: "Scheduler paused",
+      schedulerRunning: "Scheduler running",
+      pauseScheduler: "Pause scheduler",
+      resumeScheduler: "Resume scheduler",
+      actionQueuedOk: "Action queued.",
+      actionQueuedFailed: "Failed to queue action",
+      panelTarget: "Panel",
       findings: "Findings",
       actions: "Actions",
       severity: "Severity",
@@ -429,7 +471,9 @@
         acknowledged: "Acknowledged",
         resolved: "Resolved",
         running: "Running",
+        queued: "Queued",
         completed: "Completed",
+        canceled: "Canceled",
         failed: "Failed",
         healthy: "Healthy",
         degraded: "Degraded",
@@ -448,7 +492,10 @@
     metricSeries: null,
     alerts: null,
     runs: null,
+    runtimeInfo: null,
+    actionHistory: null,
     selectedRun: null,
+    selectedRunEvents: null,
     activeTab: "overview",
     pairCommands: { primary: "", fallback: "" },
     lastRefreshAt: null,
@@ -525,6 +572,16 @@
       if (button.dataset.action === "pair-node") {
         await generatePairCode(card);
       }
+      if (button.dataset.action === "node-control") {
+        await queueNodeAction(card, button.dataset.controlAction);
+      }
+    });
+    document.getElementById("panelRuntimeCard").addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-panel-action]");
+      if (!button) {
+        return;
+      }
+      await queuePanelAction(button.dataset.panelAction);
     });
     document.getElementById("alertsTableBody").addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-alert-action]");
@@ -709,18 +766,22 @@
     });
 
     try {
-      const [overview, pathHealth, metricSeries, alerts, runs] = await Promise.all([
+      const [overview, pathHealth, metricSeries, alerts, runs, runtimeInfo, actions] = await Promise.all([
         fetchJson(`/api/v1/admin/overview?${queryBase.toString()}`),
         fetchJson(`/api/v1/admin/path-health?${queryBase.toString()}`),
         fetchJson(`/api/v1/admin/timeseries?${metricQuery.toString()}`),
         fetchJson(`/api/v1/admin/alerts?${alertsQuery.toString()}`),
         fetchJson(`/api/v1/admin/runs?${runsQuery.toString()}`),
+        fetchJson("/api/v1/admin/runtime"),
+        fetchJson("/api/v1/admin/actions?limit=40"),
       ]);
       state.overview = overview;
       state.pathHealth = pathHealth;
       state.metricSeries = metricSeries;
       state.alerts = alerts;
       state.runs = runs;
+      state.runtimeInfo = runtimeInfo;
+      state.actionHistory = actions;
       state.lastRefreshAt = new Date().toISOString();
       state.lastError = "";
       saveCurrentFilters();
@@ -750,6 +811,8 @@
     renderMetricExplorer();
     renderAlerts();
     renderRuns();
+    renderRuntimeControl();
+    renderActionHistory();
     renderFiltersSummary();
   }
 
@@ -916,6 +979,7 @@
     if (!items.length) {
       body.innerHTML = `<tr><td colspan="6"><div class="empty">${escapeHtml(t("noRuns"))}</div></td></tr>`;
       document.getElementById("runDetail").innerHTML = `<div class="empty">${escapeHtml(t("noRunDetail"))}</div>`;
+      document.getElementById("runEvents").innerHTML = `<div class="empty">${escapeHtml(t("noData"))}</div>`;
       return;
     }
     body.innerHTML = items.map((run) => `
@@ -934,8 +998,12 @@
   }
 
   async function loadRunDetail(runId) {
-    const payload = await fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}`);
+    const [payload, eventsPayload] = await Promise.all([
+      fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}`),
+      fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}/events`),
+    ]);
     state.selectedRun = payload;
+    state.selectedRunEvents = eventsPayload.items || [];
     const findings = payload.threshold_findings || [];
     const probes = payload.probes || [];
     const links = [];
@@ -968,12 +1036,73 @@
         `).join("") : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
       </div>
     `;
+    document.getElementById("runEvents").innerHTML = state.selectedRunEvents.length
+      ? `<div class="card">${state.selectedRunEvents.map((item) => `
+          <div style="margin-bottom: 10px;">
+            <strong>${escapeHtml(item.event_kind)}</strong>
+            <div class="muted">${escapeHtml(formatTimestamp(item.created_at))}</div>
+            <div class="muted">${escapeHtml(item.message || "")}</div>
+          </div>
+        `).join("")}</div>`
+      : `<div class="empty">${escapeHtml(t("noData"))}</div>`;
   }
 
   function hydrateManagement() {
     fillSettingsInputs();
     renderNodeCards();
     renderScheduleMeta();
+  }
+
+  function renderRuntimeControl() {
+    const panel = state.runtimeInfo?.panel || {};
+    const runtime = panel.runtime || {};
+    const supervisor = panel.supervisor || {};
+    const root = document.getElementById("panelRuntimeCard");
+    if (!root) {
+      return;
+    }
+    const paused = Boolean(runtime.details?.scheduler_paused);
+    root.innerHTML = `
+      <div class="card">
+        <div class="section-head">
+          <strong>${escapeHtml(t("panelTarget"))}</strong>
+          <span class="status-pill ${escapeHtml(runtime.state || "unknown")}">${escapeHtml(statusLabel(runtime.state || "unknown"))}</span>
+        </div>
+        <div class="muted">${escapeHtml(t("runtimeState"))}: ${escapeHtml(statusLabel(runtime.state || "unknown"))}</div>
+        <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(supervisor.supervisor_state || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
+        <div class="muted">${escapeHtml(paused ? t("schedulerPaused") : t("schedulerRunning"))}</div>
+        <div class="muted">${escapeHtml(formatTimestamp(runtime.details?.last_loop_at || runtime.checked_at))}</div>
+        <div class="node-actions" style="margin-top: 12px;">
+          <button type="button" data-panel-action="sync_runtime">${escapeHtml(t("syncRuntime"))}</button>
+          <button type="button" data-panel-action="tail_log">${escapeHtml(t("tailLog"))}</button>
+          <button type="button" data-panel-action="${paused ? "resume_scheduler" : "pause_scheduler"}">${escapeHtml(paused ? t("resumeScheduler") : t("pauseScheduler"))}</button>
+          <button type="button" data-panel-action="restart" class="danger">${escapeHtml(t("restart"))}</button>
+          <button type="button" data-panel-action="stop" class="danger">${escapeHtml(t("stop"))}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderActionHistory() {
+    const body = document.getElementById("actionsTableBody");
+    const items = state.actionHistory?.items || [];
+    if (!body) {
+      return;
+    }
+    if (!items.length) {
+      body.innerHTML = `<tr><td colspan="5"><div class="empty">${escapeHtml(t("noData"))}</div></td></tr>`;
+      return;
+    }
+    body.innerHTML = items.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.target_kind === "panel" ? t("panelTarget") : (item.audit_payload?.target_name || String(item.target_id || "")))}</td>
+        <td>${escapeHtml(item.action || "")}</td>
+        <td><span class="status-pill ${escapeHtml(item.status || "")}">${escapeHtml(statusLabel(item.status || ""))}</span></td>
+        <td>${escapeHtml(formatTimestamp(item.started_at || item.requested_at))}</td>
+        <td>${escapeHtml(item.result_summary || item.error_detail || t("noData"))}</td>
+      </tr>
+    `).join("");
   }
 
   function fillSettingsInputs() {
@@ -1013,7 +1142,7 @@
   }
 
   function renderNodeCards() {
-    const nodes = state.snapshot?.nodes || [];
+    const nodes = state.runtimeInfo?.nodes || state.snapshot?.nodes || [];
     const root = document.getElementById("nodeGrid");
     root.innerHTML = FIXED_ROLES.map((role) => {
       const node = nodes.find((item) => item.role === role) || {};
@@ -1021,6 +1150,8 @@
       const connectivity = node.connectivity || {};
       const push = connectivity.push || {};
       const pull = connectivity.pull || {};
+      const runtime = node.runtime || {};
+      const supervisor = node.supervisor || {};
       return `
         <div class="card" data-role="${escapeHtml(role)}" data-node-id="${escapeHtml(node.id || "")}">
           <div class="section-head">
@@ -1037,12 +1168,20 @@
           <div class="muted">${escapeHtml(t("lastSeen"))}: ${escapeHtml(formatTimestamp(node.last_seen_at))}</div>
           <div class="muted">${escapeHtml(t("advertisedPullUrl"))}: ${escapeHtml(endpoints.advertised_pull_url || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("effectivePullUrl"))}: ${escapeHtml(endpoints.effective_pull_url || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("runtimeState"))}: ${escapeHtml(statusLabel(runtime.state || "unknown"))}</div>
+          <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(supervisor.supervisor_state || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("pushState"))}: ${escapeHtml(statusLabel(push.state || "unknown"))}</div>
           <div class="muted">${escapeHtml(t("pullState"))}: ${escapeHtml(statusLabel(pull.state || "unknown"))}</div>
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}
           <div class="node-actions">
             <button type="button" data-action="save-node" class="primary">${escapeHtml(t("saveNode"))}</button>
             <button type="button" data-action="pair-node">${escapeHtml(t("generatePairCommand"))}</button>
+            <button type="button" data-action="node-control" data-control-action="sync_runtime">${escapeHtml(t("syncRuntime"))}</button>
+            <button type="button" data-action="node-control" data-control-action="tail_log">${escapeHtml(t("tailLog"))}</button>
+            <button type="button" data-action="node-control" data-control-action="start">${escapeHtml(t("start"))}</button>
+            <button type="button" data-action="node-control" data-control-action="restart" class="danger">${escapeHtml(t("restart"))}</button>
+            <button type="button" data-action="node-control" data-control-action="stop" class="danger">${escapeHtml(t("stop"))}</button>
           </div>
         </div>
       `;
@@ -1124,6 +1263,46 @@
       showMessage(tWithValue("pairNodeOk", roleLabel(role)), "ok");
     } catch (error) {
       showMessage(`${t("pairNodeFailed")}: ${error.message || error}`, "error");
+    }
+  }
+
+  async function queueNodeAction(card, actionName) {
+    const nodeId = card.dataset.nodeId ? Number(card.dataset.nodeId) : null;
+    if (!nodeId) {
+      showMessage(t("actionQueuedFailed"), "error");
+      return;
+    }
+    await submitControlAction(`/api/v1/admin/nodes/${nodeId}/actions`, actionName);
+  }
+
+  async function queuePanelAction(actionName) {
+    await submitControlAction("/api/v1/admin/panel/actions", actionName);
+  }
+
+  async function submitControlAction(url, actionName) {
+    const payload = { action: actionName, actor: "admin-ui", tail_lines: actionName === "tail_log" ? 40 : undefined };
+    try {
+      let response = await fetchJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.confirmation_required) {
+        const confirmed = window.confirm(`${t("actions")}: ${actionName}`);
+        if (!confirmed) {
+          return;
+        }
+        response = await fetchJson(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, confirmation_token: response.confirmation_token }),
+        });
+      }
+      showMessage(t("actionQueuedOk"), "ok");
+      await delay(500);
+      await refreshAll();
+    } catch (error) {
+      showMessage(`${t("actionQueuedFailed")}: ${error.message || error}`, "error");
     }
   }
 
@@ -1419,6 +1598,10 @@
 
   function numberOf(id) {
     return Number(document.getElementById(id).value || 0);
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   function showMessage(message, level) {

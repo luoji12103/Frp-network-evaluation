@@ -25,6 +25,8 @@ services:
       - 0.0.0.0
       - --listen-port
       - ${AGENT_PORT:-9870}
+      - --control-port
+      - ${CONTROL_PORT:-9871}
       - --advertise-url
       - ${AGENT_ADVERTISE_URL:-http://127.0.0.1:${AGENT_PORT:-9870}}
     ports:
@@ -40,8 +42,43 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${AGENT_PORT:-9870}/api/v1/status', timeout=5).read()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${AGENT_PORT:-9870}/api/v1/health', timeout=5).read()"
       interval: 20s
       timeout: 5s
       retries: 3
       start_period: 15s
+  relay-control-bridge:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mc-netprobe-relay-control-bridge
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - controller.control_bridge
+      - --mode
+      - node
+      - --adapter
+      - docker-container
+      - --host
+      - 0.0.0.0
+      - --port
+      - ${CONTROL_PORT:-9871}
+      - --agent-config
+      - /app/config/agent/relay.yaml
+      - --container-name
+      - mc-netprobe-relay-agent
+      - --log-path
+      - docker://mc-netprobe-relay-agent
+      - --bridge-url
+      - ${CONTROL_ADVERTISE_URL:-http://127.0.0.1:${CONTROL_PORT:-9871}}
+    ports:
+      - "${CONTROL_PORT:-9871}:${CONTROL_PORT:-9871}"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - ../config/agent:/app/config/agent
+      - ../logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
