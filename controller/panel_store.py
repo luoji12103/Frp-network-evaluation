@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from controller.panel_models import NodeUpsertRequest, PanelSettings
+from controller.panel_models import AgentCapabilities, AgentEndpointReport, AgentIdentity, AgentRuntimeStatus, NodeUpsertRequest, PanelSettings
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
 
@@ -208,17 +208,17 @@ class PanelStore:
                 conn.execute(
                     """
                     INSERT INTO node (
-                        topology_id, node_name, role, runtime_mode, agent_url, enabled,
-                        paired, created_at, updated_at, last_status, last_push_ok, last_pull_ok
+                        topology_id, node_name, role, runtime_mode, configured_pull_url, enabled,
+                        paired, created_at, updated_at, last_status, push_state, pull_state
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'unpaired', 0, 0)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'unpaired', 'unknown', 'unknown')
                     """,
                     (
                         topology_id,
                         payload.node_name,
                         payload.role,
                         payload.runtime_mode,
-                        payload.agent_url,
+                        payload.configured_pull_url,
                         1 if payload.enabled else 0,
                         now,
                         now,
@@ -230,14 +230,14 @@ class PanelStore:
                 conn.execute(
                     """
                     UPDATE node
-                    SET node_name = ?, role = ?, runtime_mode = ?, agent_url = ?, enabled = ?, updated_at = ?
+                    SET node_name = ?, role = ?, runtime_mode = ?, configured_pull_url = ?, enabled = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
                         payload.node_name,
                         payload.role,
                         payload.runtime_mode,
-                        payload.agent_url,
+                        payload.configured_pull_url,
                         1 if payload.enabled else 0,
                         now,
                         node_id,
@@ -307,33 +307,31 @@ class PanelStore:
 
     def pair_agent(
         self,
-        node_name: str,
-        role: str,
-        runtime_mode: str,
+        identity: AgentIdentity,
         pair_code: str,
-        agent_url: str | None,
-        advertise_url: str | None,
+        endpoint: AgentEndpointReport,
+        capabilities: AgentCapabilities,
     ) -> tuple[dict[str, Any], str]:
-        node = self.get_node_by_name(node_name)
+        node = self.get_node_by_name(identity.node_name)
         if node is None:
-            raise ValueError(f"Unknown node: {node_name}")
-        if node["role"] != role:
+            raise ValueError(f"Unknown node: {identity.node_name}")
+        if node["role"] != identity.role:
             raise ValueError("Role does not match the paired node")
-        if node["runtime_mode"] != runtime_mode:
+        if node["runtime_mode"] != identity.runtime_mode:
             raise ValueError("Runtime mode does not match the paired node")
 
         with self._connect() as conn:
             secret_row = conn.execute("SELECT * FROM node_secret WHERE node_id = ?", (node["id"],)).fetchone()
         if secret_row is None or not secret_row["pair_code_hash"]:
             raise ValueError("Pair code has not been generated for this node")
-        if secret_row["pair_code_expires_at"] and str(secret_row["pair_code_expires_at"]) < now_iso():
+        if secret_row["pair_code_expires_at"] and _parse_iso_timestamp(str(secret_row["pair_code_expires_at"])) < _parse_iso_timestamp(now_iso()):
             raise ValueError("Pair code has expired")
         if not hmac.compare_digest(str(secret_row["pair_code_hash"]), _hash_token(pair_code)):
             raise ValueError("Pair code is invalid")
 
         token_salt = secrets.token_hex(12)
         node_token = self._derive_node_token(node["id"], token_salt)
-        presented_url = advertise_url or agent_url or node.get("agent_url")
+        current = now_iso()
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
@@ -345,42 +343,54 @@ class PanelStore:
                     token_issued_at = ?
                 WHERE node_id = ?
                 """,
-                (_hash_token(node_token), token_salt, now_iso(), node["id"]),
+                (_hash_token(node_token), token_salt, current, node["id"]),
             )
             conn.execute(
                 """
                 UPDATE node
                 SET paired = 1,
-                    agent_url = COALESCE(?, agent_url),
                     last_seen_at = ?,
-                    last_push_ok = 1,
-                    last_status = 'push-online',
+                    advertised_pull_url = ?,
+                    endpoint_report_json = ?,
+                    identity_json = ?,
+                    capabilities_json = ?,
+                    push_state = 'ok',
+                    push_checked_at = ?,
+                    push_error = NULL,
+                    last_status = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (presented_url, now_iso(), now_iso(), node["id"]),
+                (
+                    current,
+                    endpoint.advertise_url,
+                    _dumps(endpoint.model_dump()),
+                    _dumps(identity.model_dump()),
+                    _dumps(capabilities.model_dump()),
+                    current,
+                    current,
+                    node["id"],
+                ),
             )
             conn.commit()
-        paired = self.get_node(node["id"])
+        paired = self.refresh_node_status(node["id"])
         if paired is None:
             raise KeyError(node["id"])
         return paired, node_token
 
-    def resolve_node_from_token(self, node_name: str, token: str) -> dict[str, Any]:
+    def resolve_node_from_token(self, token: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT n.*, ns.token_hash, ns.token_salt
                 FROM node n
                 JOIN node_secret ns ON ns.node_id = n.id
-                WHERE n.node_name = ?
+                WHERE ns.token_hash = ?
                 """,
-                (node_name,),
+                (_hash_token(token),),
             ).fetchone()
         if row is None or not row["token_hash"]:
             raise ValueError("Node is not paired")
-        if not hmac.compare_digest(str(row["token_hash"]), _hash_token(token)):
-            raise ValueError("Invalid node token")
         return self._decorate_node(dict(row))
 
     def build_node_token(self, node_id: int) -> str:
@@ -393,24 +403,35 @@ class PanelStore:
     def record_heartbeat(
         self,
         node_id: int,
-        agent_url: str | None,
-        status: dict[str, Any],
+        endpoint: AgentEndpointReport,
+        runtime_status: AgentRuntimeStatus,
     ) -> dict[str, Any]:
         current = now_iso()
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 UPDATE node
-                SET agent_url = COALESCE(?, agent_url),
+                SET advertised_pull_url = ?,
+                    endpoint_report_json = ?,
+                    runtime_status_json = ?,
                     last_seen_at = ?,
                     last_heartbeat_at = ?,
-                    last_push_ok = 1,
-                    last_push_error = NULL,
-                    status_payload_json = ?,
+                    push_state = 'ok',
+                    push_checked_at = ?,
+                    push_error = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (agent_url, current, current, _dumps(status), current, node_id),
+                (
+                    endpoint.advertise_url,
+                    _dumps(endpoint.model_dump()),
+                    _dumps(runtime_status.model_dump()),
+                    current,
+                    current,
+                    current,
+                    current,
+                    node_id,
+                ),
             )
             conn.commit()
         return self.refresh_node_status(node_id)
@@ -418,8 +439,15 @@ class PanelStore:
     def mark_push_error(self, node_id: int, error: str) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(
-                "UPDATE node SET last_push_ok = 0, last_push_error = ?, updated_at = ? WHERE id = ?",
-                (error, now_iso(), node_id),
+                """
+                UPDATE node
+                SET push_state = 'error',
+                    push_checked_at = ?,
+                    push_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now_iso(), error, now_iso(), node_id),
             )
             conn.commit()
         self.refresh_node_status(node_id)
@@ -429,10 +457,26 @@ class PanelStore:
             conn.execute(
                 """
                 UPDATE node
-                SET last_pull_ok = ?, last_pull_error = ?, last_pull_checked_at = ?, updated_at = ?
+                SET pull_state = ?, pull_error = ?, pull_checked_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (1 if ok else 0, error, now_iso(), now_iso(), node_id),
+                ("ok" if ok else "error", error, now_iso(), now_iso(), node_id),
+            )
+            conn.commit()
+        return self.refresh_node_status(node_id)
+
+    def reset_pull_status(self, node_id: int) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE node
+                SET pull_state = 'unknown',
+                    pull_error = NULL,
+                    pull_checked_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now_iso(), node_id),
             )
             conn.commit()
         return self.refresh_node_status(node_id)
@@ -443,10 +487,17 @@ class PanelStore:
         with self._lock, self._connect() as conn:
             rows = conn.execute("SELECT id, last_seen_at FROM node WHERE paired = 1").fetchall()
             for row in rows:
-                if row["last_seen_at"] and str(row["last_seen_at"]) < cutoff_iso:
+                if row["last_seen_at"] and _parse_iso_timestamp(str(row["last_seen_at"])) < _parse_iso_timestamp(cutoff_iso):
                     conn.execute(
-                        "UPDATE node SET last_push_ok = 0, last_push_error = ?, updated_at = ? WHERE id = ?",
-                        ("Heartbeat timeout", now_iso(), row["id"]),
+                        """
+                        UPDATE node
+                        SET push_state = 'error',
+                            push_checked_at = ?,
+                            push_error = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now_iso(), "Heartbeat timeout", now_iso(), row["id"]),
                     )
             conn.commit()
         for node in self.list_nodes():
@@ -475,22 +526,34 @@ class PanelStore:
             raise KeyError(node_id)
         return refreshed
 
-    def enqueue_job(self, node_id: int, run_id: str, task: str, payload: dict[str, Any]) -> int:
+    def enqueue_job(self, node_id: int, run_id: str, task: str, payload: dict[str, Any], timeout_sec: float | None = None) -> int:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO job (topology_id, node_id, run_id, job_kind, payload_json, status, created_at, available_at)
-                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                INSERT INTO job (
+                    topology_id, node_id, run_id, job_kind, payload_json, status,
+                    created_at, available_at, timeout_sec
+                )
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
                 """,
-                (self.get_topology_id(), node_id, run_id, task, _dumps(payload), now_iso(), now_iso()),
+                (
+                    self.get_topology_id(),
+                    node_id,
+                    run_id,
+                    task,
+                    _dumps(payload),
+                    now_iso(),
+                    now_iso(),
+                    float(timeout_sec) if timeout_sec is not None else None,
+                ),
             )
             job_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             conn.commit()
         return job_id
 
     def lease_jobs(self, node_id: int, limit: int = 5) -> list[dict[str, Any]]:
-        stale_cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 45)) + "+00:00"
         leased_at = now_iso()
+        leased_rows: list[dict[str, Any]] = []
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 """
@@ -498,36 +561,54 @@ class PanelStore:
                 WHERE node_id = ?
                   AND (
                     status = 'pending'
-                    OR (status = 'leased' AND COALESCE(leased_at, '') < ?)
+                    OR (status = 'leased' AND COALESCE(lease_expires_at, '') < ?)
                   )
                 ORDER BY id
                 LIMIT ?
                 """,
-                (node_id, stale_cutoff, limit),
+                (node_id, leased_at, limit),
             ).fetchall()
-            job_ids = [int(row["id"]) for row in rows]
-            if job_ids:
+            job_updates = []
+            for row in rows:
+                timeout_sec = float(row["timeout_sec"] or 0.0)
+                lease_window = max(timeout_sec, 45.0)
+                lease_expires_at = datetime.fromtimestamp(time.time() + lease_window, tz=timezone.utc).isoformat()
+                job_updates.append((leased_at, lease_expires_at, int(row["id"])))
+                job_payload = dict(row)
+                job_payload["leased_at"] = leased_at
+                job_payload["lease_expires_at"] = lease_expires_at
+                leased_rows.append(job_payload)
+            if job_updates:
                 conn.executemany(
-                    "UPDATE job SET status = 'leased', leased_at = ? WHERE id = ?",
-                    [(leased_at, job_id) for job_id in job_ids],
+                    "UPDATE job SET status = 'leased', leased_at = ?, lease_expires_at = ? WHERE id = ?",
+                    job_updates,
                 )
                 conn.commit()
-        return [dict(row) for row in rows]
+        return leased_rows
 
-    def complete_job(self, job_id: int, result: dict[str, Any]) -> None:
+    def complete_job(self, job_id: int, node_id: int, result: dict[str, Any]) -> bool:
         with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT node_id, status FROM job WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                return False
+            if int(row["node_id"]) != int(node_id):
+                return False
+            if str(row["status"]) in {"completed", "failed"}:
+                return False
             conn.execute(
                 """
                 UPDATE job
                 SET status = 'completed',
                     result_json = ?,
                     completed_at = ?,
+                    lease_expires_at = NULL,
                     error = NULL
                 WHERE id = ?
                 """,
                 (_dumps(result), now_iso(), job_id),
             )
             conn.commit()
+        return True
 
     def fail_job(self, job_id: int, error: str) -> None:
         with self._lock, self._connect() as conn:
@@ -536,6 +617,7 @@ class PanelStore:
                 UPDATE job
                 SET status = 'failed',
                     completed_at = ?,
+                    lease_expires_at = NULL,
                     error = ?
                 WHERE id = ?
                 """,
@@ -829,7 +911,7 @@ class PanelStore:
         )
         latest_full = next((run for run in self.list_recent_runs(limit=20) if run["run_kind"] == "full"), None)
         online_nodes = sum(1 for node in filtered_nodes if node["status"] == "online")
-        degraded_nodes = sum(1 for node in filtered_nodes if node["status"] in {"push-only", "heartbeat-degraded"})
+        degraded_nodes = sum(1 for node in filtered_nodes if node["status"] in {"push-only", "pull-only"})
         offline_nodes = sum(1 for node in filtered_nodes if node["status"] in {"offline", "unpaired", "disabled"})
         total_nodes = len(filtered_nodes)
         active_alerts = sum(1 for item in alerts_payload["items"] if item["status"] in {"open", "acknowledged"} and not item["is_silenced"])
@@ -1196,7 +1278,7 @@ class PanelStore:
         nodes = [self._public_node(node) for node in self.list_nodes()]
         runs = [self._public_run(run) for run in self.list_recent_runs(limit=12)]
         alerts = [self._public_alert(alert) for alert in self.list_recent_alerts(limit=12)]
-        degraded_statuses = {"push-only", "heartbeat-degraded"}
+        degraded_statuses = {"push-only", "pull-only"}
         offline_statuses = {"offline", "unpaired", "disabled"}
         online_nodes = sum(1 for node in nodes if node["status"] == "online")
         abnormal_nodes = sum(1 for node in nodes if node["status"] in degraded_statuses | offline_statuses)
@@ -1682,7 +1764,11 @@ class PanelStore:
             """,
             (fingerprint,),
         ).fetchone()
-        return bool(row and row["silenced_until"] and str(row["silenced_until"]) > current_time)
+        return bool(
+            row
+            and row["silenced_until"]
+            and _parse_iso_timestamp(str(row["silenced_until"])) > _parse_iso_timestamp(current_time)
+        )
 
     def _public_node(self, node: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1693,8 +1779,10 @@ class PanelStore:
             "enabled": bool(node["enabled"]),
             "paired": bool(node["paired"]),
             "last_seen_at": node.get("last_seen_at"),
-            "last_push_ok": bool(node.get("last_push_ok")),
-            "last_pull_ok": bool(node.get("last_pull_ok")),
+            "connectivity": {
+                "push": dict(node.get("connectivity", {}).get("push", {})),
+                "pull": dict(node.get("connectivity", {}).get("pull", {})),
+            },
         }
 
     def _public_run(self, run: dict[str, Any]) -> dict[str, Any]:
@@ -1726,6 +1814,12 @@ class PanelStore:
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as conn:
+            existing_tables = {
+                str(row["name"])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            }
+            node_columns_before = self._table_columns(conn, "node") if "node" in existing_tables else set()
+            job_columns_before = self._table_columns(conn, "job") if "job" in existing_tables else set()
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS topology (
@@ -1744,6 +1838,8 @@ class PanelStore:
                     role TEXT NOT NULL UNIQUE,
                     runtime_mode TEXT NOT NULL,
                     agent_url TEXT,
+                    configured_pull_url TEXT,
+                    advertised_pull_url TEXT,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     paired INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -1756,7 +1852,17 @@ class PanelStore:
                     last_pull_ok INTEGER NOT NULL DEFAULT 0,
                     last_push_error TEXT,
                     last_pull_error TEXT,
-                    status_payload_json TEXT DEFAULT '{}'
+                    status_payload_json TEXT DEFAULT '{}',
+                    endpoint_report_json TEXT DEFAULT '{}',
+                    identity_json TEXT DEFAULT '{}',
+                    capabilities_json TEXT DEFAULT '{}',
+                    runtime_status_json TEXT DEFAULT '{}',
+                    push_state TEXT NOT NULL DEFAULT 'unknown',
+                    push_checked_at TEXT,
+                    push_error TEXT,
+                    pull_state TEXT NOT NULL DEFAULT 'unknown',
+                    pull_checked_at TEXT,
+                    pull_error TEXT
                 );
                 CREATE TABLE IF NOT EXISTS node_secret (
                     node_id INTEGER PRIMARY KEY,
@@ -1802,7 +1908,9 @@ class PanelStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     available_at TEXT NOT NULL,
+                    timeout_sec REAL,
                     leased_at TEXT,
+                    lease_expires_at TEXT,
                     completed_at TEXT,
                     result_json TEXT,
                     error TEXT
@@ -1855,7 +1963,21 @@ class PanelStore:
                 );
                 """
             )
+            self._ensure_column(conn, "node", "configured_pull_url", "TEXT")
+            self._ensure_column(conn, "node", "advertised_pull_url", "TEXT")
+            self._ensure_column(conn, "node", "endpoint_report_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "identity_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "capabilities_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "runtime_status_json", "TEXT DEFAULT '{}'")
+            self._ensure_column(conn, "node", "push_state", "TEXT NOT NULL DEFAULT 'unknown'")
+            self._ensure_column(conn, "node", "push_checked_at", "TEXT")
+            self._ensure_column(conn, "node", "push_error", "TEXT")
+            self._ensure_column(conn, "node", "pull_state", "TEXT NOT NULL DEFAULT 'unknown'")
+            self._ensure_column(conn, "node", "pull_checked_at", "TEXT")
+            self._ensure_column(conn, "node", "pull_error", "TEXT")
             self._ensure_column(conn, "run", "threshold_findings_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(conn, "job", "timeout_sec", "REAL")
+            self._ensure_column(conn, "job", "lease_expires_at", "TEXT")
             self._ensure_column(conn, "probe_result", "samples_json", "TEXT DEFAULT '[]'")
             self._ensure_column(conn, "metric_sample", "path_label", "TEXT")
             self._ensure_column(conn, "alert_event", "path_label", "TEXT")
@@ -1870,6 +1992,41 @@ class PanelStore:
             self._ensure_column(conn, "alert_event", "silence_reason", "TEXT")
             conn.execute("UPDATE run SET threshold_findings_json = '[]' WHERE threshold_findings_json IS NULL")
             conn.execute("UPDATE probe_result SET samples_json = '[]' WHERE samples_json IS NULL")
+            conn.execute("UPDATE node SET identity_json = '{}' WHERE identity_json IS NULL")
+            conn.execute("UPDATE node SET capabilities_json = '{}' WHERE capabilities_json IS NULL")
+            conn.execute("UPDATE node SET endpoint_report_json = '{}' WHERE endpoint_report_json IS NULL")
+            conn.execute("UPDATE node SET runtime_status_json = '{}' WHERE runtime_status_json IS NULL")
+            conn.execute(
+                """
+                UPDATE node
+                SET configured_pull_url = agent_url
+                WHERE configured_pull_url IS NULL AND agent_url IS NOT NULL
+                """
+            )
+            communication_migration_needed = (
+                "configured_pull_url" not in node_columns_before
+                or "advertised_pull_url" not in node_columns_before
+                or "push_state" not in node_columns_before
+                or "pull_state" not in node_columns_before
+                or "lease_expires_at" not in job_columns_before
+            )
+            if communication_migration_needed:
+                conn.execute(
+                    """
+                    UPDATE node
+                    SET advertised_pull_url = NULL,
+                        endpoint_report_json = '{}',
+                        runtime_status_json = '{}',
+                        push_state = 'unknown',
+                        push_checked_at = NULL,
+                        push_error = NULL,
+                        pull_state = 'unknown',
+                        pull_checked_at = NULL,
+                        pull_error = NULL,
+                        last_status = NULL
+                    """
+                )
+                conn.execute("DELETE FROM job WHERE status IN ('pending', 'leased')")
             conn.execute(
                 """
                 UPDATE metric_sample
@@ -1933,23 +2090,77 @@ class PanelStore:
             return "disabled"
         if not node.get("paired"):
             return "unpaired"
-        push_ok = bool(node.get("last_push_ok"))
-        pull_ok = bool(node.get("last_pull_ok"))
+        push_ok = self._channel_is_ok(node.get("push_state"))
+        pull_ok = self._channel_is_ok(node.get("pull_state"))
         if push_ok and pull_ok:
             return "online"
         if push_ok:
             return "push-only"
         if pull_ok:
-            return "heartbeat-degraded"
+            return "pull-only"
         return "offline"
 
     def _decorate_node(self, node: dict[str, Any]) -> dict[str, Any]:
         node["enabled"] = bool(node.get("enabled"))
         node["paired"] = bool(node.get("paired"))
-        node["last_push_ok"] = bool(node.get("last_push_ok"))
-        node["last_pull_ok"] = bool(node.get("last_pull_ok"))
-        node["status_payload"] = _loads(node.get("status_payload_json") or "{}")
+        node["push_state"] = str(node.get("push_state") or "unknown")
+        node["pull_state"] = str(node.get("pull_state") or "unknown")
+        identity = _loads(node.get("identity_json") or "{}")
+        identity.setdefault("node_name", node.get("node_name"))
+        identity.setdefault("role", node.get("role"))
+        identity.setdefault("runtime_mode", node.get("runtime_mode"))
+        capabilities = _loads(node.get("capabilities_json") or "{}")
+        capabilities = AgentCapabilities.model_validate(capabilities or {}).model_dump()
+        endpoint_report = _loads(node.get("endpoint_report_json") or "{}")
+        endpoint_report.setdefault("advertise_url", node.get("advertised_pull_url"))
+        runtime_status = _loads(node.get("runtime_status_json") or "{}")
+        runtime_status.setdefault("paired", bool(node.get("paired")))
+        runtime_status.setdefault("last_heartbeat_at", node.get("last_heartbeat_at"))
+        configured_pull_url = node.get("configured_pull_url")
+        advertised_pull_url = node.get("advertised_pull_url") or endpoint_report.get("advertise_url")
+        effective_pull_url = configured_pull_url or advertised_pull_url
+        endpoint_mismatch = bool(configured_pull_url and advertised_pull_url and not _urls_match(configured_pull_url, advertised_pull_url))
+        node["identity"] = identity
+        node["capabilities"] = capabilities
+        node["endpoint_report"] = endpoint_report
+        node["runtime_status"] = runtime_status
+        node["endpoints"] = {
+            "configured_pull_url": configured_pull_url,
+            "advertised_pull_url": advertised_pull_url,
+            "effective_pull_url": effective_pull_url,
+        }
+        node["connectivity"] = {
+            "status": self._classify_node(node),
+            "push": {
+                "state": node["push_state"],
+                "checked_at": node.get("push_checked_at"),
+                "error": node.get("push_error"),
+            },
+            "pull": {
+                "state": node["pull_state"],
+                "checked_at": node.get("pull_checked_at"),
+                "error": node.get("pull_error"),
+            },
+            "endpoint_mismatch": endpoint_mismatch,
+            "endpoint_mismatch_detail": (
+                "Configured pull URL differs from the agent-advertised URL" if endpoint_mismatch else None
+            ),
+        }
         node["status"] = self._classify_node(node)
+        for key in (
+            "agent_url",
+            "last_push_ok",
+            "last_pull_ok",
+            "last_push_error",
+            "last_pull_error",
+            "last_pull_checked_at",
+            "status_payload_json",
+            "identity_json",
+            "capabilities_json",
+            "runtime_status_json",
+            "endpoint_report_json",
+        ):
+            node.pop(key, None)
         return node
 
     def _decorate_run(self, run: dict[str, Any]) -> dict[str, Any]:
@@ -1971,7 +2182,8 @@ class PanelStore:
         alert["threshold_value"] = float(alert["threshold_value"]) if alert.get("threshold_value") is not None else None
         alert["acknowledged"] = alert.get("acknowledged_at") is not None
         alert["is_silenced"] = bool(
-            alert.get("silenced_until") and str(alert.get("silenced_until")) > now_iso()
+            alert.get("silenced_until")
+            and _parse_iso_timestamp(str(alert.get("silenced_until"))) > _parse_iso_timestamp(now_iso())
         )
         alert["legacy_unstructured"] = not any(
             alert.get(key) for key in ("path_label", "probe_name", "metric_name", "fingerprint")
@@ -1998,12 +2210,15 @@ class PanelStore:
         return None
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-        existing = {
-            str(row["name"])
-            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        existing = self._table_columns(conn, table)
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _channel_is_ok(self, state: Any) -> bool:
+        return str(state or "unknown") == "ok"
 
 
 def _dumps(value: Any) -> str:
@@ -2032,3 +2247,7 @@ def _parse_iso_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _urls_match(left: str, right: str) -> bool:
+    return left.rstrip("/") == right.rstrip("/")

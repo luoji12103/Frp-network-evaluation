@@ -346,20 +346,36 @@ class PanelOrchestrator:
         payload = dict(payload)
         payload.setdefault("source", node["role"])
         payload.setdefault("platform_name", self._platform_for_runtime(node["runtime_mode"]))
+        can_pull = self._node_can_pull(node)
+        can_queue = self._node_can_queue(node)
 
-        if node.get("agent_url"):
+        if can_pull:
             try:
                 response = self.http.run_job(node=node, job_id=None, run_id=run_id, task=task, payload=payload)
                 self.store.update_pull_status(int(node["id"]), ok=True)
                 result = ProbeResult.from_dict(response["result"])
             except Exception as exc:
                 self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc))
-                if not node.get("last_push_ok"):
-                    result = make_error_probe(name=task, source=node["role"], target=str(payload.get("host", node["node_name"])), error=str(exc))
-                else:
+                if can_queue:
                     result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
-        else:
+                else:
+                    result = make_error_probe(
+                        name=task,
+                        source=node["role"],
+                        target=str(payload.get("host", node["node_name"])),
+                        error=str(exc),
+                    )
+        elif can_queue:
+            self.store.reset_pull_status(int(node["id"]))
             result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+        else:
+            self.store.reset_pull_status(int(node["id"]))
+            result = make_error_probe(
+                name=task,
+                source=node["role"],
+                target=str(payload.get("host", node["node_name"])),
+                error=f"{node['node_name']} is not reachable through pull or push mode",
+            )
 
         result.metadata.setdefault("path_label", path_label)
         result.metadata.setdefault("source_node", node["role"])
@@ -367,14 +383,14 @@ class PanelOrchestrator:
         return result
 
     def _dispatch_via_queue(self, node: dict[str, Any], run_id: str, task: str, payload: dict[str, Any], timeout_sec: float) -> ProbeResult:
-        if not node.get("last_push_ok"):
+        if not self._node_can_queue(node):
             return make_error_probe(
                 name=task,
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=f"{node['node_name']} is not reachable through pull or push mode",
             )
-        job_id = self.store.enqueue_job(node_id=int(node["id"]), run_id=run_id, task=task, payload=payload)
+        job_id = self.store.enqueue_job(node_id=int(node["id"]), run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
         try:
             job = self.store.wait_for_job(job_id=job_id, timeout_sec=timeout_sec)
         except TimeoutError as exc:
@@ -400,11 +416,18 @@ class PanelOrchestrator:
         return node
 
     def _agent_host(self, node: dict[str, Any]) -> str:
-        if node.get("agent_url"):
-            parsed = urlparse(str(node["agent_url"]))
+        effective_pull_url = node.get("endpoints", {}).get("effective_pull_url")
+        if effective_pull_url:
+            parsed = urlparse(str(effective_pull_url))
             if parsed.hostname:
                 return parsed.hostname
         raise ValueError(f"Node {node['node_name']} does not have a usable agent URL host")
+
+    def _node_can_pull(self, node: dict[str, Any]) -> bool:
+        return bool(node.get("endpoints", {}).get("effective_pull_url")) and bool(node.get("capabilities", {}).get("pull_http", True))
+
+    def _node_can_queue(self, node: dict[str, Any]) -> bool:
+        return bool(node.get("capabilities", {}).get("heartbeat_queue", True)) and node.get("connectivity", {}).get("push", {}).get("state") == "ok"
 
     def _platform_for_runtime(self, runtime_mode: str) -> str:
         if runtime_mode == "native-windows":

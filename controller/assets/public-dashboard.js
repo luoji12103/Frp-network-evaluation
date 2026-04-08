@@ -77,13 +77,15 @@
       status: {
         online: "在线",
         "push-only": "仅 Push",
-        "heartbeat-degraded": "心跳降级",
+        "pull-only": "仅 Pull",
         offline: "离线",
         unpaired: "未配对",
         disabled: "已禁用",
         healthy: "健康",
         degraded: "降级",
         critical: "严重",
+        ok: "正常",
+        unknown: "未知",
         running: "运行中",
         completed: "完成",
         failed: "失败",
@@ -160,13 +162,15 @@
       status: {
         online: "Online",
         "push-only": "Push only",
-        "heartbeat-degraded": "Heartbeat degraded",
+        "pull-only": "Pull only",
         offline: "Offline",
         unpaired: "Unpaired",
         disabled: "Disabled",
         healthy: "Healthy",
         degraded: "Degraded",
         critical: "Critical",
+        ok: "OK",
+        unknown: "Unknown",
         running: "Running",
         completed: "Completed",
         failed: "Failed",
@@ -363,7 +367,7 @@
           </div>
           <div class="metric-meta">${escapeHtml(node.node_name)}</div>
           <div class="metric-meta">${escapeHtml(t("lastSeen"))}: ${escapeHtml(formatTimestamp(node.last_seen_at))}</div>
-          <div class="metric-meta">${escapeHtml(t("push"))}: ${escapeHtml(signalLabel(node.last_push_ok))} | ${escapeHtml(t("pull"))}: ${escapeHtml(signalLabel(node.last_pull_ok))}</div>
+          <div class="metric-meta">${escapeHtml(t("push"))}: ${escapeHtml(statusLabel(node.connectivity?.push?.state || "unknown"))} | ${escapeHtml(t("pull"))}: ${escapeHtml(statusLabel(node.connectivity?.pull?.state || "unknown"))}</div>
         </div>
       `;
     }).join("");

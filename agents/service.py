@@ -16,10 +16,24 @@ import uvicorn
 import yaml
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agents import execute_task
-from controller.panel_models import AgentHeartbeatRequest, AgentHeartbeatResponse, AgentJobRequest, AgentJobResponse, AgentPairRequest
+from controller.panel_models import (
+    AgentCapabilities,
+    AgentEndpointReport,
+    AgentHealthResponse,
+    AgentHeartbeatRequest,
+    AgentHeartbeatResponse,
+    AgentIdentity,
+    AgentPairRequest,
+    AgentPairResponse,
+    AgentRuntimeStatus,
+    AgentStatusResponse,
+    AgentTaskCompletion,
+    AgentTaskDispatch,
+    SUPPORTED_AGENT_PROTOCOL_VERSION,
+)
 from probes.common import current_environment, detect_platform_name, now_iso
 
 
@@ -46,6 +60,8 @@ class AgentConfig(BaseModel):
     advertise_url: str | None = None
     node_token: str | None = None
     pair_code: str | None = None
+    protocol_version: str = SUPPORTED_AGENT_PROTOCOL_VERSION
+    agent_version: str = "1"
 
 
 class AgentRuntime:
@@ -67,21 +83,43 @@ class AgentRuntime:
         if start_background:
             self.start_background_threads()
 
-    def status_snapshot(self) -> dict[str, Any]:
-        return {
-            "node_name": self.config.node_name,
-            "role": self.config.role,
-            "runtime_mode": self.config.runtime_mode,
-            "paired": bool(self.config.node_token),
-            "listen_host": self.config.listen_host,
-            "listen_port": self.config.listen_port,
-            "advertise_url": self.config.advertise_url,
-            "panel_url": self.config.panel_url,
-            "started_at": self._started_at,
-            "last_heartbeat_at": self._last_heartbeat_at,
-            "last_error": self._last_error,
-            "environment": current_environment() | {"platform_name": detect_platform_name(), "hostname": socket.gethostname()},
-        }
+    def identity(self) -> AgentIdentity:
+        return AgentIdentity(
+            node_name=self.config.node_name,
+            role=self.config.role,  # type: ignore[arg-type]
+            runtime_mode=self.config.runtime_mode,  # type: ignore[arg-type]
+            protocol_version=self.config.protocol_version,
+            platform_name=detect_platform_name(),
+            hostname=socket.gethostname(),
+            agent_version=self.config.agent_version,
+        )
+
+    def endpoint_report(self) -> AgentEndpointReport:
+        return AgentEndpointReport(
+            listen_host=self.config.listen_host,
+            listen_port=self.config.listen_port,
+            advertise_url=self.config.advertise_url,
+        )
+
+    def capabilities(self) -> AgentCapabilities:
+        return AgentCapabilities(pull_http=True, heartbeat_queue=True, result_lookup=True)
+
+    def runtime_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
+            paired=bool(self.config.node_token),
+            started_at=self._started_at,
+            last_heartbeat_at=self._last_heartbeat_at,
+            last_error=self._last_error,
+            environment=current_environment() | {"platform_name": detect_platform_name(), "hostname": socket.gethostname()},
+        )
+
+    def status_snapshot(self) -> AgentStatusResponse:
+        return AgentStatusResponse(
+            identity=self.identity(),
+            endpoint=self.endpoint_report(),
+            capabilities=self.capabilities(),
+            runtime_status=self.runtime_status(),
+        )
 
     def start_background_threads(self) -> None:
         if self._heartbeat_thread is not None or not self.config.panel_url or not self.config.node_token:
@@ -100,12 +138,12 @@ class AgentRuntime:
         if not presented or presented != self.config.node_token:
             raise HTTPException(status_code=401, detail="Invalid node token")
 
-    def run_direct_job(self, request: AgentJobRequest) -> AgentJobResponse:
+    def run_direct_job(self, request: AgentTaskDispatch) -> AgentTaskCompletion:
         result = self._execute_task(task=request.task, payload=request.payload)
         run_id = request.run_id or f"{request.task}-{int(time.time() * 1000)}"
         with self._lock:
             self._results[run_id] = result
-        return AgentJobResponse(ok=True, job_id=request.job_id, run_id=run_id, result=result)
+        return AgentTaskCompletion(job_id=request.job_id, run_id=run_id, task=request.task, result=result)
 
     def get_result(self, run_id: str) -> dict[str, Any]:
         with self._lock:
@@ -130,61 +168,56 @@ class AgentRuntime:
         if not self.config.panel_url or not self.config.node_token:
             return AgentHeartbeatResponse(ok=False, status="unpaired", jobs=[])
 
-        payload = AgentHeartbeatRequest(
-            node_name=self.config.node_name,
-            agent_url=self.config.advertise_url,
-            advertise_url=self.config.advertise_url,
-            status=self.status_snapshot(),
-            completed_jobs=self._drain_completed_jobs(),
-        )
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                response = client.post(
-                    f"{self.config.panel_url.rstrip('/')}/api/v1/agents/heartbeat",
-                    headers={"X-Node-Token": self.config.node_token},
-                    json=payload.model_dump(),
-                )
-                response.raise_for_status()
-                data = AgentHeartbeatResponse.model_validate(response.json())
-                self._last_heartbeat_at = now_iso()
-                self._last_error = None
-                if data.jobs:
-                    completed = []
-                    for job in data.jobs:
-                        try:
-                            result = self._execute_task(task=job.task, payload=job.payload)
-                            completed.append({"job_id": job.job_id, "result": result})
-                        except Exception as exc:  # pragma: no cover - defensive
-                            completed.append({"job_id": job.job_id, "result": {"name": job.task, "source": self.config.role, "target": "unknown", "success": False, "metrics": {}, "samples": [], "error": str(exc), "started_at": now_iso(), "duration_ms": 0.0, "metadata": {"role": self.config.role}}})
-                    with self._lock:
-                        self._completed_jobs.extend(completed)
-                    return self._send_heartbeat()
+        pending = [AgentTaskCompletion.model_validate(item) for item in self._drain_completed_jobs()]
+        remaining_rounds = 3
+        while remaining_rounds > 0:
+            remaining_rounds -= 1
+            payload = AgentHeartbeatRequest(
+                endpoint=self.endpoint_report(),
+                runtime_status=self.runtime_status(),
+                completed_jobs=pending,
+            )
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.post(
+                        f"{self.config.panel_url.rstrip('/')}/api/v1/agents/heartbeat",
+                        headers={"X-Node-Token": self.config.node_token},
+                        json=payload.model_dump(),
+                    )
+                    response.raise_for_status()
+                    data = AgentHeartbeatResponse.model_validate(response.json())
+            except Exception as exc:  # pragma: no cover - network variability
+                self._last_error = str(exc)
+                if pending:
+                    self._requeue_completed_jobs(pending)
+                return AgentHeartbeatResponse(ok=False, status="error", jobs=[])
+
+            self._last_heartbeat_at = now_iso()
+            self._last_error = None
+            if not data.jobs:
                 return data
-        except Exception as exc:  # pragma: no cover - network variability
-            self._last_error = str(exc)
-            return AgentHeartbeatResponse(ok=False, status="error", jobs=[])
+            pending = self._execute_leased_jobs(data.jobs)
+
+        self._requeue_completed_jobs(pending)
+        return AgentHeartbeatResponse(ok=True, status="accepted", jobs=[])
 
     def _pair_with_panel(self, panel_url: str, pair_code: str, advertise_url: str | None) -> AgentConfig:
+        if advertise_url is not None:
+            self.config.advertise_url = advertise_url
         payload = AgentPairRequest(
-            node_name=self.config.node_name,
-            role=self.config.role,  # type: ignore[arg-type]
-            runtime_mode=self.config.runtime_mode,  # type: ignore[arg-type]
             pair_code=pair_code,
-            agent_url=advertise_url or self.config.advertise_url,
-            advertise_url=advertise_url or self.config.advertise_url,
-            listen_host=self.config.listen_host,
-            listen_port=self.config.listen_port,
-            platform_name=detect_platform_name(),
-            hostname=socket.gethostname(),
+            identity=self.identity(),
+            endpoint=self.endpoint_report(),
+            capabilities=self.capabilities(),
         )
         with httpx.Client(timeout=10.0) as client:
             response = client.post(f"{panel_url.rstrip('/')}/api/v1/agents/pair", json=payload.model_dump())
             response.raise_for_status()
-            data = response.json()
+            data = AgentPairResponse.model_validate(response.json())
 
         self.config.panel_url = panel_url
-        self.config.node_token = str(data["node_token"])
-        self.config.advertise_url = data.get("advertise_url") or advertise_url or self.config.advertise_url
+        self.config.node_token = str(data.node_token)
+        self.config.advertise_url = data.endpoint.advertise_url or advertise_url or self.config.advertise_url
         self.config.pair_code = None
         self._save_config()
         return self.config
@@ -195,11 +228,45 @@ class AgentRuntime:
         merged_payload.setdefault("platform_name", detect_platform_name())
         return asyncio.run(execute_task(role=self.config.role, task=task, payload=merged_payload))
 
+    def _execute_leased_jobs(self, jobs: list[AgentTaskDispatch]) -> list[AgentTaskCompletion]:
+        completed: list[AgentTaskCompletion] = []
+        for job in jobs:
+            try:
+                result = self._execute_task(task=job.task, payload=job.payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                result = {
+                    "name": job.task,
+                    "source": self.config.role,
+                    "target": "unknown",
+                    "success": False,
+                    "metrics": {},
+                    "samples": [],
+                    "error": str(exc),
+                    "started_at": now_iso(),
+                    "duration_ms": 0.0,
+                    "metadata": {"role": self.config.role},
+                }
+            completed.append(
+                AgentTaskCompletion(
+                    job_id=job.job_id,
+                    run_id=job.run_id,
+                    task=job.task,
+                    result=result,
+                )
+            )
+        return completed
+
     def _drain_completed_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
             completed = list(self._completed_jobs)
             self._completed_jobs.clear()
         return completed
+
+    def _requeue_completed_jobs(self, jobs: list[AgentTaskCompletion]) -> None:
+        if not jobs:
+            return
+        with self._lock:
+            self._completed_jobs = [job.model_dump() for job in jobs] + self._completed_jobs
 
     def _load_config(self, overrides: dict[str, Any]) -> AgentConfig:
         raw: dict[str, Any] = {}
@@ -237,9 +304,14 @@ def create_agent_app(
 
     app = FastAPI(title="mc-netprobe-agent", version="1.0", lifespan=lifespan)
 
+    @app.get("/api/v1/health")
+    def get_health() -> AgentHealthResponse:
+        return AgentHealthResponse(started_at=runtime.runtime_status().started_at)
+
     @app.get("/api/v1/status")
-    def get_status() -> dict[str, Any]:
-        return runtime.status_snapshot()
+    def get_status(x_node_token: str | None = Header(default=None)) -> dict[str, Any]:
+        runtime.verify_token(x_node_token)
+        return runtime.status_snapshot().model_dump()
 
     @app.post("/api/v1/pair")
     def pair_local(request: LocalPairRequest) -> dict[str, Any]:
@@ -250,7 +322,7 @@ def create_agent_app(
         return runtime.trigger_heartbeat()
 
     @app.post("/api/v1/jobs/run")
-    def run_job(request: AgentJobRequest, x_node_token: str | None = Header(default=None)) -> JSONResponse:
+    def run_job(request: AgentTaskDispatch, x_node_token: str | None = Header(default=None)) -> JSONResponse:
         runtime.verify_token(x_node_token)
         response = runtime.run_direct_job(request)
         return JSONResponse(status_code=200, content=response.model_dump())

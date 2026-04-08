@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from controller.scenario import ScenariosConfig, ServiceConfig, ServicesConfig, ThresholdsConfig
 
 
+SUPPORTED_AGENT_PROTOCOL_VERSION = "1"
+
 NodeRole = Literal["client", "relay", "server"]
 RuntimeMode = Literal["docker-linux", "native-macos", "native-windows"]
 RunKind = Literal["system", "baseline", "capacity", "full"]
+ChannelStateValue = Literal["unknown", "ok", "error"]
+NodeSummaryStatus = Literal["online", "push-only", "pull-only", "offline", "unpaired", "disabled"]
 
 
 class PanelSettings(BaseModel):
@@ -30,7 +34,7 @@ class NodeUpsertRequest(BaseModel):
     node_name: str
     role: NodeRole
     runtime_mode: RuntimeMode
-    agent_url: str | None = None
+    configured_pull_url: str | None = None
     enabled: bool = True
 
 
@@ -45,20 +49,59 @@ class PairCodeResponse(BaseModel):
     fallback_command: str | None = None
 
 
-class AgentPairRequest(BaseModel):
-    """Initial pairing request sent by an agent to the panel."""
+class AgentIdentity(BaseModel):
+    """Stable identity reported by an agent."""
 
     node_name: str
     role: NodeRole
     runtime_mode: RuntimeMode
-    pair_code: str
-    agent_url: str | None = None
-    advertise_url: str | None = None
-    listen_host: str = "0.0.0.0"
-    listen_port: int = 9870
+    protocol_version: str
     platform_name: str
     hostname: str
-    version: str = "1"
+    agent_version: str = "1"
+
+    @field_validator("protocol_version")
+    @classmethod
+    def validate_protocol_version(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("protocol_version is required")
+        return normalized
+
+
+class AgentEndpointReport(BaseModel):
+    """Runtime endpoint details reported by an agent."""
+
+    listen_host: str = "0.0.0.0"
+    listen_port: int = 9870
+    advertise_url: str | None = None
+
+
+class AgentCapabilities(BaseModel):
+    """Transport capabilities supported by an agent."""
+
+    pull_http: bool = True
+    heartbeat_queue: bool = True
+    result_lookup: bool = True
+
+
+class AgentRuntimeStatus(BaseModel):
+    """Mutable runtime state included in heartbeats and status checks."""
+
+    paired: bool
+    started_at: str
+    last_heartbeat_at: str | None = None
+    last_error: str | None = None
+    environment: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentPairRequest(BaseModel):
+    """Initial pairing request sent by an agent to the panel."""
+
+    pair_code: str
+    identity: AgentIdentity
+    endpoint: AgentEndpointReport
+    capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)
 
 
 class AgentPairResponse(BaseModel):
@@ -69,63 +112,64 @@ class AgentPairResponse(BaseModel):
     topology_id: int
     node_token: str
     panel_url: str
-    node_name: str
-    role: NodeRole
-    listen_host: str
-    listen_port: int
-    advertise_url: str | None = None
+    protocol_version: str = SUPPORTED_AGENT_PROTOCOL_VERSION
+    identity: AgentIdentity
+    endpoint: AgentEndpointReport
+    capabilities: AgentCapabilities
 
 
-class AgentCompletedJob(BaseModel):
-    """A job result returned from an agent heartbeat."""
+class AgentTaskDispatch(BaseModel):
+    """Task dispatched to an agent through pull or heartbeat queue."""
 
-    job_id: int
+    job_id: int | None = None
+    run_id: str | None = None
+    task: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    lease_expires_at: str | None = None
+    timeout_sec: float | None = None
+
+
+class AgentTaskCompletion(BaseModel):
+    """Task completion returned from an agent."""
+
+    job_id: int | None = None
+    run_id: str | None = None
+    task: str | None = None
     result: dict[str, Any]
 
 
 class AgentHeartbeatRequest(BaseModel):
     """Periodic heartbeat from an agent to the panel."""
 
-    node_name: str
-    agent_url: str | None = None
-    advertise_url: str | None = None
-    status: dict[str, Any] = Field(default_factory=dict)
-    completed_jobs: list[AgentCompletedJob] = Field(default_factory=list)
-
-
-class PanelJobDispatch(BaseModel):
-    """Queued job handed to an agent via heartbeat."""
-
-    job_id: int
-    task: str
-    payload: dict[str, Any]
-    created_at: str
+    endpoint: AgentEndpointReport
+    runtime_status: AgentRuntimeStatus
+    completed_jobs: list[AgentTaskCompletion] = Field(default_factory=list)
 
 
 class AgentHeartbeatResponse(BaseModel):
-    """Heartbeat acknowledgement and pending jobs."""
+    """Heartbeat acknowledgement and leased jobs."""
 
     ok: bool = True
-    jobs: list[PanelJobDispatch] = Field(default_factory=list)
+    jobs: list[AgentTaskDispatch] = Field(default_factory=list)
     status: str = "accepted"
 
 
-class AgentJobRequest(BaseModel):
-    """Direct pull-mode job sent from the panel to an agent."""
+class AgentStatusResponse(BaseModel):
+    """Token-protected full agent status used by the panel."""
 
-    job_id: int | None = None
-    run_id: str | None = None
-    task: str
-    payload: dict[str, Any] = Field(default_factory=dict)
+    identity: AgentIdentity
+    endpoint: AgentEndpointReport
+    capabilities: AgentCapabilities
+    runtime_status: AgentRuntimeStatus
 
 
-class AgentJobResponse(BaseModel):
-    """Immediate result from an agent-run task."""
+class AgentHealthResponse(BaseModel):
+    """Minimal unauthenticated local healthcheck payload."""
 
     ok: bool = True
-    job_id: int | None = None
-    run_id: str
-    result: dict[str, Any]
+    status: str = "healthy"
+    started_at: str
 
 
 class DashboardSnapshot(BaseModel):

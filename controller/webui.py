@@ -28,16 +28,18 @@ from controller.panel_models import (
     AlertSilenceRequest,
     AgentHeartbeatRequest,
     AgentHeartbeatResponse,
+    AgentIdentity,
     AgentPairRequest,
     AgentPairResponse,
+    AgentTaskDispatch,
     DashboardSnapshot,
     HistoryResponse,
     ManualRunRequest,
     NodeUpsertRequest,
     PairCodeResponse,
-    PanelJobDispatch,
     PanelSettings,
     PublicDashboardSnapshot,
+    SUPPORTED_AGENT_PROTOCOL_VERSION,
 )
 from controller.panel_orchestrator import PanelOrchestrator
 from controller.panel_store import PanelStore
@@ -89,7 +91,10 @@ class PanelRuntime:
 
     def _refresh_pull_health(self) -> None:
         for node in self.store.list_nodes():
-            if not node["paired"] or not node["agent_url"]:
+            if not node["paired"]:
+                continue
+            if not node.get("capabilities", {}).get("pull_http", True) or not node.get("endpoints", {}).get("effective_pull_url"):
+                self.store.reset_pull_status(int(node["id"]))
                 continue
             try:
                 self.http.check_status(node)
@@ -499,25 +504,28 @@ def create_app(
 
     @app.post("/api/v1/agents/pair")
     def pair_agent(payload: AgentPairRequest, request: Request) -> AgentPairResponse:
+        if payload.identity.protocol_version != SUPPORTED_AGENT_PROTOCOL_VERSION:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Unsupported protocol_version {payload.identity.protocol_version}; "
+                    f"expected {SUPPORTED_AGENT_PROTOCOL_VERSION}"
+                ),
+            )
         node, node_token = runtime.store.pair_agent(
-            node_name=payload.node_name,
-            role=payload.role,
-            runtime_mode=payload.runtime_mode,
+            identity=payload.identity,
             pair_code=payload.pair_code,
-            agent_url=payload.agent_url,
-            advertise_url=payload.advertise_url,
+            endpoint=payload.endpoint,
+            capabilities=payload.capabilities,
         )
-        advertise_url = payload.advertise_url or payload.agent_url or node.get("agent_url")
         return AgentPairResponse(
             node_id=int(node["id"]),
             topology_id=int(node["topology_id"]),
             node_token=node_token,
             panel_url=str(request.base_url).rstrip("/"),
-            node_name=payload.node_name,
-            role=payload.role,
-            listen_host=payload.listen_host,
-            listen_port=payload.listen_port,
-            advertise_url=advertise_url,
+            identity=AgentIdentity.model_validate(node.get("identity") or payload.identity.model_dump()),
+            endpoint=payload.endpoint,
+            capabilities=payload.capabilities,
         )
 
     @app.post("/api/v1/agents/heartbeat")
@@ -525,20 +533,27 @@ def create_app(
         if not x_node_token:
             raise HTTPException(status_code=401, detail="Missing node token")
         try:
-            node = runtime.store.resolve_node_from_token(payload.node_name, x_node_token)
+            node = runtime.store.resolve_node_from_token(x_node_token)
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
         for completed in payload.completed_jobs:
-            runtime.store.complete_job(job_id=completed.job_id, result=completed.result)
+            runtime.store.complete_job(job_id=completed.job_id, node_id=int(node["id"]), result=completed.result)
 
-        runtime.store.record_heartbeat(node_id=int(node["id"]), agent_url=payload.advertise_url or payload.agent_url, status=payload.status)
+        runtime.store.record_heartbeat(
+            node_id=int(node["id"]),
+            endpoint=payload.endpoint,
+            runtime_status=payload.runtime_status,
+        )
         jobs = [
-            PanelJobDispatch(
+            AgentTaskDispatch(
                 job_id=int(job["id"]),
+                run_id=str(job["run_id"]),
                 task=str(job["job_kind"]),
                 payload=json.loads(job["payload_json"]),
                 created_at=str(job["created_at"]),
+                lease_expires_at=job.get("lease_expires_at"),
+                timeout_sec=float(job["timeout_sec"]) if job.get("timeout_sec") is not None else None,
             )
             for job in runtime.store.lease_jobs(node_id=int(node["id"]))
         ]

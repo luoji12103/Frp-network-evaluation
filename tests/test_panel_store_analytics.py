@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from controller.panel_models import NodeUpsertRequest
+from controller.panel_models import AgentCapabilities, AgentEndpointReport, AgentIdentity, AgentRuntimeStatus, NodeUpsertRequest
 from controller.panel_store import PanelStore
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
@@ -103,6 +103,230 @@ def test_store_migrates_old_schema_and_backfills_path_label(tmp_path: Path) -> N
         assert "acknowledged_at" in alert_columns
         path_label = conn.execute("SELECT path_label FROM metric_sample WHERE id = 1").fetchone()[0]
         assert path_label == "client_to_relay"
+
+
+def test_store_migrates_pull_fields_and_clears_non_terminal_jobs(tmp_path: Path) -> None:
+    db_path = tmp_path / "monitor.db"
+    secret_path = tmp_path / "panel-secret.txt"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE topology (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                services_json TEXT NOT NULL,
+                thresholds_json TEXT NOT NULL,
+                scenarios_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE node (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topology_id INTEGER NOT NULL,
+                node_name TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL UNIQUE,
+                runtime_mode TEXT NOT NULL,
+                agent_url TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                paired INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                last_heartbeat_at TEXT,
+                last_pull_checked_at TEXT,
+                last_status TEXT,
+                last_push_ok INTEGER NOT NULL DEFAULT 1,
+                last_pull_ok INTEGER NOT NULL DEFAULT 1,
+                last_push_error TEXT,
+                last_pull_error TEXT,
+                status_payload_json TEXT DEFAULT '{}'
+            );
+            CREATE TABLE node_secret (
+                node_id INTEGER PRIMARY KEY,
+                pair_code_hash TEXT,
+                pair_code_expires_at TEXT,
+                token_hash TEXT,
+                token_salt TEXT,
+                token_issued_at TEXT
+            );
+            CREATE TABLE schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topology_id INTEGER NOT NULL,
+                run_kind TEXT NOT NULL UNIQUE,
+                interval_sec INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                next_run_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE run (
+                id TEXT PRIMARY KEY,
+                topology_id INTEGER NOT NULL,
+                run_kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                error TEXT,
+                raw_path TEXT,
+                csv_path TEXT,
+                html_path TEXT,
+                findings_count INTEGER NOT NULL DEFAULT 0,
+                conclusion_json TEXT DEFAULT '[]',
+                threshold_findings_json TEXT DEFAULT '[]'
+            );
+            CREATE TABLE job (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topology_id INTEGER NOT NULL,
+                node_id INTEGER NOT NULL,
+                run_id TEXT NOT NULL,
+                job_kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                available_at TEXT NOT NULL,
+                leased_at TEXT,
+                completed_at TEXT,
+                result_json TEXT,
+                error TEXT
+            );
+            CREATE TABLE probe_result (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                node_id INTEGER,
+                probe_name TEXT NOT NULL,
+                path_label TEXT,
+                success INTEGER NOT NULL,
+                error TEXT,
+                metrics_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                samples_json TEXT DEFAULT '[]',
+                started_at TEXT,
+                duration_ms REAL NOT NULL DEFAULT 0
+            );
+            CREATE TABLE metric_sample (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id INTEGER,
+                run_id TEXT,
+                probe_result_id INTEGER,
+                probe_name TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                path_label TEXT,
+                captured_at TEXT NOT NULL
+            );
+            CREATE TABLE alert_event (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topology_id INTEGER NOT NULL,
+                node_id INTEGER,
+                run_id TEXT,
+                kind TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                path_label TEXT,
+                probe_name TEXT,
+                metric_name TEXT,
+                actual_value REAL,
+                threshold_value REAL,
+                fingerprint TEXT,
+                acknowledged_at TEXT,
+                acknowledged_by TEXT,
+                silenced_until TEXT,
+                silence_reason TEXT
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO topology (id, name, services_json, thresholds_json, scenarios_json, created_at, updated_at)
+            VALUES (1, 'mc-netprobe-monitor', '{}', '{}', '{}', ?, ?)
+            """,
+            (now_iso(), now_iso()),
+        )
+        conn.execute(
+            """
+            INSERT INTO node (
+                id, topology_id, node_name, role, runtime_mode, agent_url, enabled, paired,
+                created_at, updated_at, last_status, last_push_ok, last_pull_ok
+            )
+            VALUES (1, 1, 'server-1', 'server', 'native-macos', 'http://legacy.example:9870', 1, 1, ?, ?, 'online', 1, 1)
+            """,
+            (now_iso(), now_iso()),
+        )
+        conn.execute("INSERT INTO node_secret (node_id) VALUES (1)")
+        conn.execute(
+            """
+            INSERT INTO job (topology_id, node_id, run_id, job_kind, payload_json, status, created_at, available_at)
+            VALUES (1, 1, 'run-legacy', 'ping', '{}', 'pending', ?, ?)
+            """,
+            (now_iso(), now_iso()),
+        )
+        conn.commit()
+
+    store = PanelStore(db_path=db_path, secret_path=secret_path)
+    node = store.get_node(1)
+    assert node is not None
+    assert node["endpoints"]["configured_pull_url"] == "http://legacy.example:9870"
+    assert node["endpoints"]["advertised_pull_url"] is None
+    assert node["connectivity"]["push"]["state"] == "unknown"
+    assert node["connectivity"]["pull"]["state"] == "unknown"
+    assert store.get_job(1) is None
+
+
+def test_runtime_reports_do_not_overwrite_configured_pull_url(tmp_path: Path) -> None:
+    store = PanelStore(db_path=tmp_path / "monitor.db", secret_path=tmp_path / "panel-secret.txt")
+    node = store.upsert_node(
+        NodeUpsertRequest(
+            node_name="server-1",
+            role="server",
+            runtime_mode="native-macos",
+            configured_pull_url="http://configured.example:39870",
+            enabled=True,
+        )
+    )
+    pair_code, _ = store.create_pair_code(node["id"])
+    paired, _ = store.pair_agent(
+        identity=AgentIdentity(
+            node_name="server-1",
+            role="server",
+            runtime_mode="native-macos",
+            protocol_version="1",
+            platform_name="macos",
+            hostname="server-host",
+            agent_version="test-agent",
+        ),
+        pair_code=pair_code,
+        endpoint=AgentEndpointReport(
+            listen_host="100.100.0.8",
+            listen_port=39870,
+            advertise_url="http://advertised.example:39870",
+        ),
+        capabilities=AgentCapabilities(),
+    )
+    store.record_heartbeat(
+        node_id=paired["id"],
+        endpoint=AgentEndpointReport(
+            listen_host="100.100.0.8",
+            listen_port=39870,
+            advertise_url="http://advertised.example:39870",
+        ),
+        runtime_status=AgentRuntimeStatus(
+            paired=True,
+            started_at=now_iso(),
+            last_heartbeat_at=now_iso(),
+            last_error=None,
+            environment={"platform_name": "macos"},
+        ),
+    )
+
+    refreshed = store.get_node(node["id"])
+    assert refreshed is not None
+    assert refreshed["endpoints"]["configured_pull_url"] == "http://configured.example:39870"
+    assert refreshed["endpoints"]["advertised_pull_url"] == "http://advertised.example:39870"
+    assert refreshed["endpoints"]["effective_pull_url"] == "http://configured.example:39870"
+    assert refreshed["connectivity"]["endpoint_mismatch"] is True
 
 
 def test_high_side_anomaly_detection_creates_alert(tmp_path: Path) -> None:
@@ -232,7 +456,7 @@ def build_store(tmp_path: Path) -> PanelStore:
             node_name="client-1",
             role="client",
             runtime_mode="native-windows",
-            agent_url="http://client.example:9870",
+            configured_pull_url="http://client.example:9870",
             enabled=True,
         )
     )

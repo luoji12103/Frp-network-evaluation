@@ -23,6 +23,10 @@ What changed is the execution model:
 - The panel schedules work and aggregates results.
 - Each node runs a local agent.
 - Agents either receive direct pull-mode jobs from the panel or fetch queued jobs through heartbeat.
+- Panel-managed pull addresses and agent-advertised runtime addresses are now tracked separately:
+  - `configured_pull_url`: admin-configured pull target
+  - `advertised_pull_url`: runtime-reported agent address
+  - `effective_pull_url`: panel uses `configured_pull_url` first, then falls back to `advertised_pull_url`
 
 ## Main Capabilities
 
@@ -130,7 +134,7 @@ The operator flow is:
 2. Save one card for each role: `client`, `relay`, `server`.
 3. Click `生成配对命令`.
 4. Run the generated command on the target node.
-5. Wait for the agent to appear as `online`, `push-only`, or `heartbeat-degraded`.
+5. Wait for the agent to appear as `online`, `push-only`, or `pull-only`.
 
 The panel stores:
 
@@ -188,8 +192,10 @@ Recommended post-install checks:
 plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
 launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
 tail -n 50 logs/server-agent.launchd.log
-curl http://127.0.0.1:9870/api/v1/status
+curl http://127.0.0.1:9870/api/v1/health
 ```
+
+The full `/api/v1/status` payload is now token-protected and is intended for panel pull checks with `X-Node-Token`.
 
 Simple fallback:
 
@@ -235,6 +241,13 @@ Implemented panel endpoints:
 - `POST /api/v1/agents/pair`
 - `POST /api/v1/agents/heartbeat`
 
+Current communication model:
+
+- `POST /api/v1/nodes` uses `configured_pull_url`
+- dashboard node payloads expose explicit `endpoints` and `connectivity` objects
+- `POST /api/v1/agents/pair` accepts `pair_code + identity + endpoint + capabilities`
+- `POST /api/v1/agents/heartbeat` accepts `endpoint + runtime_status + completed_jobs`
+
 Compatibility health endpoint:
 
 - `GET /api/state` (public-safe snapshot)
@@ -243,11 +256,12 @@ Compatibility health endpoint:
 
 Implemented agent endpoints:
 
-- `GET /api/v1/status`
+- `GET /api/v1/health`
+- `GET /api/v1/status` with `X-Node-Token`
 - `POST /api/v1/pair`
 - `POST /api/v1/heartbeat`
-- `POST /api/v1/jobs/run`
-- `GET /api/v1/results/{run_id}`
+- `POST /api/v1/jobs/run` with `X-Node-Token`
+- `GET /api/v1/results/{run_id}` with `X-Node-Token`
 
 ## Testing
 

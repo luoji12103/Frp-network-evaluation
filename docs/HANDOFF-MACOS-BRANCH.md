@@ -7,6 +7,10 @@
 当前冻结合同基线：
 
 - `WebUI-dev` 最新已确认基线：`58f5703` (`Upgrade WebUI analytics dashboard`)
+- `main` 已切到新的结构化 `v1` Agent 通信基线：
+  - `configured_pull_url` / `advertised_pull_url` / `effective_pull_url`
+  - `endpoints` / `connectivity`
+  - `identity` / `endpoint` / `capabilities` / `runtime_status`
 - 本文档放在 `main`，作为协作约束和 handoff 基准
 
 ## 1. 分支职责
@@ -124,6 +128,12 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `POST /api/v1/nodes/{node_id}/pair-code`
 - `POST /api/v1/runs`
 
+当前节点管理字段语义也视为冻结合同：
+
+- `POST /api/v1/nodes` 使用 `configured_pull_url`
+- 节点详情 / dashboard 节点对象使用 `endpoints` 与 `connectivity`
+- 不再回到旧的单字段 `agent_url` 语义
+
 ### 管理认证
 
 以下行为也视为冻结合同：
@@ -138,6 +148,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 ### Panel 调 Agent
 
+- `GET /api/v1/health`
 - `GET /api/v1/status`
 - `POST /api/v1/jobs/run`
 - `GET /api/v1/results/{run_id}`
@@ -159,6 +170,17 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - Header: `X-Node-Token`
 - `role` 枚举：`client | relay | server`
 - `runtime_mode` 枚举：`docker-linux | native-macos | native-windows`
+- `protocol_version` 必填，当前支持值固定为 `1`
+
+不要改结构化通信对象的顶层语义：
+
+- `identity`
+- `endpoint`
+- `capabilities`
+- `runtime_status`
+- `completed_jobs`
+- `endpoints`
+- `connectivity`
 
 不要改 Agent 配置字段名：
 
@@ -190,15 +212,15 @@ macOS 分支不要改以下 Panel 侧接口合同。
 如果确实需要扩接口，只能按下面规则做：
 
 1. 先更新本 handoff 文档到 `main`
-2. 只能新增可选字段，不能改旧字段
-3. 尽量新增接口，不要修改旧接口语义
-4. 如果是 breaking change，必须新开版本路径，不允许直接覆盖旧 `v1`
+2. 只能在现有结构化对象里新增可选字段，不能改旧字段
+3. 不要把结构化对象重新摊平成新的顶层快捷字段
+4. 如果是 breaking change，必须先更新本基线并同步测试
 5. 两边都要补测试后才能合并
 
 简单说：
 
 - additive change 可以
-- breaking change 不允许直接上
+- 结构化 `v1` 基线不能偷偷改语义
 
 ## 7. macOS 分支推荐工作方式
 
@@ -263,15 +285,16 @@ bash bin/install_server_agent_launchd.sh \
 plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
 launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
 tail -n 50 logs/server-agent.launchd.log
-curl http://127.0.0.1:9870/api/v1/status
+curl http://127.0.0.1:9870/api/v1/health
 curl -X POST http://127.0.0.1:9870/api/v1/heartbeat
 ```
 
 如果本地为了调试需要扩展信息：
 
-- 优先放进 `status` 里的附加字段
-- 或放进 probe `metadata`
-- 但不要移除现有字段
+- 本地存活检查优先看 `GET /api/v1/health`
+- Panel 完整状态检查走带 `X-Node-Token` 的 `GET /api/v1/status`
+- 运行时调试字段优先放进 `runtime_status.environment`
+- probe 侧附加信息继续放进 `metadata`
 
 ## 9. 合并前检查清单
 
@@ -280,9 +303,10 @@ macOS 分支提交前，至少检查：
 1. `agents/service.py` 的既有路由没改名
 2. `X-Node-Token` 没改
 3. `role` / `runtime_mode` 枚举没改
-4. Agent 配置 YAML 字段名没改
-5. `bin/install_server_agent_launchd.sh` 仍能用现有参数启动
-6. 不包含 `controller/webui.py`、模板、`controller/assets/` 的改动
+4. `protocol_version=1` 仍然必填且生效
+5. Agent 配置 YAML 字段名没改
+6. `bin/install_server_agent_launchd.sh` 仍能用现有参数启动
+7. 不包含 `controller/webui.py`、模板、`controller/assets/` 的改动
 
 `WebUI-dev` 提交前，至少检查：
 

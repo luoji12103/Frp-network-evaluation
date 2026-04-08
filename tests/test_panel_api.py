@@ -4,7 +4,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from controller.panel_models import NodeUpsertRequest
+from controller.panel_models import (
+    AgentCapabilities,
+    AgentEndpointReport,
+    AgentIdentity,
+    AgentRuntimeStatus,
+    NodeUpsertRequest,
+)
 from controller.webui import create_app
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
@@ -30,24 +36,53 @@ def login_admin(client: TestClient) -> None:
     assert response.headers["location"] == "/admin"
 
 
+def pair_identity(node_name: str, role: str, runtime_mode: str, platform_name: str) -> AgentIdentity:
+    return AgentIdentity(
+        node_name=node_name,
+        role=role,  # type: ignore[arg-type]
+        runtime_mode=runtime_mode,  # type: ignore[arg-type]
+        protocol_version="1",
+        platform_name=platform_name,
+        hostname=f"{node_name}-host",
+        agent_version="test-agent",
+    )
+
+
 def seed_dashboard_data(client: TestClient) -> str:
     runtime = client.app.state.runtime
     store = runtime.store
-    nodes = [
-        NodeUpsertRequest(node_name="client-1", role="client", runtime_mode="native-windows", agent_url="http://client.example:9870", enabled=True),
-        NodeUpsertRequest(node_name="relay-1", role="relay", runtime_mode="docker-linux", agent_url="http://relay.example:9870", enabled=True),
-        NodeUpsertRequest(node_name="server-1", role="server", runtime_mode="native-macos", agent_url="http://server.example:9870", enabled=True),
+    node_specs = [
+        ("client-1", "client", "native-windows", "windows", "http://client.example:9870"),
+        ("relay-1", "relay", "docker-linux", "linux", "http://relay.example:9870"),
+        ("server-1", "server", "native-macos", "macos", "http://server.example:9870"),
     ]
-    for payload in nodes:
-        node = store.upsert_node(payload)
+    for node_name, role, runtime_mode, platform_name, pull_url in node_specs:
+        node = store.upsert_node(
+            NodeUpsertRequest(
+                node_name=node_name,
+                role=role,  # type: ignore[arg-type]
+                runtime_mode=runtime_mode,  # type: ignore[arg-type]
+                configured_pull_url=pull_url,
+                enabled=True,
+            )
+        )
         pair_code, _ = store.create_pair_code(node["id"])
         store.pair_agent(
-            node_name=node["node_name"],
-            role=node["role"],
-            runtime_mode=node["runtime_mode"],
+            identity=pair_identity(node_name=node_name, role=role, runtime_mode=runtime_mode, platform_name=platform_name),
             pair_code=pair_code,
-            agent_url=node["agent_url"],
-            advertise_url=node["agent_url"],
+            endpoint=AgentEndpointReport(listen_host="0.0.0.0", listen_port=9870, advertise_url=pull_url),
+            capabilities=AgentCapabilities(),
+        )
+        store.record_heartbeat(
+            node_id=node["id"],
+            endpoint=AgentEndpointReport(listen_host="0.0.0.0", listen_port=9870, advertise_url=pull_url),
+            runtime_status=AgentRuntimeStatus(
+                paired=True,
+                started_at=now_iso(),
+                last_heartbeat_at=now_iso(),
+                last_error=None,
+                environment={"platform_name": platform_name},
+            ),
         )
         store.update_pull_status(node["id"], ok=True)
 
@@ -176,7 +211,7 @@ def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
                 "node_name": "relay-1",
                 "role": "relay",
                 "runtime_mode": "docker-linux",
-                "agent_url": "http://relay.example:9870",
+                "configured_pull_url": "http://relay.example:9870",
                 "enabled": True,
             },
         ).json()["node"]
@@ -188,36 +223,83 @@ def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
         paired = client.post(
             "/api/v1/agents/pair",
             json={
-                "node_name": "relay-1",
-                "role": "relay",
-                "runtime_mode": "docker-linux",
                 "pair_code": pair_payload["pair_code"],
-                "agent_url": "http://relay.example:9870",
-                "advertise_url": "http://relay.example:9870",
-                "listen_host": "0.0.0.0",
-                "listen_port": 9870,
-                "platform_name": "linux",
-                "hostname": "relay-host",
-                "version": "1",
+                "identity": pair_identity("relay-1", "relay", "docker-linux", "linux").model_dump(),
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://relay.example:9870",
+                },
+                "capabilities": {"pull_http": True, "heartbeat_queue": True, "result_lookup": True},
             },
         )
         assert paired.status_code == 200
         token = paired.json()["node_token"]
         assert token
+        assert paired.json()["identity"]["protocol_version"] == "1"
 
         heartbeat = client.post(
             "/api/v1/agents/heartbeat",
             headers={"X-Node-Token": token},
             json={
-                "node_name": "relay-1",
-                "agent_url": "http://relay.example:9870",
-                "advertise_url": "http://relay.example:9870",
-                "status": {"uptime_sec": 10},
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://relay.example:9870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": None,
+                    "last_error": None,
+                    "environment": {"uptime_sec": 10},
+                },
                 "completed_jobs": [],
             },
         )
         assert heartbeat.status_code == 200
         assert heartbeat.json()["jobs"] == []
+
+        stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert stored_node["endpoints"]["configured_pull_url"] == "http://relay.example:9870"
+        assert stored_node["endpoints"]["advertised_pull_url"] == "http://relay.example:9870"
+        assert stored_node["connectivity"]["push"]["state"] == "ok"
+
+
+def test_pair_rejects_unsupported_protocol_version(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = client.post(
+            "/api/v1/nodes",
+            json={
+                "node_name": "server-1",
+                "role": "server",
+                "runtime_mode": "native-macos",
+                "configured_pull_url": "http://server.example:9870",
+                "enabled": True,
+            },
+        ).json()["node"]
+        pair_code = client.post(f"/api/v1/nodes/{node['id']}/pair-code").json()["pair_code"]
+
+        response = client.post(
+            "/api/v1/agents/pair",
+            json={
+                "pair_code": pair_code,
+                "identity": {
+                    "node_name": "server-1",
+                    "role": "server",
+                    "runtime_mode": "native-macos",
+                    "protocol_version": "999",
+                    "platform_name": "macos",
+                    "hostname": "server-host",
+                    "agent_version": "future",
+                },
+                "endpoint": {"listen_host": "100.100.0.8", "listen_port": 39870, "advertise_url": "http://100.100.0.8:39870"},
+                "capabilities": {"pull_http": True, "heartbeat_queue": True, "result_lookup": True},
+            },
+        )
+        assert response.status_code == 409
+        assert "Unsupported protocol_version" in response.json()["detail"]
 
 
 def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> None:
@@ -230,7 +312,7 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
                 "node_name": "client-1",
                 "role": "client",
                 "runtime_mode": "native-windows",
-                "agent_url": "http://client.example:9870",
+                "configured_pull_url": "http://client.example:9870",
                 "enabled": True,
             },
         ).json()["node"]
@@ -238,17 +320,14 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
         token = client.post(
             "/api/v1/agents/pair",
             json={
-                "node_name": "client-1",
-                "role": "client",
-                "runtime_mode": "native-windows",
                 "pair_code": pair_code,
-                "agent_url": "http://client.example:9870",
-                "advertise_url": "http://client.example:9870",
-                "listen_host": "0.0.0.0",
-                "listen_port": 9870,
-                "platform_name": "windows",
-                "hostname": "client-host",
-                "version": "1",
+                "identity": pair_identity("client-1", "client", "native-windows", "windows").model_dump(),
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://client.example:9870",
+                },
+                "capabilities": {"pull_http": True, "heartbeat_queue": True, "result_lookup": True},
             },
         ).json()["node_token"]
 
@@ -258,31 +337,55 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
             run_id=run_id,
             task="ping",
             payload={"host": "127.0.0.1", "count": 2, "timeout_sec": 1.0},
+            timeout_sec=3.0,
         )
 
         first = client.post(
             "/api/v1/agents/heartbeat",
             headers={"X-Node-Token": token},
             json={
-                "node_name": "client-1",
-                "agent_url": "http://client.example:9870",
-                "status": {"ok": True},
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://client.example:9870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": None,
+                    "last_error": None,
+                    "environment": {"ok": True},
+                },
                 "completed_jobs": [],
             },
         )
         assert first.status_code == 200
-        assert first.json()["jobs"][0]["job_id"] == job_id
+        leased_job = first.json()["jobs"][0]
+        assert leased_job["job_id"] == job_id
+        assert leased_job["timeout_sec"] == 3.0
+        assert leased_job["lease_expires_at"]
 
         second = client.post(
             "/api/v1/agents/heartbeat",
             headers={"X-Node-Token": token},
             json={
-                "node_name": "client-1",
-                "agent_url": "http://client.example:9870",
-                "status": {"ok": True},
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://client.example:9870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": None,
+                    "last_error": None,
+                    "environment": {"ok": True},
+                },
                 "completed_jobs": [
                     {
                         "job_id": job_id,
+                        "run_id": run_id,
+                        "task": "ping",
                         "result": {
                             "name": "ping",
                             "source": "client",
@@ -311,7 +414,8 @@ def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) 
         payload = response.json()
         assert payload["paths"]
         assert payload["summary"]["active_alerts"] >= 1
-        assert "agent_url" not in payload["nodes"][0]
+        assert "endpoints" not in payload["nodes"][0]
+        assert payload["nodes"][0]["connectivity"]["push"]["state"] in {"ok", "unknown", "error"}
 
 
 def test_admin_analytics_routes_require_login(tmp_path: Path) -> None:

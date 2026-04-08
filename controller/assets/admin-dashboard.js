@@ -157,7 +157,12 @@
       defaultMaintenanceReason: "维护窗口",
       runtimeMode: "运行方式",
       nodeName: "节点名称",
-      agentUrl: "Agent URL",
+      configuredPullUrl: "配置 Pull 地址",
+      advertisedPullUrl: "Agent 上报地址",
+      effectivePullUrl: "当前生效地址",
+      pushState: "Push 通道",
+      pullState: "Pull 通道",
+      endpointMismatch: "地址不一致",
       enabled: "启用",
       paired: "已配对",
       lastSeen: "最近上线",
@@ -215,10 +220,12 @@
       statusLabel: {
         online: "在线",
         "push-only": "仅 Push",
-        "heartbeat-degraded": "心跳降级",
+        "pull-only": "仅 Pull",
         offline: "离线",
         unpaired: "未配对",
         disabled: "已禁用",
+        ok: "正常",
+        unknown: "未知",
         open: "未恢复",
         acknowledged: "已确认",
         resolved: "已恢复",
@@ -349,7 +356,12 @@
       defaultMaintenanceReason: "maintenance",
       runtimeMode: "Runtime Mode",
       nodeName: "Node Name",
-      agentUrl: "Agent URL",
+      configuredPullUrl: "Configured pull URL",
+      advertisedPullUrl: "Advertised pull URL",
+      effectivePullUrl: "Effective pull URL",
+      pushState: "Push channel",
+      pullState: "Pull channel",
+      endpointMismatch: "Endpoint mismatch",
       enabled: "Enabled",
       paired: "Paired",
       lastSeen: "Last seen",
@@ -407,10 +419,12 @@
       statusLabel: {
         online: "Online",
         "push-only": "Push only",
-        "heartbeat-degraded": "Heartbeat degraded",
+        "pull-only": "Pull only",
         offline: "Offline",
         unpaired: "Unpaired",
         disabled: "Disabled",
+        ok: "OK",
+        unknown: "Unknown",
         open: "Open",
         acknowledged: "Acknowledged",
         resolved: "Resolved",
@@ -1003,6 +1017,10 @@
     const root = document.getElementById("nodeGrid");
     root.innerHTML = FIXED_ROLES.map((role) => {
       const node = nodes.find((item) => item.role === role) || {};
+      const endpoints = node.endpoints || {};
+      const connectivity = node.connectivity || {};
+      const push = connectivity.push || {};
+      const pull = connectivity.pull || {};
       return `
         <div class="card" data-role="${escapeHtml(role)}" data-node-id="${escapeHtml(node.id || "")}">
           <div class="section-head">
@@ -1013,10 +1031,15 @@
           <label><span>${escapeHtml(t("runtimeMode"))}</span><select data-field="runtime_mode">
             ${Object.keys(translations[state.locale].runtime).map((mode) => `<option value="${escapeHtml(mode)}" ${((node.runtime_mode || ROLE_RUNTIME[role]) === mode) ? "selected" : ""}>${escapeHtml(runtimeLabel(mode))}</option>`).join("")}
           </select></label>
-          <label><span>${escapeHtml(t("agentUrl"))}</span><input data-field="agent_url" type="text" value="${escapeHtml(node.agent_url || "")}"></label>
+          <label><span>${escapeHtml(t("configuredPullUrl"))}</span><input data-field="configured_pull_url" type="text" value="${escapeHtml(endpoints.configured_pull_url || "")}"></label>
           <label><span>${escapeHtml(t("enabled"))}</span><select data-field="enabled"><option value="true" ${node.enabled !== false ? "selected" : ""}>${escapeHtml(booleanLabel(true))}</option><option value="false" ${node.enabled === false ? "selected" : ""}>${escapeHtml(booleanLabel(false))}</option></select></label>
           <div class="muted">${escapeHtml(t("paired"))}: ${escapeHtml(booleanLabel(Boolean(node.paired)))}</div>
           <div class="muted">${escapeHtml(t("lastSeen"))}: ${escapeHtml(formatTimestamp(node.last_seen_at))}</div>
+          <div class="muted">${escapeHtml(t("advertisedPullUrl"))}: ${escapeHtml(endpoints.advertised_pull_url || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("effectivePullUrl"))}: ${escapeHtml(endpoints.effective_pull_url || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("pushState"))}: ${escapeHtml(statusLabel(push.state || "unknown"))}</div>
+          <div class="muted">${escapeHtml(t("pullState"))}: ${escapeHtml(statusLabel(pull.state || "unknown"))}</div>
+          ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}
           <div class="node-actions">
             <button type="button" data-action="save-node" class="primary">${escapeHtml(t("saveNode"))}</button>
             <button type="button" data-action="pair-node">${escapeHtml(t("generatePairCommand"))}</button>
@@ -1063,7 +1086,7 @@
       node_name: card.querySelector('[data-field="node_name"]').value.trim(),
       role,
       runtime_mode: card.querySelector('[data-field="runtime_mode"]').value,
-      agent_url: card.querySelector('[data-field="agent_url"]').value.trim() || null,
+      configured_pull_url: card.querySelector('[data-field="configured_pull_url"]').value.trim() || null,
       enabled: card.querySelector('[data-field="enabled"]').value === "true",
     };
     try {

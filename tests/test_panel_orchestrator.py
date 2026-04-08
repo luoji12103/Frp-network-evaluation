@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from controller.panel_models import NodeUpsertRequest
+from controller.panel_models import AgentCapabilities, AgentEndpointReport, AgentIdentity, NodeUpsertRequest
 from controller.panel_orchestrator import PanelOrchestrator
 from controller.panel_store import PanelStore
 from probes.common import ProbeResult, now_iso
@@ -13,24 +13,52 @@ def test_full_run_is_persisted_with_probe_history(monkeypatch, tmp_path: Path) -
     orchestrator = PanelOrchestrator(store=store, output_root=tmp_path / "results")
 
     client = store.upsert_node(
-        NodeUpsertRequest(node_name="client-1", role="client", runtime_mode="native-windows", agent_url="http://client.example:9870", enabled=True)
+        NodeUpsertRequest(
+            node_name="client-1",
+            role="client",
+            runtime_mode="native-windows",
+            configured_pull_url="http://client.example:9870",
+            enabled=True,
+        )
     )
     relay = store.upsert_node(
-        NodeUpsertRequest(node_name="relay-1", role="relay", runtime_mode="docker-linux", agent_url="http://relay.example:9870", enabled=True)
+        NodeUpsertRequest(
+            node_name="relay-1",
+            role="relay",
+            runtime_mode="docker-linux",
+            configured_pull_url="http://relay.example:9870",
+            enabled=True,
+        )
     )
     server = store.upsert_node(
-        NodeUpsertRequest(node_name="server-1", role="server", runtime_mode="native-macos", agent_url="http://server.example:9870", enabled=True)
+        NodeUpsertRequest(
+            node_name="server-1",
+            role="server",
+            runtime_mode="native-macos",
+            configured_pull_url="http://server.example:9870",
+            enabled=True,
+        )
     )
 
     for node in (client, relay, server):
         pair_code, _ = store.create_pair_code(node["id"])
         store.pair_agent(
-            node_name=node["node_name"],
-            role=node["role"],
-            runtime_mode=node["runtime_mode"],
+            identity=AgentIdentity(
+                node_name=node["node_name"],
+                role=node["role"],
+                runtime_mode=node["runtime_mode"],
+                protocol_version="1",
+                platform_name="test",
+                hostname=f"{node['node_name']}-host",
+                agent_version="test-agent",
+            ),
             pair_code=pair_code,
-            agent_url=node["agent_url"],
-            advertise_url=node["agent_url"],
+            endpoint=AgentEndpointReport(
+                listen_host="0.0.0.0",
+                listen_port=9870,
+                advertise_url=node["endpoints"]["configured_pull_url"],
+            ),
+            capabilities=AgentCapabilities(),
         )
         store.update_pull_status(node["id"], ok=True)
 
