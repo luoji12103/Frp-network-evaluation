@@ -182,14 +182,14 @@ The admin UI now has a dedicated runtime-control surface.
 - The management page also keeps an `Operations focus` stack driven by backend runtime diagnostics, so active runs and node communication issues are visible without digging through logs first.
 - Clicking an action opens normalized detail fields: target, actor, transport, failure summary, request / response snapshot, log excerpt, and runtime / supervisor snapshot.
 - Lifecycle actions are serialized per target. If a node or the panel already has a `queued` or `running` action, the next action is rejected and the UI jumps to the active action.
-- Nodes now expose structured connectivity diagnostics: `connectivity.attention_level`, `connectivity.summary`, and `connectivity.recommended_step`.
+- Nodes now expose structured connectivity diagnostics: `connectivity.diagnostic_code`, `connectivity.attention_level`, `connectivity.summary`, `connectivity.recommended_step`, plus per-channel `push.code` / `pull.code`.
 - `GET /api/v1/admin/runtime` now also returns the current `active_run` and an `attention` summary list; the admin UI uses that payload to disable duplicate full-run launches and jump to the already-running run.
 - Native panel log tailing checks these locations in order:
   - `MC_NETPROBE_PANEL_LOG_FILE`
   - `logs/panel-native.log`
   - `logs/panel.log`
   - `logs/webui.log`
-- Running run details now auto-refresh in the admin UI and surface current phase, latest event, event count, and latest dispatched probe.
+- Running run details now auto-refresh in the admin UI and surface current phase, latest event, event count, latest dispatched probe, and the latest structured failure code / recovery hint when a phase degrades.
 
 ## Relay Agent On Linux Docker
 

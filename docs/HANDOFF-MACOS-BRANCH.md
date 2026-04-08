@@ -203,6 +203,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `completed_jobs`
 - `endpoints`
 - `connectivity`
+- `connectivity.diagnostic_code`
 - `connectivity.attention_level`
 - `connectivity.summary`
 - `connectivity.recommended_step`
@@ -354,8 +355,10 @@ curl http://127.0.0.1:9870/api/v1/health
 - action 详情接口会返回规范化字段：`request`、`response`、`log_excerpt`、`log_location`、`runtime_snapshot`、`failure`
 - run 详情对象会附带 `progress` 摘要，包含当前阶段、最近事件和事件计数
 - `GET /api/v1/admin/runtime` 会附带 `active_run` 和 `attention` 摘要，管理页用它来禁用重复 full run 并展示运行焦点
+- 节点 `connectivity.push` / `connectivity.pull` 里可以附带可选 `code`
 - 运行时调试字段优先放进 `runtime_status.environment`
 - probe 侧附加信息继续放进 `metadata`
+- run `progress` 可以附带 `last_failure_code`、`last_failure_message`、`recommended_step`
 
 ## 9. 合并前检查清单
 

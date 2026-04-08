@@ -439,6 +439,7 @@ class PanelStore:
                     last_heartbeat_at = ?,
                     push_state = 'ok',
                     push_checked_at = ?,
+                    push_error_code = NULL,
                     push_error = NULL,
                     updated_at = ?
                 WHERE id = ?
@@ -457,31 +458,38 @@ class PanelStore:
             conn.commit()
         return self.refresh_node_status(node_id)
 
-    def mark_push_error(self, node_id: int, error: str) -> None:
+    def mark_push_error(self, node_id: int, error: str, error_code: str | None = None) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 UPDATE node
                 SET push_state = 'error',
                     push_checked_at = ?,
+                    push_error_code = ?,
                     push_error = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (now_iso(), error, now_iso(), node_id),
+                (now_iso(), error_code, error, now_iso(), node_id),
             )
             conn.commit()
         self.refresh_node_status(node_id)
 
-    def update_pull_status(self, node_id: int, ok: bool, error: str | None = None) -> dict[str, Any]:
+    def update_pull_status(
+        self,
+        node_id: int,
+        ok: bool,
+        error: str | None = None,
+        error_code: str | None = None,
+    ) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 UPDATE node
-                SET pull_state = ?, pull_error = ?, pull_checked_at = ?, updated_at = ?
+                SET pull_state = ?, pull_error_code = ?, pull_error = ?, pull_checked_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                ("ok" if ok else "error", error, now_iso(), now_iso(), node_id),
+                ("ok" if ok else "error", None if ok else error_code, None if ok else error, now_iso(), now_iso(), node_id),
             )
             conn.commit()
         return self.refresh_node_status(node_id)
@@ -492,6 +500,7 @@ class PanelStore:
                 """
                 UPDATE node
                 SET pull_state = 'unknown',
+                    pull_error_code = NULL,
                     pull_error = NULL,
                     pull_checked_at = NULL,
                     updated_at = ?
@@ -514,11 +523,12 @@ class PanelStore:
                         UPDATE node
                         SET push_state = 'error',
                             push_checked_at = ?,
+                            push_error_code = ?,
                             push_error = ?,
                             updated_at = ?
                         WHERE id = ?
                         """,
-                        (now_iso(), "Heartbeat timeout", now_iso(), row["id"]),
+                        (now_iso(), "heartbeat_timeout", "Heartbeat timeout", now_iso(), row["id"]),
                     )
             conn.commit()
         for node in self.list_nodes():
@@ -2236,9 +2246,11 @@ class PanelStore:
             self._ensure_column(conn, "node", "supervisor_summary_json", "TEXT DEFAULT '{}'")
             self._ensure_column(conn, "node", "push_state", "TEXT NOT NULL DEFAULT 'unknown'")
             self._ensure_column(conn, "node", "push_checked_at", "TEXT")
+            self._ensure_column(conn, "node", "push_error_code", "TEXT")
             self._ensure_column(conn, "node", "push_error", "TEXT")
             self._ensure_column(conn, "node", "pull_state", "TEXT NOT NULL DEFAULT 'unknown'")
             self._ensure_column(conn, "node", "pull_checked_at", "TEXT")
+            self._ensure_column(conn, "node", "pull_error_code", "TEXT")
             self._ensure_column(conn, "node", "pull_error", "TEXT")
             self._ensure_column(conn, "run", "threshold_findings_json", "TEXT DEFAULT '[]'")
             self._ensure_column(conn, "job", "timeout_sec", "REAL")
@@ -2437,21 +2449,24 @@ class PanelStore:
             "control_bridge_url": control_bridge_url,
         }
         node["connectivity"] = {
-            "status": self._classify_node(node),
+            "status": connectivity_status,
             "push": {
                 "state": node["push_state"],
                 "checked_at": node.get("push_checked_at"),
+                "code": node.get("push_error_code"),
                 "error": node.get("push_error"),
             },
             "pull": {
                 "state": node["pull_state"],
                 "checked_at": node.get("pull_checked_at"),
+                "code": node.get("pull_error_code"),
                 "error": node.get("pull_error"),
             },
             "endpoint_mismatch": endpoint_mismatch,
             "endpoint_mismatch_detail": (
                 "Configured pull URL differs from the agent-advertised URL" if endpoint_mismatch else None
             ),
+            "diagnostic_code": connectivity_diagnostic["diagnostic_code"],
             "attention_level": connectivity_diagnostic["attention_level"],
             "summary": connectivity_diagnostic["summary"],
             "recommended_step": connectivity_diagnostic["recommended_step"],
@@ -2569,16 +2584,20 @@ class PanelStore:
         status: str,
         endpoint_mismatch: bool,
     ) -> dict[str, str | None]:
+        push_error_code = node.get("push_error_code")
         push_error = node.get("push_error")
+        pull_error_code = node.get("pull_error_code")
         pull_error = node.get("pull_error")
         if status == "disabled":
             return {
+                "diagnostic_code": "node_disabled",
                 "attention_level": "info",
                 "summary": "Node is disabled in the panel configuration.",
                 "recommended_step": "Enable the node before expecting pairing, pull checks, or lifecycle control.",
             }
         if status == "unpaired":
             return {
+                "diagnostic_code": "node_unpaired",
                 "attention_level": "warning",
                 "summary": "Node exists in the panel but has not paired with an agent yet.",
                 "recommended_step": "Generate a pair command, start the agent, and wait for the first heartbeat.",
@@ -2590,37 +2609,56 @@ class PanelStore:
             elif status == "push-only":
                 summary = "Heartbeat is healthy, but the configured pull URL differs from the agent-advertised URL."
             return {
+                "diagnostic_code": "endpoint_mismatch",
                 "attention_level": "warning",
                 "summary": summary,
                 "recommended_step": "Review configured_pull_url or save the agent-advertised URL if the node endpoint changed.",
             }
         if status == "online":
             return {
+                "diagnostic_code": "healthy",
                 "attention_level": "ok",
                 "summary": "Heartbeat and pull checks are both healthy.",
                 "recommended_step": None,
             }
         if status == "push-only":
+            code = str(pull_error_code or "pull_unhealthy")
             detail = f" Pull error: {pull_error}" if pull_error else ""
             return {
+                "diagnostic_code": code,
                 "attention_level": "warning",
                 "summary": f"Heartbeat is healthy, but pull checks are failing.{detail}".strip(),
-                "recommended_step": "Use sync runtime or tail log, then verify the effective pull URL and agent listener.",
+                "recommended_step": self._connectivity_recommended_step(code, fallback="Use sync runtime or tail log, then verify the effective pull URL and agent listener."),
             }
         if status == "pull-only":
+            code = str(push_error_code or "heartbeat_stale")
             detail = f" Push error: {push_error}" if push_error else ""
             return {
+                "diagnostic_code": code,
                 "attention_level": "warning",
                 "summary": f"Panel can reach the agent, but heartbeats are missing.{detail}".strip(),
-                "recommended_step": "Verify panel_url, node token, and the agent's outbound connectivity to the panel.",
+                "recommended_step": self._connectivity_recommended_step(code, fallback="Verify panel_url, node token, and the agent's outbound connectivity to the panel."),
             }
+        code = str(push_error_code or pull_error_code or "connectivity_failed")
         detail_parts = [part for part in (push_error, pull_error) if part]
         detail = f" Details: {' | '.join(detail_parts)}" if detail_parts else ""
         return {
+            "diagnostic_code": code,
             "attention_level": "error",
             "summary": f"Neither heartbeat nor pull checks are healthy.{detail}".strip(),
-            "recommended_step": "Verify the configured pull URL, panel reachability, and agent health before retrying control actions.",
+            "recommended_step": self._connectivity_recommended_step(code, fallback="Verify the configured pull URL, panel reachability, and agent health before retrying control actions."),
         }
+
+    def _connectivity_recommended_step(self, code: str, fallback: str) -> str:
+        mapping = {
+            "missing_endpoint": "Save a configured pull URL or wait for the agent to advertise one before retrying pull-mode actions.",
+            "timeout": "Check the effective pull URL, node listener, and any firewall or tailnet policy blocking pull-mode access.",
+            "connect_error": "Verify the host and port in the effective pull URL and confirm the agent is listening there.",
+            "auth_error": "Re-pair the node or verify the stored node token if pull-mode calls are rejected.",
+            "protocol_mismatch": "Align panel and agent protocol versions before retrying pull-mode operations.",
+            "heartbeat_timeout": "Restart the agent or inspect control bridge logs to restore outbound heartbeats.",
+        }
+        return mapping.get(code, fallback)
 
     def _summarize_run_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         if not events:
@@ -2629,6 +2667,8 @@ class PanelStore:
         active_phase: str | None = None
         phase_started_at: str | None = None
         latest_probe: dict[str, Any] | None = None
+        last_failure_code: str | None = None
+        last_failure_message: str | None = None
         for event in events:
             payload = event.get("payload") or {}
             phase = payload.get("phase") if isinstance(payload, dict) else None
@@ -2648,6 +2688,12 @@ class PanelStore:
                     "path_label": payload.get("path_label"),
                     "created_at": event.get("created_at"),
                 }
+            if isinstance(payload, dict):
+                failure_code = payload.get("error_code")
+                failure_message = payload.get("error")
+                if failure_code or (event.get("event_kind") == "run_failed" and failure_message):
+                    last_failure_code = str(failure_code) if failure_code else "run_failed"
+                    last_failure_message = str(failure_message or event.get("message") or "")
         return {
             "events_count": len(events),
             "last_event_kind": latest.get("event_kind"),
@@ -2656,6 +2702,9 @@ class PanelStore:
             "active_phase": active_phase,
             "phase_started_at": phase_started_at,
             "latest_probe": latest_probe,
+            "last_failure_code": last_failure_code,
+            "last_failure_message": last_failure_message,
+            "recommended_step": self._run_recommended_step(last_failure_code),
         }
 
     def _node_id_from_role(self, role: Any) -> int | None:
@@ -2744,6 +2793,21 @@ class PanelStore:
             return None
         return f"{action.get('action')} ({action.get('status')})"
 
+    def _run_recommended_step(self, code: str | None) -> str | None:
+        if not code:
+            return None
+        mapping = {
+            "timeout": "Inspect the node runtime and logs, then verify the agent listener and network reachability.",
+            "connect_error": "Check the effective pull URL and confirm the target agent is listening on the expected host and port.",
+            "auth_error": "Re-pair the node or verify the stored node token before retrying the run.",
+            "protocol_mismatch": "Align panel and agent protocol versions before rerunning the affected phase.",
+            "queue_timeout": "Check heartbeat freshness and control bridge logs, then retry once the node resumes queue processing.",
+            "queue_failed": "Inspect the queued job error and node logs before retrying the phase.",
+            "transport_unavailable": "Restore either pull or heartbeat connectivity for the node before retrying the run.",
+            "run_failed": "Inspect the latest run events and node diagnostics to identify the failing phase before rerunning.",
+        }
+        return mapping.get(code)
+
 
 def _dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
@@ -2802,4 +2866,7 @@ def _empty_run_progress() -> dict[str, Any]:
         "active_phase": None,
         "phase_started_at": None,
         "latest_probe": None,
+        "last_failure_code": None,
+        "last_failure_message": None,
+        "recommended_step": None,
     }

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from controller.agent_http_client import AgentHttpClient
+from controller.agent_http_client import AgentHttpClient, AgentHttpError
 from controller.orchestrator import (
     build_conclusion,
     build_load_inflation_result,
@@ -396,9 +396,26 @@ class PanelOrchestrator:
                 result = ProbeResult.from_dict(response["result"])
                 transport = "pull"
             except Exception as exc:
-                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc))
+                error_code = self._error_code_from_exception(exc)
+                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc), error_code=error_code)
+                self.store.record_run_event(
+                    action_run_id,
+                    "probe_transport_error",
+                    f"{task} pull dispatch failed on {node['node_name']}",
+                    {
+                        "task": task,
+                        "node_name": node["node_name"],
+                        "path_label": path_label,
+                        "transport": "pull",
+                        "error": str(exc),
+                        "error_code": error_code,
+                        "fallback_available": can_queue,
+                    },
+                )
                 if can_queue:
                     result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+                    result.metadata.setdefault("fallback_from_transport", "pull")
+                    result.metadata.setdefault("fallback_from_code", error_code)
                     transport = "queue-fallback"
                 else:
                     result = make_error_probe(
@@ -406,6 +423,7 @@ class PanelOrchestrator:
                         source=node["role"],
                         target=str(payload.get("host", node["node_name"])),
                         error=str(exc),
+                        metadata={"error_code": error_code, "transport": "pull-error"},
                     )
                     transport = "pull-error"
         elif can_queue:
@@ -419,12 +437,14 @@ class PanelOrchestrator:
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=f"{node['node_name']} is not reachable through pull or push mode",
+                metadata={"error_code": "transport_unavailable", "transport": "unavailable"},
             )
             transport = "unavailable"
 
         result.metadata.setdefault("path_label", path_label)
         result.metadata.setdefault("source_node", node["role"])
         result.metadata.setdefault("node_runtime_mode", node["runtime_mode"])
+        result.metadata.setdefault("transport", transport)
         self.store.record_run_event(
             action_run_id,
             "probe_completed",
@@ -436,6 +456,8 @@ class PanelOrchestrator:
                 "transport": transport,
                 "success": result.success,
                 "error": result.error,
+                "error_code": result.metadata.get("error_code"),
+                "fallback_from_code": result.metadata.get("fallback_from_code"),
             },
         )
         return result
@@ -447,21 +469,31 @@ class PanelOrchestrator:
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=f"{node['node_name']} is not reachable through pull or push mode",
+                metadata={"error_code": "transport_unavailable", "transport": "queue"},
             )
         job_id = self.store.enqueue_job(node_id=int(node["id"]), run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
         try:
             job = self.store.wait_for_job(job_id=job_id, timeout_sec=timeout_sec)
         except TimeoutError as exc:
             self.store.fail_job(job_id=job_id, error=str(exc))
-            return make_error_probe(name=task, source=node["role"], target=str(payload.get("host", node["node_name"])), error=str(exc))
+            return make_error_probe(
+                name=task,
+                source=node["role"],
+                target=str(payload.get("host", node["node_name"])),
+                error=str(exc),
+                metadata={"error_code": "queue_timeout", "transport": "queue"},
+            )
         if job["status"] != "completed":
             return make_error_probe(
                 name=task,
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=job.get("error") or f"Queued job {job_id} failed",
+                metadata={"error_code": "queue_failed", "transport": "queue"},
             )
-        return ProbeResult.from_dict(json.loads(job["result_json"]))
+        result = ProbeResult.from_dict(json.loads(job["result_json"]))
+        result.metadata.setdefault("transport", "queue")
+        return result
 
     def _require_node(self, nodes: dict[str, dict[str, Any] | None], role: str) -> dict[str, Any]:
         node = nodes.get(role)
@@ -507,3 +539,10 @@ class PanelOrchestrator:
         if task == "system_snapshot":
             return float(payload.get("sample_interval_sec", 1.0)) + 5.0
         return 10.0
+
+    def _error_code_from_exception(self, exc: Exception) -> str:
+        if isinstance(exc, AgentHttpError):
+            return exc.code
+        if isinstance(exc, TimeoutError):
+            return "timeout"
+        return "pull_request_failed"

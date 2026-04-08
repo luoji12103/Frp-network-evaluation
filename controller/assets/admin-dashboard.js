@@ -138,6 +138,10 @@
       recommendedStep: "建议动作",
       openRun: "查看运行",
       connectivitySummary: "通信诊断",
+      diagnosticCode: "诊断码",
+      pushCode: "Push 诊断码",
+      pullCode: "Pull 诊断码",
+      failureCode: "失败码",
       runBusy: "已有运行中的监测任务",
       actionHistory: "操作历史",
       actionDetail: "动作详情",
@@ -394,6 +398,10 @@
       recommendedStep: "Recommended next step",
       openRun: "View run",
       connectivitySummary: "Connectivity diagnostic",
+      diagnosticCode: "Diagnostic code",
+      pushCode: "Push code",
+      pullCode: "Pull code",
+      failureCode: "Failure code",
       runBusy: "A monitoring run is already active",
       actionHistory: "Action history",
       actionDetail: "Action detail",
@@ -1301,6 +1309,9 @@
         <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
+        ${progress.last_failure_code ? `<div class="muted">${escapeHtml(t("failureCode"))}: ${escapeHtml(progress.last_failure_code)}</div>` : ""}
+        ${progress.last_failure_message ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml(progress.last_failure_message)}</div>` : ""}
+        ${progress.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(progress.recommended_step)}</div>` : ""}
         <div class="muted">${links.join(" | ") || escapeHtml(t("noData"))}</div>
         ${payload.status === "running" ? `<div class="muted">${escapeHtml(t("liveRunHint"))}</div>` : ""}
       </div>
@@ -1422,6 +1433,7 @@
             <span class="status-pill ${escapeHtml(item.severity || "info")}">${escapeHtml(severityLabel(item.severity || "info"))}</span>
           </div>
           <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
+          ${item.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
           ${item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
           ${item.run_id ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
         </div>
@@ -1556,6 +1568,7 @@
       const readonlyReason = runtimeDetails.readonly_reason || "";
       const connectivitySummary = connectivity.summary || "";
       const recommendedStep = connectivity.recommended_step || "";
+      const diagnosticCode = connectivity.diagnostic_code || "";
       const controlButtons = [];
       if (availableActions.has("sync_runtime")) {
         controlButtons.push(`<button type="button" data-action="node-control" data-control-action="sync_runtime" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("syncRuntime"))}</button>`);
@@ -1592,7 +1605,10 @@
           <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(supervisor.supervisor_state || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("pushState"))}: ${escapeHtml(statusLabel(push.state || "unknown"))}</div>
+          ${push.code ? `<div class="muted">${escapeHtml(t("pushCode"))}: ${escapeHtml(push.code)}</div>` : ""}
           <div class="muted">${escapeHtml(t("pullState"))}: ${escapeHtml(statusLabel(pull.state || "unknown"))}</div>
+          ${pull.code ? `<div class="muted">${escapeHtml(t("pullCode"))}: ${escapeHtml(pull.code)}</div>` : ""}
+          ${diagnosticCode ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(diagnosticCode)}</div>` : ""}
           ${connectivitySummary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(connectivitySummary)}</div>` : ""}
           ${recommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(recommendedStep)}</div>` : ""}
           ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}

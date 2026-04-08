@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 
-from controller.agent_http_client import AgentHttpClient
+from controller.agent_http_client import AgentHttpClient, AgentHttpError
 from controller.control_bridge_client import ControlBridgeClient, ControlBridgeError
 from controller.panel_models import (
     AdminControlActionCreateResponse,
@@ -142,8 +142,10 @@ class PanelRuntime:
             try:
                 self.http.check_status(node)
                 self.store.update_pull_status(int(node["id"]), ok=True)
+            except AgentHttpError as exc:
+                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc), error_code=exc.code)
             except Exception as exc:
-                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc))
+                self.store.update_pull_status(int(node["id"]), ok=False, error=str(exc), error_code="pull_request_failed")
 
     def _schedule_ready(self, run_kind: str) -> bool:
         nodes = {role: self.store.get_node_by_role(role) for role in ("client", "relay", "server")}
@@ -414,9 +416,10 @@ class PanelRuntime:
                         + (f"; latest event: {last_event}" if last_event else "")
                     ),
                     "run_id": active_run.get("run_id"),
+                    "code": progress.get("last_failure_code"),
                     "target_kind": "run",
                     "target_name": active_run.get("run_id"),
-                    "recommended_step": "Open the run detail to follow progress before starting another monitoring run.",
+                    "recommended_step": progress.get("recommended_step") or "Open the run detail to follow progress before starting another monitoring run.",
                 }
             )
 
@@ -429,6 +432,7 @@ class PanelRuntime:
                     "kind": "panel",
                     "title": "Panel runtime needs attention",
                     "summary": str(panel_error),
+                    "code": "panel_runtime_error",
                     "target_kind": "panel",
                     "target_name": "panel",
                     "recommended_step": "Sync runtime or inspect panel logs before issuing more control actions.",
@@ -446,6 +450,7 @@ class PanelRuntime:
                     "kind": "node",
                     "title": f"{node.get('role')} node {node.get('status')}",
                     "summary": connectivity.get("summary"),
+                    "code": connectivity.get("diagnostic_code"),
                     "target_kind": "node",
                     "target_id": node.get("id"),
                     "target_name": node.get("node_name"),

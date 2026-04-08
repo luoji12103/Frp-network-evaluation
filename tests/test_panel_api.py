@@ -319,8 +319,19 @@ def test_node_connectivity_diagnostic_surfaces_endpoint_mismatch(tmp_path: Path)
         stored = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored["status"] == "push-only"
         assert stored["connectivity"]["endpoint_mismatch"] is True
+        assert stored["connectivity"]["diagnostic_code"] == "endpoint_mismatch"
+        assert stored["connectivity"]["push"]["code"] is None
+        assert stored["connectivity"]["pull"]["code"] is None
         assert "differs from the agent-advertised URL" in stored["connectivity"]["summary"]
         assert "configured_pull_url" in stored["connectivity"]["recommended_step"]
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        assert any(
+            item["kind"] == "node"
+            and item["target_name"] == "server-1"
+            and item["code"] == "endpoint_mismatch"
+            for item in runtime_payload["attention"]["items"]
+        )
 
 
 def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Path) -> None:
@@ -343,6 +354,33 @@ def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Pat
         detail = conflict.json()["detail"]
         assert detail["active_run"]["run_id"] == run_id
         assert detail["active_run"]["progress"]["active_phase"] == "baseline"
+
+
+def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        store = client.app.state.runtime.store
+        run_id = store.create_run("baseline", "test")
+        store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
+        store.record_run_event(
+            run_id,
+            "probe_completed",
+            "ping completed on relay-1 via pull-error",
+            {
+                "task": "ping",
+                "node_name": "relay-1",
+                "path_label": "client_to_relay",
+                "transport": "pull-error",
+                "success": False,
+                "error": "timeout: request to http://relay.example/api/v1/jobs/run timed out",
+                "error_code": "timeout",
+            },
+        )
+
+        detail = client.get(f"/api/v1/admin/runs/{run_id}").json()
+        assert detail["progress"]["last_failure_code"] == "timeout"
+        assert "timed out" in detail["progress"]["last_failure_message"]
+        assert "agent listener" in (detail["progress"]["recommended_step"] or "")
 
 
 def test_pair_rejects_unsupported_protocol_version(tmp_path: Path) -> None:
