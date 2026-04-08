@@ -27,6 +27,10 @@ What changed is the execution model:
   - `configured_pull_url`: admin-configured pull target
   - `advertised_pull_url`: runtime-reported agent address
   - `effective_pull_url`: panel uses `configured_pull_url` first, then falls back to `advertised_pull_url`
+- A separate lifecycle control plane now exists alongside the probe plane:
+  - probe plane: pair / heartbeat / direct jobs / cached results
+  - control plane: runtime sync, log tail, and host-supervised start / stop / restart
+- Panel lifecycle control is Docker-first for strong operations. Native panel deployments expose read-only runtime plus scheduler control, and can tail logs when a stable local log file exists.
 
 ## Main Capabilities
 
@@ -81,6 +85,15 @@ source .venv/bin/activate
 bash bin/start_webui.sh
 ```
 
+Optional but recommended for native observability:
+
+```bash
+mkdir -p logs
+bash bin/start_webui.sh >> logs/panel-native.log 2>&1
+```
+
+If `logs/panel-native.log` exists, the admin runtime view can expose native log tailing without a separate host bridge.
+
 Open:
 
 ```text
@@ -103,6 +116,8 @@ This starts the central panel container and persists:
 - `./config/agent`
 - `./results`
 - `./logs`
+
+The Docker stack also starts `panel-control-bridge`, which is the only component allowed to issue restart / stop / tail-log operations against the panel container.
 
 ## Admin Authentication
 
@@ -152,6 +167,26 @@ The panel does not store:
 - SSH private keys
 - system passwords
 
+## Runtime Control Plane
+
+The admin UI now has a dedicated runtime-control surface.
+
+- Nodes expose runtime summaries, supervisor state, push / pull connectivity, and lifecycle action history.
+- The panel exposes runtime state, scheduler pause / resume, and deployment-aware lifecycle controls.
+- Dangerous actions still require confirmation.
+- Native panel mode is intentionally read-only for host lifecycle operations unless a panel control bridge is configured.
+
+### Operations Workflow
+
+- The management page now keeps action history and action detail on the same screen.
+- Clicking an action opens normalized detail fields: target, actor, transport, failure summary, log excerpt, and runtime / supervisor snapshot.
+- Lifecycle actions are serialized per target. If a node or the panel already has a `queued` or `running` action, the next action is rejected and the UI jumps to the active action.
+- Native panel log tailing checks these locations in order:
+  - `MC_NETPROBE_PANEL_LOG_FILE`
+  - `logs/panel-native.log`
+  - `logs/panel.log`
+  - `logs/webui.log`
+
 ## Relay Agent On Linux Docker
 
 The recommended relay deployment is Docker:
@@ -165,6 +200,11 @@ RUNTIME_MODE="docker-linux" \
 AGENT_PORT="9870" \
 docker compose -f docker/relay-agent.compose.yml up -d --build
 ```
+
+This relay stack starts two services:
+
+- `relay-agent`: probe and heartbeat worker
+- `relay-control-bridge`: allowlisted lifecycle bridge for runtime sync, log tail, start / stop / restart
 
 ## Server Agent On macOS
 
@@ -183,15 +223,20 @@ The installer now:
 
 - validates `launchctl`, `plutil`, and the configured `PYTHON_BIN`
 - writes `~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist`
+- writes `~/Library/LaunchAgents/com.mc-netprobe.server.control-bridge.plist`
 - writes agent logs to `logs/server-agent.launchd.log`
+- writes control bridge logs to `logs/server-control-bridge.launchd.log`
 - prefers `bootout/bootstrap/kickstart` and falls back to `unload/load`
 
 Recommended post-install checks:
 
 ```bash
 plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
+plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.control-bridge.plist
 launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
+launchctl print gui/$(id -u)/com.mc-netprobe.server.control-bridge
 tail -n 50 logs/server-agent.launchd.log
+tail -n 50 logs/server-control-bridge.launchd.log
 curl http://127.0.0.1:9870/api/v1/health
 ```
 
@@ -223,6 +268,11 @@ powershell -ExecutionPolicy Bypass -File bin/install_client_agent.ps1 `
   -ListenPort 9870
 ```
 
+The installer creates both:
+
+- `mc-netprobe-client-agent`
+- `mc-netprobe-client-control-bridge`
+
 ## Panel API
 
 Implemented panel endpoints:
@@ -237,6 +287,12 @@ Implemented panel endpoints:
   - `POST /api/v1/nodes/{id}/pair-code`
   - `POST /api/v1/runs`
   - `GET /api/v1/history`
+  - `GET /api/v1/admin/runtime`
+  - `GET /api/v1/admin/actions`
+  - `GET /api/v1/admin/actions/{action_id}`
+  - `POST /api/v1/admin/nodes/{node_id}/actions`
+  - `POST /api/v1/admin/panel/actions`
+  - `GET /api/v1/admin/runs/{run_id}/events`
 - Agent traffic:
 - `POST /api/v1/agents/pair`
 - `POST /api/v1/agents/heartbeat`
@@ -247,6 +303,8 @@ Current communication model:
 - dashboard node payloads expose explicit `endpoints` and `connectivity` objects
 - `POST /api/v1/agents/pair` accepts `pair_code + identity + endpoint + capabilities`
 - `POST /api/v1/agents/heartbeat` accepts `endpoint + runtime_status + completed_jobs`
+- admin runtime payloads expose explicit `runtime` and `supervisor` objects
+- node endpoint payloads expose `control_bridge_url` when a host bridge is available
 
 Compatibility health endpoint:
 
@@ -263,9 +321,22 @@ Implemented agent endpoints:
 - `POST /api/v1/jobs/run` with `X-Node-Token`
 - `GET /api/v1/results/{run_id}` with `X-Node-Token`
 
+## Control Bridge API
+
+Both node bridges and the optional panel bridge expose the same local contract:
+
+- `GET /api/v1/control/runtime`
+- `POST /api/v1/control/actions`
+
+Auth headers depend on the target:
+
+- node bridge: `X-Node-Token`
+- panel bridge: `X-Control-Token`
+
 ## Testing
 
 ```bash
+.venv/bin/python -m pytest -q tests/test_control_bridge.py tests/test_control_actions.py
 .venv/bin/python -m pytest -q tests/test_launchd.py tests/test_agent_service.py tests/test_quickstart.py
 .venv/bin/python -m pytest -q
 ```
@@ -275,6 +346,7 @@ Current automated coverage includes:
 - panel defaults and pairing
 - heartbeat job leasing and completion
 - agent direct task execution and cached result lookup
+- lifecycle control actions, confirmation flow, and control bridge transport
 - composite full-run persistence
 - probe parsing and exporters
 

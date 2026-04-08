@@ -247,6 +247,17 @@ class ControlActionEnvelope(BaseModel):
     result_summary: str | None = None
     error_code: str | None = None
     error_detail: str | None = None
+    target_name: str | None = None
+    is_dangerous: bool = False
+    has_log_excerpt: bool = False
+    has_runtime_snapshot: bool = False
+    active: bool = False
+    request: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    log_excerpt: list[str] = Field(default_factory=list)
+    log_location: str | None = None
+    runtime_snapshot: dict[str, Any] = Field(default_factory=dict)
+    failure: dict[str, Any] = Field(default_factory=dict)
     audit_payload: dict[str, Any] = Field(default_factory=dict)
 
 

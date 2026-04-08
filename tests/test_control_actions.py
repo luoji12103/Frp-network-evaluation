@@ -160,7 +160,15 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
 
         runtime_response = client.get("/api/v1/admin/runtime")
         assert runtime_response.status_code == 200
-        assert runtime_response.json()["nodes"][0]["endpoints"]["control_bridge_url"] == "http://relay.example:9871"
+        node_runtime = runtime_response.json()["nodes"][0]
+        assert node_runtime["endpoints"]["control_bridge_url"] == "http://relay.example:9871"
+        assert node_runtime["runtime"]["details"]["available_actions"] == [
+            "sync_runtime",
+            "tail_log",
+            "start",
+            "restart",
+            "stop",
+        ]
 
         queued = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
         assert queued.status_code == 200
@@ -171,10 +179,34 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         actions = client.get("/api/v1/admin/actions").json()["items"]
         assert actions[0]["status"] == "completed"
         assert "sync_runtime" in actions[0]["action"]
+        assert actions[0]["target_name"] == "relay-1"
+        assert actions[0]["has_runtime_snapshot"] is True
+        assert actions[0]["active"] is False
 
         stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored_node["runtime"]["state"] == "running"
         assert stored_node["supervisor"]["control_available"] is True
+        assert stored_node["runtime"]["details"]["active_action_id"] is None
+
+
+def test_node_actions_are_serialized_per_target_and_conflicts_include_active_action(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = seed_paired_node(client)
+
+        first = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
+        assert first.status_code == 200
+        first_action_id = first.json()["action"]["id"]
+
+        conflict = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "restart", "actor": "admin-ui"})
+        assert conflict.status_code == 409
+        detail = conflict.json()["detail"]
+        assert detail["active_action"]["id"] == first_action_id
+        assert detail["active_action"]["action"] == "sync_runtime"
+
+        node_payload = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert node_payload["runtime"]["details"]["active_action_id"] == first_action_id
+        assert "sync_runtime" in (node_payload["runtime"]["details"]["active_action_summary"] or "")
 
 
 def test_panel_actions_require_confirmation_and_update_scheduler(tmp_path: Path) -> None:
@@ -202,6 +234,96 @@ def test_panel_actions_require_confirmation_and_update_scheduler(tmp_path: Path)
 
         runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
         assert runtime_payload["runtime"]["details"]["scheduler_paused"] is True
+        assert runtime_payload["runtime"]["details"]["active_action_id"] is None
+
+
+def test_panel_actions_are_serialized_per_target(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+
+        first = client.post("/api/v1/admin/panel/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
+        assert first.status_code == 200
+        first_action_id = first.json()["action"]["id"]
+
+        conflict = client.post("/api/v1/admin/panel/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
+        assert conflict.status_code == 409
+        detail = conflict.json()["detail"]
+        assert detail["active_action"]["id"] == first_action_id
+        assert detail["active_action"]["target_name"] == "panel"
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
+        assert runtime_payload["runtime"]["details"]["active_action_id"] == first_action_id
+        assert "sync_runtime" in (runtime_payload["runtime"]["details"]["active_action_summary"] or "")
+
+
+def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monkeypatch) -> None:
+    log_path = tmp_path / "panel-native.log"
+    log_path.write_text("line-a\nline-b\nline-c\n", encoding="utf-8")
+    monkeypatch.delenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL", raising=False)
+    monkeypatch.setenv("MC_NETPROBE_PANEL_LOG_FILE", str(log_path))
+
+    with build_client(tmp_path) as client:
+        login_admin(client)
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
+        assert runtime_payload["runtime"]["details"]["deployment_mode"] == "native"
+        assert runtime_payload["runtime"]["details"]["control_mode"] == "native-readonly"
+        assert runtime_payload["runtime"]["details"]["available_actions"] == [
+            "sync_runtime",
+            "pause_scheduler",
+            "resume_scheduler",
+            "tail_log",
+        ]
+        assert runtime_payload["supervisor"]["control_available"] is False
+        assert runtime_payload["supervisor"]["supervisor_state"] == "native-readonly"
+        assert runtime_payload["supervisor"]["process_state"] == "running"
+        assert runtime_payload["supervisor"]["pid_or_container_id"]
+        assert runtime_payload["supervisor"]["log_location"] == str(log_path.resolve())
+
+        restart = client.post("/api/v1/admin/panel/actions", json={"action": "restart", "actor": "admin-ui"})
+        assert restart.status_code == 409
+        assert "requires a configured panel control bridge" in restart.json()["detail"]
+
+        queued = client.post("/api/v1/admin/panel/actions", json={"action": "tail_log", "actor": "admin-ui"})
+        assert queued.status_code == 200
+        assert queued.json()["queued"] is True
+
+        client.app.state.runtime.run_maintenance_cycle(force_runtime_sync=True)
+
+        action = client.get("/api/v1/admin/actions").json()["items"][0]
+        assert action["status"] == "completed"
+        assert action["target_name"] == "panel"
+        assert action["has_log_excerpt"] is True
+        detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
+        assert "panel-native.log" in (detail["result_summary"] or "")
+        assert detail["log_excerpt"][-1] == "line-c"
+        assert detail["runtime_snapshot"]["supervisor"]["supervisor_state"] == "native-readonly"
+
+
+def test_action_detail_returns_normalized_log_and_runtime_snapshot(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = seed_paired_node(client)
+        runtime = client.app.state.runtime
+        runtime.control = FakeControlClient()
+
+        queued = client.post(
+            f"/api/v1/admin/nodes/{node['id']}/actions",
+            json={"action": "tail_log", "actor": "admin-ui", "tail_lines": 40},
+        )
+        assert queued.status_code == 200
+
+        runtime.run_maintenance_cycle(force_runtime_sync=True)
+
+        action = client.get("/api/v1/admin/actions").json()["items"][0]
+        assert action["has_log_excerpt"] is True
+        assert action["has_runtime_snapshot"] is True
+
+        detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
+        assert detail["request"]["tail_lines"] == 40
+        assert detail["log_excerpt"] == ["line-a", "line-b"]
+        assert detail["log_location"] == "docker://node"
+        assert detail["runtime_snapshot"]["supervisor"]["log_location"] == "docker://node"
 
 
 def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:

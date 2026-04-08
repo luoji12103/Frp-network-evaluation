@@ -161,7 +161,8 @@ class PanelStore:
                 ORDER BY CASE n.role WHEN 'client' THEN 1 WHEN 'relay' THEN 2 ELSE 3 END, n.id
                 """
             ).fetchall()
-        return [self._decorate_node(dict(row)) for row in rows]
+        active_actions = self._active_control_action_map()
+        return [self._decorate_node(dict(row), active_actions=active_actions) for row in rows]
 
     def get_node(self, node_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -174,7 +175,9 @@ class PanelStore:
                 """,
                 (node_id,),
             ).fetchone()
-        return self._decorate_node(dict(row)) if row is not None else None
+        if row is None:
+            return None
+        return self._decorate_node(dict(row), active_actions=self._active_control_action_map(target_kind="node", target_id=node_id))
 
     def get_node_by_name(self, node_name: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -187,7 +190,9 @@ class PanelStore:
                 """,
                 (node_name,),
             ).fetchone()
-        return self._decorate_node(dict(row)) if row is not None else None
+        if row is None:
+            return None
+        return self._decorate_node(dict(row), active_actions=self._active_control_action_map(target_kind="node", target_id=int(row["id"])))
 
     def get_node_by_role(self, role: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -202,7 +207,13 @@ class PanelStore:
                 """,
                 (role,),
             ).fetchone()
-        return self._decorate_node(dict(row)) if row is not None else None
+        if row is None:
+            return None
+        return self._decorate_node(dict(row), active_actions=self._active_control_action_map(target_kind="node", target_id=int(row["id"])))
+
+    def get_active_control_action(self, target_kind: str, target_id: int | None) -> dict[str, Any] | None:
+        actions = self._active_control_action_map(target_kind=target_kind, target_id=target_id)
+        return actions.get((target_kind, target_id))
 
     def upsert_node(self, payload: NodeUpsertRequest) -> dict[str, Any]:
         now = now_iso()
@@ -600,7 +611,7 @@ class PanelStore:
     def list_control_actions(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM control_action ORDER BY requested_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
-        return [self._decorate_control_action(dict(row)) for row in rows]
+        return [self._decorate_control_action(dict(row), include_detail=False) for row in rows]
 
     def list_pending_control_actions(self, limit: int = 10) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -613,12 +624,12 @@ class PanelStore:
                 """,
                 (limit,),
             ).fetchall()
-        return [self._decorate_control_action(dict(row)) for row in rows]
+        return [self._decorate_control_action(dict(row), include_detail=True) for row in rows]
 
     def get_control_action(self, action_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM control_action WHERE id = ?", (action_id,)).fetchone()
-        return self._decorate_control_action(dict(row)) if row is not None else None
+        return self._decorate_control_action(dict(row), include_detail=True) if row is not None else None
 
     def start_control_action(self, action_id: int, transport: str) -> dict[str, Any]:
         started_at = now_iso()
@@ -2337,7 +2348,11 @@ class PanelStore:
             return "pull-only"
         return "offline"
 
-    def _decorate_node(self, node: dict[str, Any]) -> dict[str, Any]:
+    def _decorate_node(
+        self,
+        node: dict[str, Any],
+        active_actions: dict[tuple[str, int | None], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         node["enabled"] = bool(node.get("enabled"))
         node["paired"] = bool(node.get("paired"))
         node["push_state"] = str(node.get("push_state") or "unknown")
@@ -2366,12 +2381,22 @@ class PanelStore:
         supervisor_summary.setdefault("bridge_url", control_bridge_url)
         endpoint_report.setdefault("control_url", control_bridge_url)
         endpoint_mismatch = bool(configured_pull_url and advertised_pull_url and not _urls_match(configured_pull_url, advertised_pull_url))
+        action_lookup = active_actions or self._active_control_action_map(target_kind="node", target_id=int(node["id"]))
+        active_action = action_lookup.get(("node", int(node["id"])))
+        runtime_details = dict(runtime_summary.get("details") or {})
+        available_actions, readonly_reason = self._derive_node_available_actions(node=node, control_bridge_url=control_bridge_url)
+        runtime_details["available_actions"] = available_actions
+        runtime_details["readonly_reason"] = readonly_reason
+        runtime_details["active_action_id"] = active_action.get("id") if active_action else None
+        runtime_details["active_action_summary"] = self._control_action_brief(active_action) if active_action else None
+        runtime_summary["details"] = runtime_details
         node["identity"] = identity
         node["capabilities"] = capabilities
         node["endpoint_report"] = endpoint_report
         node["runtime_status"] = runtime_status
         node["runtime"] = runtime_summary
         node["supervisor"] = supervisor_summary
+        node["active_action"] = active_action
         node["endpoints"] = {
             "configured_pull_url": configured_pull_url,
             "advertised_pull_url": advertised_pull_url,
@@ -2441,9 +2466,42 @@ class PanelStore:
         )
         return alert
 
-    def _decorate_control_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def _decorate_control_action(self, action: dict[str, Any], include_detail: bool = True) -> dict[str, Any]:
         action["confirmation_required"] = bool(action.get("confirmation_required"))
         action["audit_payload"] = _loads(action.get("audit_payload_json") or "{}")
+        target_name = self._control_action_target_name(action)
+        request_payload = action["audit_payload"].get("request") if isinstance(action["audit_payload"], dict) else {}
+        response_payload = action["audit_payload"].get("response") if isinstance(action["audit_payload"], dict) else {}
+        if not isinstance(request_payload, dict):
+            request_payload = {}
+        if not isinstance(response_payload, dict):
+            response_payload = {}
+        log_excerpt = response_payload.get("log_excerpt") if isinstance(response_payload.get("log_excerpt"), list) else []
+        log_location = response_payload.get("log_location") or (response_payload.get("supervisor") or {}).get("log_location")
+        runtime_snapshot = {
+            "runtime": response_payload.get("runtime") or {},
+            "supervisor": response_payload.get("supervisor") or {},
+        }
+        failure = {}
+        if action.get("error_code") or action.get("error_detail"):
+            failure = {
+                "code": action.get("error_code"),
+                "detail": action.get("error_detail"),
+            }
+        action["target_name"] = target_name
+        action["is_dangerous"] = _is_dangerous_control_action(str(action.get("action") or ""))
+        action["has_log_excerpt"] = bool(log_excerpt)
+        action["has_runtime_snapshot"] = bool(runtime_snapshot["runtime"] or runtime_snapshot["supervisor"])
+        action["active"] = str(action.get("status") or "") in {"queued", "running"}
+        if include_detail:
+            action["request"] = request_payload
+            action["response"] = response_payload
+            action["log_excerpt"] = log_excerpt
+            action["log_location"] = log_location
+            action["runtime_snapshot"] = runtime_snapshot
+            action["failure"] = failure
+        else:
+            action.pop("audit_payload", None)
         action.pop("audit_payload_json", None)
         return action
 
@@ -2481,6 +2539,62 @@ class PanelStore:
 
     def _channel_is_ok(self, state: Any) -> bool:
         return str(state or "unknown") == "ok"
+
+    def _active_control_action_map(
+        self,
+        target_kind: str | None = None,
+        target_id: int | None = None,
+    ) -> dict[tuple[str, int | None], dict[str, Any]]:
+        params: list[Any] = []
+        clauses = ["status IN ('queued', 'running')"]
+        if target_kind is not None:
+            clauses.append("target_kind = ?")
+            params.append(target_kind)
+        if target_kind is not None and target_id is None:
+            clauses.append("target_id IS NULL")
+        elif target_id is not None:
+            clauses.append("target_id = ?")
+            params.append(target_id)
+        query = (
+            "SELECT * FROM control_action "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY requested_at ASC, id ASC"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        results: dict[tuple[str, int | None], dict[str, Any]] = {}
+        for row in rows:
+            decorated = self._decorate_control_action(dict(row), include_detail=False)
+            key = (str(decorated["target_kind"]), decorated.get("target_id"))
+            results.setdefault(key, decorated)
+        return results
+
+    def _control_action_target_name(self, action: dict[str, Any]) -> str:
+        audit_payload = action.get("audit_payload")
+        if isinstance(audit_payload, dict) and audit_payload.get("target_name"):
+            return str(audit_payload["target_name"])
+        if str(action.get("target_kind") or "") == "panel":
+            return "panel"
+        target_id = action.get("target_id")
+        if target_id is None:
+            return "unknown"
+        with self._connect() as conn:
+            row = conn.execute("SELECT node_name FROM node WHERE id = ?", (target_id,)).fetchone()
+        if row is not None and row["node_name"]:
+            return str(row["node_name"])
+        return str(target_id)
+
+    def _derive_node_available_actions(self, node: dict[str, Any], control_bridge_url: str | None) -> tuple[list[str], str | None]:
+        if not node.get("paired"):
+            return [], "Node must be paired before runtime actions are available"
+        if not control_bridge_url:
+            return [], "Node control bridge is unavailable for this node"
+        return ["sync_runtime", "tail_log", "start", "restart", "stop"], None
+
+    def _control_action_brief(self, action: dict[str, Any] | None) -> str | None:
+        if not action:
+            return None
+        return f"{action.get('action')} ({action.get('status')})"
 
 
 def _dumps(value: Any) -> str:
@@ -2525,3 +2639,7 @@ def _derive_control_bridge_url(base_url: str | None, control_port: Any) -> str |
         return parsed._replace(netloc=f"{parsed.hostname}:{int(control_port)}").geturl()
     except Exception:
         return None
+
+
+def _is_dangerous_control_action(action: str) -> bool:
+    return action in {"start", "stop", "restart", "pause_scheduler", "resume_scheduler"}

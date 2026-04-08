@@ -181,6 +181,8 @@
       vertical-align: top;
     }
     th { color: var(--muted); font-weight: 700; }
+    tr.interactive-row { cursor: pointer; }
+    tr.interactive-row.selected { background: rgba(31, 90, 70, 0.08); }
     .command-box {
       padding: 12px;
       border-radius: 14px;
@@ -192,6 +194,7 @@
       word-break: break-word;
     }
     .muted { color: var(--muted); }
+    .detail-stack { display: grid; gap: 12px; }
     .empty {
       padding: 18px;
       border: 1px dashed var(--line);
@@ -423,6 +426,10 @@
               </thead>
               <tbody id="actionsTableBody"></tbody>
             </table>
+          </div>
+          <div style="margin-top: 16px;">
+            <h3 data-i18n="actionDetail">动作详情</h3>
+            <div id="actionDetail"></div>
           </div>
         </div>
       </div>

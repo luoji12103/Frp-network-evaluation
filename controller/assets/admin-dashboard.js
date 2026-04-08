@@ -132,9 +132,20 @@
       sessionExpired: "登录已失效，请刷新后重新登录。",
       runtimeControl: "运行控制",
       actionHistory: "操作历史",
+      actionDetail: "动作详情",
       target: "目标",
       result: "结果",
       runEvents: "运行事件",
+      currentAction: "当前动作",
+      viewAction: "查看动作",
+      requestedBy: "发起人",
+      transport: "执行通道",
+      finishedAt: "结束时间",
+      failure: "失败原因",
+      logExcerpt: "日志摘录",
+      runtimeSnapshot: "运行态快照",
+      readonlyReason: "只读说明",
+      actionBusy: "该目标已有动作执行中",
       start: "启动",
       stop: "停止",
       restart: "重启",
@@ -143,10 +154,19 @@
       runtimeState: "运行态",
       supervisorState: "Supervisor",
       processState: "进程状态",
+      deploymentMode: "部署模式",
+      controlMode: "控制模式",
+      controlBridge: "控制桥",
+      logLocation: "日志位置",
       schedulerPaused: "调度已暂停",
       schedulerRunning: "调度运行中",
       pauseScheduler: "暂停调度",
       resumeScheduler: "恢复调度",
+      nativeMode: "原生",
+      dockerBridgeMode: "Docker + 控制桥",
+      bridgeManaged: "桥接强控制",
+      nativeReadonly: "原生只读观测",
+      panelReadonlyHint: "当前为原生只读观测模式，可同步运行态、暂停/恢复调度；若本地日志文件存在，也可查看日志。重启和停止需要配置 panel control bridge。",
       actionQueuedOk: "操作已入队。",
       actionQueuedFailed: "发起操作失败",
       panelTarget: "Panel",
@@ -353,9 +373,20 @@
       sessionExpired: "Session expired. Refresh and log in again.",
       runtimeControl: "Runtime controls",
       actionHistory: "Action history",
+      actionDetail: "Action detail",
       target: "Target",
       result: "Result",
       runEvents: "Run events",
+      currentAction: "Current action",
+      viewAction: "View action",
+      requestedBy: "Requested by",
+      transport: "Transport",
+      finishedAt: "Finished at",
+      failure: "Failure",
+      logExcerpt: "Log excerpt",
+      runtimeSnapshot: "Runtime snapshot",
+      readonlyReason: "Read-only note",
+      actionBusy: "Another action is already active for this target",
       start: "Start",
       stop: "Stop",
       restart: "Restart",
@@ -364,10 +395,19 @@
       runtimeState: "Runtime state",
       supervisorState: "Supervisor",
       processState: "Process state",
+      deploymentMode: "Deployment",
+      controlMode: "Control mode",
+      controlBridge: "Control bridge",
+      logLocation: "Log location",
       schedulerPaused: "Scheduler paused",
       schedulerRunning: "Scheduler running",
       pauseScheduler: "Pause scheduler",
       resumeScheduler: "Resume scheduler",
+      nativeMode: "Native",
+      dockerBridgeMode: "Docker + control bridge",
+      bridgeManaged: "Bridge-managed",
+      nativeReadonly: "Native read-only",
+      panelReadonlyHint: "This panel is running in native read-only mode. You can sync runtime, pause or resume the scheduler, and tail logs when a local log file exists. Restart and stop require a configured panel control bridge.",
       actionQueuedOk: "Action queued.",
       actionQueuedFailed: "Failed to queue action",
       panelTarget: "Panel",
@@ -494,6 +534,8 @@
     runs: null,
     runtimeInfo: null,
     actionHistory: null,
+    selectedAction: null,
+    selectedActionId: null,
     selectedRun: null,
     selectedRunEvents: null,
     activeTab: "overview",
@@ -504,6 +546,7 @@
 
   const charts = {};
   let refreshTimer = null;
+  let actionPollTimer = null;
 
   document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
@@ -558,6 +601,11 @@
       setActiveTab(button.dataset.tab);
     });
     document.getElementById("nodeGrid").addEventListener("click", async (event) => {
+      const detailButton = event.target.closest("button[data-action-detail]");
+      if (detailButton) {
+        await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
+        return;
+      }
       const button = event.target.closest("button[data-action]");
       if (!button) {
         return;
@@ -577,11 +625,23 @@
       }
     });
     document.getElementById("panelRuntimeCard").addEventListener("click", async (event) => {
+      const detailButton = event.target.closest("button[data-action-detail]");
+      if (detailButton) {
+        await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
+        return;
+      }
       const button = event.target.closest("button[data-panel-action]");
       if (!button) {
         return;
       }
       await queuePanelAction(button.dataset.panelAction);
+    });
+    document.getElementById("actionsTableBody").addEventListener("click", async (event) => {
+      const row = event.target.closest("tr[data-action-id]");
+      if (!row) {
+        return;
+      }
+      await loadActionDetail(Number(row.dataset.actionId), { refreshRuntime: false });
     });
     document.getElementById("alertsTableBody").addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-alert-action]");
@@ -782,16 +842,92 @@
       state.runs = runs;
       state.runtimeInfo = runtimeInfo;
       state.actionHistory = actions;
+      const selectedActionId = resolveSelectedActionId(actions.items || []);
+      state.selectedActionId = selectedActionId;
+      state.selectedAction = selectedActionId ? await fetchJson(`/api/v1/admin/actions/${encodeURIComponent(selectedActionId)}`) : null;
       state.lastRefreshAt = new Date().toISOString();
       state.lastError = "";
       saveCurrentFilters();
       renderAllAnalytics();
       renderPanelStatusMeta();
+      scheduleActionPolling();
     } catch (error) {
       state.lastError = error.message || String(error);
       renderPanelStatusMeta();
       showMessage(error.message || String(error), "error");
     }
+  }
+
+  function resolveSelectedActionId(items) {
+    const list = items || [];
+    if (!list.length) {
+      return null;
+    }
+    if (state.selectedActionId && list.some((item) => Number(item.id) === Number(state.selectedActionId))) {
+      return Number(state.selectedActionId);
+    }
+    return Number(list[0].id);
+  }
+
+  async function loadActionDetail(actionId, options = {}) {
+    if (!actionId) {
+      state.selectedAction = null;
+      state.selectedActionId = null;
+      renderActionDetail();
+      renderActionHistory();
+      clearActionPolling();
+      return null;
+    }
+    const refreshRuntime = options.refreshRuntime !== false;
+    const silent = Boolean(options.silent);
+    try {
+      const requests = [
+        fetchJson("/api/v1/admin/actions?limit=40"),
+        fetchJson(`/api/v1/admin/actions/${encodeURIComponent(actionId)}`),
+      ];
+      if (refreshRuntime) {
+        requests.push(fetchJson("/api/v1/admin/runtime"));
+      }
+      const [actions, detail, runtimeInfo] = await Promise.all(requests);
+      state.actionHistory = actions;
+      state.selectedAction = detail;
+      state.selectedActionId = Number(detail.id);
+      if (runtimeInfo) {
+        state.runtimeInfo = runtimeInfo;
+      }
+      renderRuntimeControl();
+      renderNodeCards();
+      renderActionHistory();
+      renderActionDetail();
+      scheduleActionPolling();
+      return detail;
+    } catch (error) {
+      if (!silent) {
+        showMessage(error.message || String(error), "error");
+      }
+      throw error;
+    }
+  }
+
+  function clearActionPolling() {
+    if (actionPollTimer) {
+      window.clearTimeout(actionPollTimer);
+      actionPollTimer = null;
+    }
+  }
+
+  function scheduleActionPolling() {
+    clearActionPolling();
+    if (!state.selectedAction || !state.selectedAction.active) {
+      return;
+    }
+    actionPollTimer = window.setTimeout(async () => {
+      try {
+        await loadActionDetail(Number(state.selectedAction.id), { refreshRuntime: true, silent: true });
+      } catch (error) {
+        return;
+      }
+    }, 1500);
   }
 
   function renderPanelStatusMeta() {
@@ -813,6 +949,7 @@
     renderRuns();
     renderRuntimeControl();
     renderActionHistory();
+    renderActionDetail();
     renderFiltersSummary();
   }
 
@@ -1057,11 +1194,32 @@
     const panel = state.runtimeInfo?.panel || {};
     const runtime = panel.runtime || {};
     const supervisor = panel.supervisor || {};
+    const details = runtime.details || {};
+    const availableActions = new Set(details.available_actions || []);
+    const activeActionId = details.active_action_id || null;
+    const activeActionSummary = details.active_action_summary || "";
+    const paused = Boolean(details.scheduler_paused);
+    const logLocation = supervisor.log_location || details.log_location;
+    const buttons = [];
+    if (availableActions.has("sync_runtime")) {
+      buttons.push(`<button type="button" data-panel-action="sync_runtime" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("syncRuntime"))}</button>`);
+    }
+    if (availableActions.has("tail_log")) {
+      buttons.push(`<button type="button" data-panel-action="tail_log" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("tailLog"))}</button>`);
+    }
+    buttons.push(
+      `<button type="button" data-panel-action="${paused ? "resume_scheduler" : "pause_scheduler"}" ${activeActionId ? "disabled" : ""}>${escapeHtml(paused ? t("resumeScheduler") : t("pauseScheduler"))}</button>`,
+    );
+    if (availableActions.has("restart")) {
+      buttons.push(`<button type="button" data-panel-action="restart" class="danger" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("restart"))}</button>`);
+    }
+    if (availableActions.has("stop")) {
+      buttons.push(`<button type="button" data-panel-action="stop" class="danger" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("stop"))}</button>`);
+    }
     const root = document.getElementById("panelRuntimeCard");
     if (!root) {
       return;
     }
-    const paused = Boolean(runtime.details?.scheduler_paused);
     root.innerHTML = `
       <div class="card">
         <div class="section-head">
@@ -1071,14 +1229,17 @@
         <div class="muted">${escapeHtml(t("runtimeState"))}: ${escapeHtml(statusLabel(runtime.state || "unknown"))}</div>
         <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(supervisor.supervisor_state || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("deploymentMode"))}: ${escapeHtml(panelDeploymentModeLabel(details.deployment_mode))}</div>
+        <div class="muted">${escapeHtml(t("controlMode"))}: ${escapeHtml(panelControlModeLabel(details.control_mode))}</div>
+        <div class="muted">${escapeHtml(t("controlBridge"))}: ${escapeHtml(supervisor.bridge_url || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(logLocation || t("noData"))}</div>
         <div class="muted">${escapeHtml(paused ? t("schedulerPaused") : t("schedulerRunning"))}</div>
-        <div class="muted">${escapeHtml(formatTimestamp(runtime.details?.last_loop_at || runtime.checked_at))}</div>
+        <div class="muted">${escapeHtml(formatTimestamp(details.last_loop_at || runtime.checked_at))}</div>
+        ${details.readonly_reason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(details.readonly_reason)}</div>` : ""}
+        ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
+        ${!supervisor.control_available && details.control_mode === "native-readonly" ? `<div class="muted">${escapeHtml(t("panelReadonlyHint"))}</div>` : ""}
         <div class="node-actions" style="margin-top: 12px;">
-          <button type="button" data-panel-action="sync_runtime">${escapeHtml(t("syncRuntime"))}</button>
-          <button type="button" data-panel-action="tail_log">${escapeHtml(t("tailLog"))}</button>
-          <button type="button" data-panel-action="${paused ? "resume_scheduler" : "pause_scheduler"}">${escapeHtml(paused ? t("resumeScheduler") : t("pauseScheduler"))}</button>
-          <button type="button" data-panel-action="restart" class="danger">${escapeHtml(t("restart"))}</button>
-          <button type="button" data-panel-action="stop" class="danger">${escapeHtml(t("stop"))}</button>
+          ${buttons.join("")}
         </div>
       </div>
     `;
@@ -1095,14 +1256,58 @@
       return;
     }
     body.innerHTML = items.map((item) => `
-      <tr>
-        <td>${escapeHtml(item.target_kind === "panel" ? t("panelTarget") : (item.audit_payload?.target_name || String(item.target_id || "")))}</td>
+      <tr class="interactive-row ${Number(item.id) === Number(state.selectedActionId || 0) ? "selected" : ""}" data-action-id="${escapeHtml(String(item.id))}">
+        <td>${escapeHtml(item.target_kind === "panel" ? t("panelTarget") : (item.target_name || String(item.target_id || "")))}</td>
         <td>${escapeHtml(item.action || "")}</td>
         <td><span class="status-pill ${escapeHtml(item.status || "")}">${escapeHtml(statusLabel(item.status || ""))}</span></td>
         <td>${escapeHtml(formatTimestamp(item.started_at || item.requested_at))}</td>
         <td>${escapeHtml(item.result_summary || item.error_detail || t("noData"))}</td>
       </tr>
     `).join("");
+  }
+
+  function renderActionDetail() {
+    const root = document.getElementById("actionDetail");
+    if (!root) {
+      return;
+    }
+    const action = state.selectedAction;
+    if (!action) {
+      root.innerHTML = `<div class="empty">${escapeHtml(t("noData"))}</div>`;
+      return;
+    }
+    const runtimeSnapshot = action.runtime_snapshot || {};
+    const runtime = runtimeSnapshot.runtime || {};
+    const supervisor = runtimeSnapshot.supervisor || {};
+    const failure = action.failure || {};
+    const logExcerpt = action.log_excerpt || [];
+    root.innerHTML = `
+      <div class="card detail-stack">
+        <div class="section-head">
+          <strong>${escapeHtml(action.target_kind === "panel" ? t("panelTarget") : (action.target_name || String(action.target_id || "")))}</strong>
+          <span class="status-pill ${escapeHtml(action.status || "")}">${escapeHtml(statusLabel(action.status || ""))}</span>
+        </div>
+        <div class="muted">${escapeHtml(t("actions"))}: ${escapeHtml(action.action || "")}</div>
+        <div class="muted">${escapeHtml(t("requestedBy"))}: ${escapeHtml(action.requested_by || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("startedAt"))}: ${escapeHtml(formatTimestamp(action.started_at || action.requested_at))}</div>
+        <div class="muted">${escapeHtml(t("finishedAt"))}: ${escapeHtml(formatTimestamp(action.finished_at))}</div>
+        <div class="muted">${escapeHtml(t("transport"))}: ${escapeHtml(action.transport || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("result"))}: ${escapeHtml(action.result_summary || t("noData"))}</div>
+        ${(failure.code || failure.detail) ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml([failure.code, failure.detail].filter(Boolean).join(" | "))}</div>` : ""}
+        <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(action.log_location || t("noData"))}</div>
+        <div>
+          <h3>${escapeHtml(t("logExcerpt"))}</h3>
+          ${logExcerpt.length ? `<div class="command-box">${escapeHtml(logExcerpt.join("\n"))}</div>` : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
+        </div>
+        <div>
+          <h3>${escapeHtml(t("runtimeSnapshot"))}</h3>
+          <div class="muted">${escapeHtml(t("runtimeState"))}: ${escapeHtml(statusLabel(runtime.state || "unknown"))}</div>
+          <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(supervisor.supervisor_state || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
+          <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(supervisor.log_location || action.log_location || t("noData"))}</div>
+        </div>
+      </div>
+    `;
   }
 
   function fillSettingsInputs() {
@@ -1152,6 +1357,27 @@
       const pull = connectivity.pull || {};
       const runtime = node.runtime || {};
       const supervisor = node.supervisor || {};
+      const runtimeDetails = runtime.details || {};
+      const availableActions = new Set(runtimeDetails.available_actions || []);
+      const activeActionId = runtimeDetails.active_action_id || null;
+      const activeActionSummary = runtimeDetails.active_action_summary || "";
+      const readonlyReason = runtimeDetails.readonly_reason || "";
+      const controlButtons = [];
+      if (availableActions.has("sync_runtime")) {
+        controlButtons.push(`<button type="button" data-action="node-control" data-control-action="sync_runtime" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("syncRuntime"))}</button>`);
+      }
+      if (availableActions.has("tail_log")) {
+        controlButtons.push(`<button type="button" data-action="node-control" data-control-action="tail_log" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("tailLog"))}</button>`);
+      }
+      if (availableActions.has("start")) {
+        controlButtons.push(`<button type="button" data-action="node-control" data-control-action="start" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("start"))}</button>`);
+      }
+      if (availableActions.has("restart")) {
+        controlButtons.push(`<button type="button" data-action="node-control" data-control-action="restart" class="danger" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("restart"))}</button>`);
+      }
+      if (availableActions.has("stop")) {
+        controlButtons.push(`<button type="button" data-action="node-control" data-control-action="stop" class="danger" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("stop"))}</button>`);
+      }
       return `
         <div class="card" data-role="${escapeHtml(role)}" data-node-id="${escapeHtml(node.id || "")}">
           <div class="section-head">
@@ -1173,15 +1399,13 @@
           <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("pushState"))}: ${escapeHtml(statusLabel(push.state || "unknown"))}</div>
           <div class="muted">${escapeHtml(t("pullState"))}: ${escapeHtml(statusLabel(pull.state || "unknown"))}</div>
+          ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}
+          ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}
           <div class="node-actions">
             <button type="button" data-action="save-node" class="primary">${escapeHtml(t("saveNode"))}</button>
             <button type="button" data-action="pair-node">${escapeHtml(t("generatePairCommand"))}</button>
-            <button type="button" data-action="node-control" data-control-action="sync_runtime">${escapeHtml(t("syncRuntime"))}</button>
-            <button type="button" data-action="node-control" data-control-action="tail_log">${escapeHtml(t("tailLog"))}</button>
-            <button type="button" data-action="node-control" data-control-action="start">${escapeHtml(t("start"))}</button>
-            <button type="button" data-action="node-control" data-control-action="restart" class="danger">${escapeHtml(t("restart"))}</button>
-            <button type="button" data-action="node-control" data-control-action="stop" class="danger">${escapeHtml(t("stop"))}</button>
+            ${controlButtons.join("")}
           </div>
         </div>
       `;
@@ -1299,9 +1523,17 @@
         });
       }
       showMessage(t("actionQueuedOk"), "ok");
-      await delay(500);
-      await refreshAll();
+      if (response.action?.id) {
+        await loadActionDetail(Number(response.action.id), { refreshRuntime: true });
+      } else {
+        await delay(500);
+        await refreshAll();
+      }
     } catch (error) {
+      const activeAction = error.detailPayload?.active_action;
+      if (activeAction?.id) {
+        await loadActionDetail(Number(activeAction.id), { refreshRuntime: true, silent: true }).catch(() => undefined);
+      }
       showMessage(`${t("actionQueuedFailed")}: ${error.message || error}`, "error");
     }
   }
@@ -1530,7 +1762,14 @@
     }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.detail || response.statusText || "Request failed");
+      const detail = payload.detail;
+      const message = typeof detail === "string"
+        ? detail
+        : detail?.message || payload.message || response.statusText || "Request failed";
+      const error = new Error(message);
+      error.payload = payload;
+      error.detailPayload = detail;
+      throw error;
     }
     return payload;
   }
@@ -1642,6 +1881,22 @@
 
   function runtimeLabel(mode) {
     return translations[state.locale].runtime[mode] || mode;
+  }
+
+  function panelDeploymentModeLabel(mode) {
+    const labels = {
+      native: t("nativeMode"),
+      "docker-bridge": t("dockerBridgeMode"),
+    };
+    return labels[mode] || mode || t("noData");
+  }
+
+  function panelControlModeLabel(mode) {
+    const labels = {
+      "bridge-managed": t("bridgeManaged"),
+      "native-readonly": t("nativeReadonly"),
+    };
+    return labels[mode] || mode || t("noData");
   }
 
   function runKindLabel(runKind) {

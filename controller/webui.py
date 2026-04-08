@@ -63,12 +63,14 @@ class PanelRuntime:
     """Own long-lived services backing the FastAPI panel."""
 
     def __init__(self, db_path: str | Path = "data/monitor.db", start_background: bool = True) -> None:
+        self._panel_bridge_url = os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL")
+        self._panel_log_file = os.getenv("MC_NETPROBE_PANEL_LOG_FILE")
         self.store = PanelStore(db_path=db_path)
         self.orchestrator = PanelOrchestrator(store=self.store, output_root=RESULTS_DIR)
         self.http = AgentHttpClient(store=self.store)
         self.control = ControlBridgeClient(
             store=self.store,
-            panel_bridge_url=os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+            panel_bridge_url=self._panel_bridge_url,
             panel_bridge_token_path=os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_TOKEN_FILE", "data/panel-control-bridge-token.txt"),
         )
         self._stop_event = threading.Event()
@@ -83,7 +85,7 @@ class PanelRuntime:
             "runtime": {"state": "unknown", "checked_at": None, "last_error": None, "details": {}},
             "supervisor": {
                 "control_available": False,
-                "bridge_url": os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+                "bridge_url": self._panel_bridge_url,
                 "supervisor_state": "unknown",
                 "process_state": "unknown",
                 "pid_or_container_id": None,
@@ -92,7 +94,7 @@ class PanelRuntime:
                 "checked_at": None,
             },
         }
-        if os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"):
+        if self._panel_bridge_url:
             self.control.ensure_panel_bridge_token()
 
     def start(self) -> None:
@@ -158,20 +160,67 @@ class PanelRuntime:
         self._scheduler_paused = False
         return self.runtime_snapshot()
 
+    def panel_action_supported(self, action: str) -> bool:
+        if action in {"status", "sync_runtime", "pause_scheduler", "resume_scheduler"}:
+            return True
+        if action == "tail_log":
+            return bool(self._panel_bridge_url or self._existing_panel_log_path())
+        if action in {"restart", "stop"}:
+            return bool(self._panel_bridge_url)
+        return False
+
+    def panel_action_unavailable_reason(self, action: str) -> str | None:
+        if self.panel_action_supported(action):
+            return None
+        if action == "start":
+            return "Panel start is only available through the host bridge, not the WebUI"
+        if action == "tail_log":
+            return (
+                "Panel log tailing requires either a configured panel control bridge "
+                "or a native log file such as MC_NETPROBE_PANEL_LOG_FILE / logs/panel-native.log"
+            )
+        if action in {"restart", "stop"}:
+            return (
+                "Native panel deployments expose read-only runtime plus scheduler control; "
+                f"{action} requires a configured panel control bridge"
+            )
+        return f"Action {action} is not available for this panel deployment"
+
     def runtime_snapshot(self) -> dict[str, Any]:
+        bridge_runtime = dict(self._panel_bridge_state.get("runtime") or {})
+        active_action = self.store.get_active_control_action("panel", None)
+        details = {
+            "started_at": self._started_at,
+            "last_loop_at": self._last_loop_at,
+            "scheduler_paused": self._scheduler_paused,
+            "background_loop_active": self._thread is not None,
+            "deployment_mode": "docker-bridge" if self._panel_bridge_url else "native",
+            "control_mode": "bridge-managed" if self._panel_bridge_url else "native-readonly",
+            "control_bridge_configured": bool(self._panel_bridge_url),
+            "available_actions": self._panel_available_actions(),
+            "readonly_reason": (
+                None
+                if self._panel_bridge_url
+                else "Native panel deployments expose read-only runtime, scheduler control, and optional local log tailing."
+            ),
+            "active_action_id": active_action.get("id") if active_action else None,
+            "active_action_summary": self._active_action_summary(active_action),
+            "pid": os.getpid(),
+            "db_path": str(self.store.db_path.resolve()),
+            "log_location": self._panel_log_location(),
+        }
+        if self._panel_bridge_url and bridge_runtime:
+            details["bridge_runtime_state"] = bridge_runtime.get("state")
+            details["bridge_checked_at"] = bridge_runtime.get("checked_at")
+            details["bridge_last_error"] = bridge_runtime.get("last_error")
         return {
             "runtime": {
                 "state": "running",
                 "checked_at": now_iso(),
-                "last_error": self._last_loop_error,
-                "details": {
-                    "started_at": self._started_at,
-                    "last_loop_at": self._last_loop_at,
-                    "scheduler_paused": self._scheduler_paused,
-                    "background_loop_active": self._thread is not None,
-                },
+                "last_error": self._last_loop_error or (bridge_runtime.get("last_error") if self._panel_bridge_url else None),
+                "details": details,
             },
-            "supervisor": dict(self._panel_bridge_state.get("supervisor") or {}),
+            "supervisor": self._panel_supervisor_snapshot(),
         }
 
     def admin_runtime_payload(self) -> dict[str, Any]:
@@ -217,6 +266,9 @@ class PanelRuntime:
                         "checked_at": now_iso(),
                     },
                 )
+        if not self._panel_bridge_url:
+            self._panel_bridge_state = self.runtime_snapshot()
+            return
         try:
             response = self.control.panel_runtime()
             self._panel_bridge_state = {
@@ -237,7 +289,7 @@ class PanelRuntime:
                 },
                 "supervisor": {
                     "control_available": False,
-                    "bridge_url": os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL"),
+                    "bridge_url": self._panel_bridge_url,
                     "supervisor_state": "unknown",
                     "process_state": "unknown",
                     "pid_or_container_id": None,
@@ -298,12 +350,105 @@ class PanelRuntime:
         if name == "resume_scheduler":
             runtime_payload = self.resume_scheduler()
             return _panel_internal_bridge_response(runtime_payload, "Scheduler resumed"), "Scheduler resumed"
+        if name in {"status", "sync_runtime"}:
+            self._refresh_runtime_state(force=True)
+            runtime_payload = self.runtime_snapshot()
+            summary = "Panel runtime synchronized" if name == "sync_runtime" else "Panel runtime reported"
+            return _panel_internal_bridge_response(runtime_payload, summary), summary
+        if name == "tail_log" and not self._panel_bridge_url:
+            response = self._native_panel_tail_log(tail_lines=tail_lines or 40)
+            self._panel_bridge_state = {
+                "runtime": response.runtime.model_dump(),
+                "supervisor": response.supervisor.model_dump(),
+            }
+            return response, response.human_summary
+        if not self._panel_bridge_url:
+            raise ControlBridgeError(
+                "missing_panel_bridge",
+                self.panel_action_unavailable_reason(name) or "Panel control bridge is not configured",
+            )
         response = self.control.panel_action(action=name, tail_lines=tail_lines)
         self._panel_bridge_state = {
             "runtime": response.runtime.model_dump(),
             "supervisor": response.supervisor.model_dump(),
         }
         return response, response.human_summary
+
+    def _panel_available_actions(self) -> list[str]:
+        actions = ["sync_runtime", "pause_scheduler", "resume_scheduler"]
+        if self._panel_bridge_url or self._existing_panel_log_path():
+            actions.append("tail_log")
+        if self._panel_bridge_url:
+            actions.extend(["restart", "stop"])
+        return actions
+
+    def _active_action_summary(self, action: dict[str, Any] | None) -> str | None:
+        if not action:
+            return None
+        return f"{action.get('action')} ({action.get('status')})"
+
+    def _panel_supervisor_snapshot(self) -> dict[str, Any]:
+        if self._panel_bridge_url:
+            return dict(self._panel_bridge_state.get("supervisor") or {})
+        return {
+            "control_available": False,
+            "bridge_url": None,
+            "supervisor_state": "native-readonly",
+            "process_state": "running",
+            "pid_or_container_id": str(os.getpid()),
+            "log_location": self._panel_log_location(),
+            "last_error": self._last_loop_error,
+            "checked_at": now_iso(),
+        }
+
+    def _configured_panel_log_path(self) -> Path | None:
+        if not self._panel_log_file:
+            return None
+        return Path(self._panel_log_file).expanduser().resolve()
+
+    def _existing_panel_log_path(self) -> Path | None:
+        candidates: list[Path] = []
+        configured = self._configured_panel_log_path()
+        if configured is not None:
+            candidates.append(configured)
+        candidates.extend(
+            [
+                Path("logs/panel-native.log").resolve(),
+                Path("logs/panel.log").resolve(),
+                Path("logs/webui.log").resolve(),
+            ]
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _panel_log_location(self) -> str | None:
+        configured = self._configured_panel_log_path()
+        if configured is not None:
+            return str(configured)
+        existing = self._existing_panel_log_path()
+        return str(existing) if existing is not None else None
+
+    def _native_panel_tail_log(self, tail_lines: int) -> BridgeActionResponse:
+        log_path = self._existing_panel_log_path()
+        if log_path is None:
+            raise ControlBridgeError(
+                "missing_panel_log",
+                self.panel_action_unavailable_reason("tail_log") or "Native panel log file is not configured",
+            )
+        runtime_payload = self.runtime_snapshot()
+        lines = _tail_local_file(log_path, tail_lines)
+        return BridgeActionResponse(
+            accepted=True,
+            state=str(runtime_payload.get("runtime", {}).get("state") or "running"),
+            human_summary=f"Read {len(lines)} log lines from {log_path}",
+            runtime=runtime_payload.get("runtime", {}),
+            supervisor=runtime_payload.get("supervisor", {}),
+            raw_runtime=runtime_payload,
+            log_location=str(log_path),
+            log_excerpt=lines,
+        )
 
 
 class AdminAuth:
@@ -731,6 +876,18 @@ def create_app(
         node = runtime.store.get_node(node_id)
         if node is None:
             raise HTTPException(status_code=404, detail="Node not found")
+        unavailable_reason = _node_action_unavailable_reason(node=node, action=payload.action)
+        if unavailable_reason is not None:
+            raise HTTPException(status_code=409, detail=unavailable_reason)
+        conflict = runtime.store.get_active_control_action("node", node_id)
+        if conflict is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=_control_action_conflict_detail(
+                    target_name=str(node.get("node_name") or node_id),
+                    conflict=conflict,
+                ),
+            )
         confirmation_token = _validate_or_issue_confirmation_token(
             admin_auth=admin_auth,
             target_kind="node",
@@ -760,6 +917,15 @@ def create_app(
         require_admin_api(request)
         if payload.action == "start":
             raise HTTPException(status_code=400, detail="Panel start is only available through the host bridge, not the WebUI")
+        unavailable_reason = runtime.panel_action_unavailable_reason(payload.action)
+        if unavailable_reason is not None:
+            raise HTTPException(status_code=409, detail=unavailable_reason)
+        conflict = runtime.store.get_active_control_action("panel", None)
+        if conflict is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=_control_action_conflict_detail(target_name="panel", conflict=conflict),
+            )
         confirmation_token = _validate_or_issue_confirmation_token(
             admin_auth=admin_auth,
             target_kind="panel",
@@ -960,6 +1126,31 @@ def _action_requires_confirmation(action: str) -> bool:
     return action in {"stop", "restart", "pause_scheduler", "resume_scheduler"}
 
 
+def _node_action_unavailable_reason(node: dict[str, Any], action: str) -> str | None:
+    available_actions = set(node.get("runtime", {}).get("details", {}).get("available_actions") or [])
+    if action in available_actions:
+        return None
+    readonly_reason = node.get("runtime", {}).get("details", {}).get("readonly_reason")
+    return str(readonly_reason or f"Node does not support action {action}")
+
+
+def _control_action_conflict_detail(target_name: str, conflict: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "message": (
+            f"{target_name} already has an active action: "
+            f"{conflict.get('action')} ({conflict.get('status')})"
+        ),
+        "active_action": {
+            "id": conflict.get("id"),
+            "action": conflict.get("action"),
+            "status": conflict.get("status"),
+            "requested_at": conflict.get("requested_at"),
+            "target_name": conflict.get("target_name"),
+            "result_summary": conflict.get("result_summary"),
+        },
+    }
+
+
 def _validate_or_issue_confirmation_token(
     admin_auth: AdminAuth,
     target_kind: str,
@@ -1015,6 +1206,17 @@ def _panel_internal_bridge_response(runtime_payload: dict[str, Any], summary: st
         raw_runtime=runtime_payload,
         log_location=runtime_payload.get("supervisor", {}).get("log_location"),
     )
+
+
+def _tail_local_file(path: str | Path, line_count: int) -> list[str]:
+    target = Path(path)
+    if line_count <= 0:
+        return []
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError as exc:
+        raise ControlBridgeError("missing_panel_log", f"Log file not found: {target}") from exc
+    return lines[-line_count:]
 
 
 def main() -> int:
