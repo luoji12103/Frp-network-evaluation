@@ -862,6 +862,22 @@ class PanelStore:
             row = conn.execute("SELECT 1 FROM run WHERE status = 'running' LIMIT 1").fetchone()
         return row is not None
 
+    def get_active_run(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            run_row = conn.execute(
+                "SELECT * FROM run WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+            if run_row is None:
+                return None
+            event_rows = conn.execute(
+                "SELECT * FROM run_event WHERE run_id = ? ORDER BY created_at ASC, id ASC",
+                (run_row["id"],),
+            ).fetchall()
+        run = self._decorate_run(dict(run_row))
+        run["active"] = True
+        run["progress"] = self._summarize_run_events([self._decorate_run_event(dict(row)) for row in event_rows])
+        return run
+
     def finish_run(
         self,
         run_id: str,
@@ -2408,6 +2424,12 @@ class PanelStore:
         node["runtime"] = runtime_summary
         node["supervisor"] = supervisor_summary
         node["active_action"] = active_action
+        connectivity_status = self._classify_node(node)
+        connectivity_diagnostic = self._build_connectivity_diagnostic(
+            node=node,
+            status=connectivity_status,
+            endpoint_mismatch=endpoint_mismatch,
+        )
         node["endpoints"] = {
             "configured_pull_url": configured_pull_url,
             "advertised_pull_url": advertised_pull_url,
@@ -2430,8 +2452,11 @@ class PanelStore:
             "endpoint_mismatch_detail": (
                 "Configured pull URL differs from the agent-advertised URL" if endpoint_mismatch else None
             ),
+            "attention_level": connectivity_diagnostic["attention_level"],
+            "summary": connectivity_diagnostic["summary"],
+            "recommended_step": connectivity_diagnostic["recommended_step"],
         }
-        node["status"] = self._classify_node(node)
+        node["status"] = connectivity_status
         for key in (
             "agent_url",
             "last_push_ok",
@@ -2537,6 +2562,65 @@ class PanelStore:
             event = self._decorate_run_event(dict(row))
             grouped[str(event["run_id"])].append(event)
         return {run_id: self._summarize_run_events(grouped.get(run_id, [])) for run_id in run_ids}
+
+    def _build_connectivity_diagnostic(
+        self,
+        node: dict[str, Any],
+        status: str,
+        endpoint_mismatch: bool,
+    ) -> dict[str, str | None]:
+        push_error = node.get("push_error")
+        pull_error = node.get("pull_error")
+        if status == "disabled":
+            return {
+                "attention_level": "info",
+                "summary": "Node is disabled in the panel configuration.",
+                "recommended_step": "Enable the node before expecting pairing, pull checks, or lifecycle control.",
+            }
+        if status == "unpaired":
+            return {
+                "attention_level": "warning",
+                "summary": "Node exists in the panel but has not paired with an agent yet.",
+                "recommended_step": "Generate a pair command, start the agent, and wait for the first heartbeat.",
+            }
+        if endpoint_mismatch:
+            summary = "Configured pull URL differs from the agent-advertised URL."
+            if status == "online":
+                summary = "Node is reachable, but the configured pull URL differs from the agent-advertised URL."
+            elif status == "push-only":
+                summary = "Heartbeat is healthy, but the configured pull URL differs from the agent-advertised URL."
+            return {
+                "attention_level": "warning",
+                "summary": summary,
+                "recommended_step": "Review configured_pull_url or save the agent-advertised URL if the node endpoint changed.",
+            }
+        if status == "online":
+            return {
+                "attention_level": "ok",
+                "summary": "Heartbeat and pull checks are both healthy.",
+                "recommended_step": None,
+            }
+        if status == "push-only":
+            detail = f" Pull error: {pull_error}" if pull_error else ""
+            return {
+                "attention_level": "warning",
+                "summary": f"Heartbeat is healthy, but pull checks are failing.{detail}".strip(),
+                "recommended_step": "Use sync runtime or tail log, then verify the effective pull URL and agent listener.",
+            }
+        if status == "pull-only":
+            detail = f" Push error: {push_error}" if push_error else ""
+            return {
+                "attention_level": "warning",
+                "summary": f"Panel can reach the agent, but heartbeats are missing.{detail}".strip(),
+                "recommended_step": "Verify panel_url, node token, and the agent's outbound connectivity to the panel.",
+            }
+        detail_parts = [part for part in (push_error, pull_error) if part]
+        detail = f" Details: {' | '.join(detail_parts)}" if detail_parts else ""
+        return {
+            "attention_level": "error",
+            "summary": f"Neither heartbeat nor pull checks are healthy.{detail}".strip(),
+            "recommended_step": "Verify the configured pull URL, panel reachability, and agent health before retrying control actions.",
+        }
 
     def _summarize_run_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         if not events:

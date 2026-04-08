@@ -224,9 +224,14 @@ class PanelRuntime:
         }
 
     def admin_runtime_payload(self) -> dict[str, Any]:
+        panel = self.runtime_snapshot()
+        nodes = self.store.list_nodes()
+        active_run = self.store.get_active_run()
         return {
-            "panel": self.runtime_snapshot(),
-            "nodes": self.store.list_nodes(),
+            "panel": panel,
+            "nodes": nodes,
+            "active_run": active_run,
+            "attention": self._build_attention_payload(panel=panel, nodes=nodes, active_run=active_run),
         }
 
     def refresh_runtime_snapshots(self, force: bool = True) -> None:
@@ -386,6 +391,77 @@ class PanelRuntime:
         if not action:
             return None
         return f"{action.get('action')} ({action.get('status')})"
+
+    def _build_attention_payload(
+        self,
+        panel: dict[str, Any],
+        nodes: list[dict[str, Any]],
+        active_run: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        if active_run is not None:
+            progress = active_run.get("progress") or {}
+            phase = progress.get("active_phase")
+            last_event = progress.get("last_event_message") or progress.get("last_event_kind")
+            items.append(
+                {
+                    "severity": "info",
+                    "kind": "run",
+                    "title": "Monitoring run in progress",
+                    "summary": (
+                        f"{active_run.get('run_kind')} run {active_run.get('run_id')} is active"
+                        + (f" in phase {phase}" if phase else "")
+                        + (f"; latest event: {last_event}" if last_event else "")
+                    ),
+                    "run_id": active_run.get("run_id"),
+                    "target_kind": "run",
+                    "target_name": active_run.get("run_id"),
+                    "recommended_step": "Open the run detail to follow progress before starting another monitoring run.",
+                }
+            )
+
+        panel_runtime = panel.get("runtime", {})
+        panel_error = panel_runtime.get("last_error") or (panel.get("supervisor") or {}).get("last_error")
+        if panel_error:
+            items.append(
+                {
+                    "severity": "warning",
+                    "kind": "panel",
+                    "title": "Panel runtime needs attention",
+                    "summary": str(panel_error),
+                    "target_kind": "panel",
+                    "target_name": "panel",
+                    "recommended_step": "Sync runtime or inspect panel logs before issuing more control actions.",
+                }
+            )
+
+        for node in nodes:
+            connectivity = node.get("connectivity") or {}
+            level = str(connectivity.get("attention_level") or "ok")
+            if level == "ok":
+                continue
+            items.append(
+                {
+                    "severity": level,
+                    "kind": "node",
+                    "title": f"{node.get('role')} node {node.get('status')}",
+                    "summary": connectivity.get("summary"),
+                    "target_kind": "node",
+                    "target_id": node.get("id"),
+                    "target_name": node.get("node_name"),
+                    "recommended_step": connectivity.get("recommended_step"),
+                }
+            )
+
+        severity_order = {"error": 0, "warning": 1, "info": 2, "ok": 3}
+        items.sort(key=lambda item: (severity_order.get(str(item.get("severity")), 99), str(item.get("title") or "")))
+        summary = {
+            "total": len(items),
+            "error": sum(1 for item in items if item.get("severity") == "error"),
+            "warning": sum(1 for item in items if item.get("severity") == "warning"),
+            "info": sum(1 for item in items if item.get("severity") == "info"),
+        }
+        return {"summary": summary, "items": items[:8]}
 
     def _panel_supervisor_snapshot(self) -> dict[str, Any]:
         if self._panel_bridge_url:
@@ -1010,8 +1086,15 @@ def create_app(
     @app.post("/api/v1/runs")
     def start_manual_run(payload: ManualRunRequest, request: Request) -> JSONResponse:
         require_admin_api(request)
-        if runtime.store.has_active_run():
-            raise HTTPException(status_code=409, detail="A monitoring run is already in progress")
+        active_run = runtime.store.get_active_run()
+        if active_run is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "A monitoring run is already in progress",
+                    "active_run": active_run,
+                },
+            )
         run_id = runtime.orchestrator.start_run_in_background(run_kind=payload.run_kind, source=payload.source)
         return JSONResponse(status_code=202, content={"ok": True, "run_id": run_id, "status": "running"})
 

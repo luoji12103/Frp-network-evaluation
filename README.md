@@ -179,8 +179,11 @@ The admin UI now has a dedicated runtime-control surface.
 ### Operations Workflow
 
 - The management page now keeps action history and action detail on the same screen.
+- The management page also keeps an `Operations focus` stack driven by backend runtime diagnostics, so active runs and node communication issues are visible without digging through logs first.
 - Clicking an action opens normalized detail fields: target, actor, transport, failure summary, request / response snapshot, log excerpt, and runtime / supervisor snapshot.
 - Lifecycle actions are serialized per target. If a node or the panel already has a `queued` or `running` action, the next action is rejected and the UI jumps to the active action.
+- Nodes now expose structured connectivity diagnostics: `connectivity.attention_level`, `connectivity.summary`, and `connectivity.recommended_step`.
+- `GET /api/v1/admin/runtime` now also returns the current `active_run` and an `attention` summary list; the admin UI uses that payload to disable duplicate full-run launches and jump to the already-running run.
 - Native panel log tailing checks these locations in order:
   - `MC_NETPROBE_PANEL_LOG_FILE`
   - `logs/panel-native.log`

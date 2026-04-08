@@ -265,6 +265,85 @@ def test_node_pair_code_and_agent_pairing_flow(tmp_path: Path) -> None:
         assert stored_node["endpoints"]["advertised_pull_url"] == "http://relay.example:9870"
         assert stored_node["connectivity"]["push"]["state"] == "ok"
 
+def test_node_connectivity_diagnostic_surfaces_endpoint_mismatch(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = client.post(
+            "/api/v1/nodes",
+            json={
+                "node_name": "server-1",
+                "role": "server",
+                "runtime_mode": "native-macos",
+                "configured_pull_url": "http://configured.example:39870",
+                "enabled": True,
+            },
+        ).json()["node"]
+        pair = client.post(f"/api/v1/nodes/{node['id']}/pair-code").json()
+        paired = client.post(
+            "/api/v1/agents/pair",
+            json={
+                "pair_code": pair["pair_code"],
+                "identity": pair_identity("server-1", "server", "native-macos", "macos").model_dump(),
+                "endpoint": {
+                    "listen_host": "100.100.0.8",
+                    "listen_port": 39870,
+                    "advertise_url": "http://100.100.0.8:39870",
+                },
+                "capabilities": AgentCapabilities().model_dump(),
+            },
+        )
+        assert paired.status_code == 200
+        token = paired.json()["node_token"]
+
+        heartbeat = client.post(
+            "/api/v1/agents/heartbeat",
+            headers={"X-Node-Token": token},
+            json={
+                "endpoint": {
+                    "listen_host": "100.100.0.8",
+                    "listen_port": 39870,
+                    "advertise_url": "http://100.100.0.8:39870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": now_iso(),
+                    "last_error": None,
+                    "environment": {"platform_name": "macos"},
+                },
+                "completed_jobs": [],
+            },
+        )
+        assert heartbeat.status_code == 200
+
+        stored = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert stored["status"] == "push-only"
+        assert stored["connectivity"]["endpoint_mismatch"] is True
+        assert "differs from the agent-advertised URL" in stored["connectivity"]["summary"]
+        assert "configured_pull_url" in stored["connectivity"]["recommended_step"]
+
+
+def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        store = client.app.state.runtime.store
+        run_id = store.create_run("baseline", "test")
+        store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        assert runtime_payload["active_run"]["run_id"] == run_id
+        assert runtime_payload["active_run"]["progress"]["active_phase"] == "baseline"
+        assert any(item["kind"] == "run" and item["run_id"] == run_id for item in runtime_payload["attention"]["items"])
+
+        conflict = client.post(
+            "/api/v1/runs",
+            json={"run_kind": "full", "source": "admin-ui"},
+        )
+        assert conflict.status_code == 409
+        detail = conflict.json()["detail"]
+        assert detail["active_run"]["run_id"] == run_id
+        assert detail["active_run"]["progress"]["active_phase"] == "baseline"
+
 
 def test_pair_rejects_unsupported_protocol_version(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:

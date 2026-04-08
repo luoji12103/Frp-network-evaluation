@@ -131,6 +131,14 @@
       copyFailed: "复制失败，请手动复制。",
       sessionExpired: "登录已失效，请刷新后重新登录。",
       runtimeControl: "运行控制",
+      operationsFocus: "运行焦点",
+      noAttention: "当前没有需要立刻处理的运行问题。",
+      activeRunNow: "运行中任务",
+      attentionSummary: "待关注事项",
+      recommendedStep: "建议动作",
+      openRun: "查看运行",
+      connectivitySummary: "通信诊断",
+      runBusy: "已有运行中的监测任务",
       actionHistory: "操作历史",
       actionDetail: "动作详情",
       target: "目标",
@@ -379,6 +387,14 @@
       copyFailed: "Copy failed. Please copy manually.",
       sessionExpired: "Session expired. Refresh and log in again.",
       runtimeControl: "Runtime controls",
+      operationsFocus: "Operations focus",
+      noAttention: "Nothing needs immediate runtime attention right now.",
+      activeRunNow: "Active run",
+      attentionSummary: "Attention items",
+      recommendedStep: "Recommended next step",
+      openRun: "View run",
+      connectivitySummary: "Connectivity diagnostic",
+      runBusy: "A monitoring run is already active",
       actionHistory: "Action history",
       actionDetail: "Action detail",
       target: "Target",
@@ -651,6 +667,15 @@
         return;
       }
       await queuePanelAction(button.dataset.panelAction);
+    });
+    document.getElementById("operationsFocus").addEventListener("click", async (event) => {
+      const runButton = event.target.closest("button[data-open-run]");
+      if (!runButton) {
+        return;
+      }
+      state.selectedRunId = String(runButton.dataset.openRun);
+      setActiveTab("runs");
+      await loadSelectedRunDetail(String(runButton.dataset.openRun), { refreshRunsList: true, silent: true }).catch(() => undefined);
     });
     document.getElementById("actionsTableBody").addEventListener("click", async (event) => {
       const row = event.target.closest("tr[data-action-id]");
@@ -1037,9 +1062,19 @@
     const base = state.lastRefreshAt
       ? `${t("refreshStatusOk")} · ${formatTimestamp(state.lastRefreshAt)}`
       : t("refreshStatusReady");
-    target.textContent = state.lastError
+    const extras = [];
+    const activeRun = state.runtimeInfo?.active_run;
+    const attentionSummary = state.runtimeInfo?.attention?.summary || {};
+    if (activeRun?.run_id) {
+      extras.push(`${t("activeRunNow")}: ${activeRun.run_id}`);
+    }
+    if ((attentionSummary.total || 0) > 0) {
+      extras.push(`${t("attentionSummary")}: ${attentionSummary.total}`);
+    }
+    const statusText = state.lastError
       ? `${t("refreshStatusError")}: ${state.lastError} · ${t("autoRefresh")}: ${refreshLabel}`
       : `${base} · ${t("autoRefresh")}: ${refreshLabel}`;
+    target.textContent = extras.length ? `${statusText} · ${extras.join(" · ")}` : statusText;
   }
 
   function renderAllAnalytics() {
@@ -1048,7 +1083,9 @@
     renderMetricExplorer();
     renderAlerts();
     renderRuns();
+    renderRunLauncherState();
     renderRuntimeControl();
+    renderOperationsFocus();
     renderActionHistory();
     renderActionDetail();
     renderFiltersSummary();
@@ -1293,6 +1330,16 @@
       : `<div class="empty">${escapeHtml(t("noData"))}</div>`;
   }
 
+  function renderRunLauncherState() {
+    const button = document.getElementById("runFullBtn");
+    if (!button) {
+      return;
+    }
+    const activeRun = state.runtimeInfo?.active_run;
+    button.disabled = Boolean(activeRun?.run_id);
+    button.title = activeRun?.run_id ? `${t("runBusy")}: ${activeRun.run_id}` : "";
+  }
+
   function hydrateManagement() {
     fillSettingsInputs();
     renderNodeCards();
@@ -1351,6 +1398,34 @@
           ${buttons.join("")}
         </div>
       </div>
+    `;
+  }
+
+  function renderOperationsFocus() {
+    const root = document.getElementById("operationsFocus");
+    if (!root) {
+      return;
+    }
+    const attention = state.runtimeInfo?.attention || {};
+    const items = attention.items || [];
+    const summary = attention.summary || {};
+    if (!items.length) {
+      root.innerHTML = `<div class="empty">${escapeHtml(t("noAttention"))}</div>`;
+      return;
+    }
+    root.innerHTML = `
+      <div class="muted">${escapeHtml(t("attentionSummary"))}: ${escapeHtml(String(summary.total || items.length))}</div>
+      ${items.map((item) => `
+        <div class="card" style="margin-top: 12px;">
+          <div class="section-head">
+            <strong>${escapeHtml(item.title || t("noData"))}</strong>
+            <span class="status-pill ${escapeHtml(item.severity || "info")}">${escapeHtml(severityLabel(item.severity || "info"))}</span>
+          </div>
+          <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
+          ${item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
+          ${item.run_id ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
+        </div>
+      `).join("")}
     `;
   }
 
@@ -1479,6 +1554,8 @@
       const activeActionId = runtimeDetails.active_action_id || null;
       const activeActionSummary = runtimeDetails.active_action_summary || "";
       const readonlyReason = runtimeDetails.readonly_reason || "";
+      const connectivitySummary = connectivity.summary || "";
+      const recommendedStep = connectivity.recommended_step || "";
       const controlButtons = [];
       if (availableActions.has("sync_runtime")) {
         controlButtons.push(`<button type="button" data-action="node-control" data-control-action="sync_runtime" ${activeActionId ? "disabled" : ""}>${escapeHtml(t("syncRuntime"))}</button>`);
@@ -1516,6 +1593,8 @@
           <div class="muted">${escapeHtml(t("processState"))}: ${escapeHtml(supervisor.process_state || t("noData"))}</div>
           <div class="muted">${escapeHtml(t("pushState"))}: ${escapeHtml(statusLabel(push.state || "unknown"))}</div>
           <div class="muted">${escapeHtml(t("pullState"))}: ${escapeHtml(statusLabel(pull.state || "unknown"))}</div>
+          ${connectivitySummary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(connectivitySummary)}</div>` : ""}
+          ${recommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(recommendedStep)}</div>` : ""}
           ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}
           ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}
@@ -1551,9 +1630,17 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ run_kind: "full", source: "admin-ui" }),
       });
+      state.selectedRunId = String(payload.run_id);
       showMessage(tWithValue("runFullOk", payload.run_id), "ok");
+      setActiveTab("runs");
       await refreshAll();
     } catch (error) {
+      const activeRun = error.detailPayload?.active_run;
+      if (activeRun?.run_id) {
+        state.selectedRunId = String(activeRun.run_id);
+        setActiveTab("runs");
+        await loadSelectedRunDetail(String(activeRun.run_id), { refreshRunsList: true, silent: true }).catch(() => undefined);
+      }
       showMessage(`${t("runFullFailed")}: ${error.message || error}`, "error");
     }
   }
