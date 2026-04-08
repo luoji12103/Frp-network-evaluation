@@ -331,7 +331,15 @@ def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:
         login_admin(client)
         store = client.app.state.runtime.store
         run_id = store.create_run("baseline", "test")
+        store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
         store.record_run_event(run_id, "probe_dispatched", "probe dispatched", {"task": "ping"})
+        detail_before_finish = client.get(f"/api/v1/admin/runs/{run_id}").json()
+        assert detail_before_finish["active"] is True
+        assert detail_before_finish["progress"]["active_phase"] == "baseline"
+        assert detail_before_finish["progress"]["events_count"] >= 3
+        assert detail_before_finish["progress"]["latest_probe"]["task"] == "ping"
+
+        store.record_run_event(run_id, "phase_completed", "baseline phase completed", {"phase": "baseline"})
         store.finish_run(run_id=run_id, status="completed", run_result=RunResult(
             run_id=run_id,
             project="mc-netprobe-monitor",
@@ -348,3 +356,9 @@ def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:
         kinds = [item["event_kind"] for item in response.json()["items"]]
         assert "run_created" in kinds
         assert "probe_dispatched" in kinds
+
+        runs = client.get("/api/v1/admin/runs?time_range=24h").json()["items"]
+        run_summary = next(item for item in runs if item["run_id"] == run_id)
+        assert run_summary["active"] is False
+        assert run_summary["progress"]["events_count"] >= 5
+        assert run_summary["progress"]["last_event_kind"] == "run_finished"

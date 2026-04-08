@@ -1331,7 +1331,12 @@ class PanelStore:
         """
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [self._decorate_run(dict(row)) for row in rows]
+        decorated = [self._decorate_run(dict(row)) for row in rows]
+        progress_map = self._build_run_progress_map([str(run["run_id"]) for run in decorated])
+        for run in decorated:
+            run["active"] = str(run.get("status") or "") == "running"
+            run["progress"] = progress_map.get(str(run["run_id"]), _empty_run_progress())
+        return decorated
 
     def get_run_detail(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -1350,6 +1355,10 @@ class PanelStore:
                 "SELECT * FROM alert_event WHERE run_id = ? ORDER BY created_at DESC",
                 (run_id,),
             ).fetchall()
+            event_rows = conn.execute(
+                "SELECT * FROM run_event WHERE run_id = ? ORDER BY created_at ASC, id ASC",
+                (run_id,),
+            ).fetchall()
         if run_row is None:
             return None
         run = self._decorate_run(dict(run_row))
@@ -1359,6 +1368,8 @@ class PanelStore:
                 run["threshold_findings"] = threshold_findings
         run["probes"] = [self._decorate_probe_result(dict(row)) for row in probe_rows]
         run["alerts"] = [self._decorate_alert(dict(row)) for row in alert_rows]
+        run["active"] = str(run.get("status") or "") == "running"
+        run["progress"] = self._summarize_run_events([self._decorate_run_event(dict(row)) for row in event_rows])
         return run
 
     def query_alert_events(
@@ -2510,6 +2521,59 @@ class PanelStore:
         event.pop("payload_json", None)
         return event
 
+    def _build_run_progress_map(self, run_ids: list[str]) -> dict[str, dict[str, Any]]:
+        run_ids = [run_id for run_id in run_ids if run_id]
+        if not run_ids:
+            return {}
+        params: list[Any] = []
+        clause = _sql_in_clause("run_id", run_ids, params)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM run_event WHERE {clause} ORDER BY run_id ASC, created_at ASC, id ASC",
+                params,
+            ).fetchall()
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            event = self._decorate_run_event(dict(row))
+            grouped[str(event["run_id"])].append(event)
+        return {run_id: self._summarize_run_events(grouped.get(run_id, [])) for run_id in run_ids}
+
+    def _summarize_run_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        if not events:
+            return _empty_run_progress()
+        latest = events[-1]
+        active_phase: str | None = None
+        phase_started_at: str | None = None
+        latest_probe: dict[str, Any] | None = None
+        for event in events:
+            payload = event.get("payload") or {}
+            phase = payload.get("phase") if isinstance(payload, dict) else None
+            if event.get("event_kind") == "phase_started":
+                active_phase = str(phase) if phase else None
+                phase_started_at = event.get("created_at")
+            elif event.get("event_kind") == "phase_completed" and phase and phase == active_phase:
+                active_phase = None
+                phase_started_at = None
+            elif event.get("event_kind") in {"run_finished", "run_failed"}:
+                active_phase = None
+                phase_started_at = None
+            if event.get("event_kind") == "probe_dispatched" and isinstance(payload, dict):
+                latest_probe = {
+                    "task": payload.get("task"),
+                    "node_name": payload.get("node_name"),
+                    "path_label": payload.get("path_label"),
+                    "created_at": event.get("created_at"),
+                }
+        return {
+            "events_count": len(events),
+            "last_event_kind": latest.get("event_kind"),
+            "last_event_message": latest.get("message"),
+            "last_event_at": latest.get("created_at"),
+            "active_phase": active_phase,
+            "phase_started_at": phase_started_at,
+            "latest_probe": latest_probe,
+        }
+
     def _node_id_from_role(self, role: Any) -> int | None:
         if not role:
             return None
@@ -2643,3 +2707,15 @@ def _derive_control_bridge_url(base_url: str | None, control_port: Any) -> str |
 
 def _is_dangerous_control_action(action: str) -> bool:
     return action in {"start", "stop", "restart", "pause_scheduler", "resume_scheduler"}
+
+
+def _empty_run_progress() -> dict[str, Any]:
+    return {
+        "events_count": 0,
+        "last_event_kind": None,
+        "last_event_message": None,
+        "last_event_at": None,
+        "active_phase": None,
+        "phase_started_at": None,
+        "latest_probe": None,
+    }

@@ -136,6 +136,13 @@
       target: "目标",
       result: "结果",
       runEvents: "运行事件",
+      currentPhase: "当前阶段",
+      lastEvent: "最近事件",
+      eventsCount: "事件数",
+      latestProbe: "最近探针",
+      liveRunHint: "运行仍在进行中，详情会自动刷新。",
+      requestPayload: "请求快照",
+      responsePayload: "响应快照",
       currentAction: "当前动作",
       viewAction: "查看动作",
       requestedBy: "发起人",
@@ -377,6 +384,13 @@
       target: "Target",
       result: "Result",
       runEvents: "Run events",
+      currentPhase: "Current phase",
+      lastEvent: "Last event",
+      eventsCount: "Event count",
+      latestProbe: "Latest probe",
+      liveRunHint: "This run is still active. Detail will refresh automatically.",
+      requestPayload: "Request snapshot",
+      responsePayload: "Response snapshot",
       currentAction: "Current action",
       viewAction: "View action",
       requestedBy: "Requested by",
@@ -537,6 +551,7 @@
     selectedAction: null,
     selectedActionId: null,
     selectedRun: null,
+    selectedRunId: null,
     selectedRunEvents: null,
     activeTab: "overview",
     pairCommands: { primary: "", fallback: "" },
@@ -547,6 +562,7 @@
   const charts = {};
   let refreshTimer = null;
   let actionPollTimer = null;
+  let runPollTimer = null;
 
   document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
@@ -663,11 +679,11 @@
       }
     });
     document.getElementById("runsTableBody").addEventListener("click", async (event) => {
-      const button = event.target.closest("button[data-run-id]");
-      if (!button) {
+      const row = event.target.closest("[data-run-id]");
+      if (!row) {
         return;
       }
-      await loadRunDetail(button.dataset.runId);
+      await loadRunDetail(row.dataset.runId);
     });
     window.addEventListener("resize", () => Object.values(charts).forEach((chart) => chart.resize()));
   }
@@ -845,12 +861,26 @@
       const selectedActionId = resolveSelectedActionId(actions.items || []);
       state.selectedActionId = selectedActionId;
       state.selectedAction = selectedActionId ? await fetchJson(`/api/v1/admin/actions/${encodeURIComponent(selectedActionId)}`) : null;
+      const selectedRunId = resolveSelectedRunId(runs.items || []);
+      state.selectedRunId = selectedRunId;
+      if (selectedRunId) {
+        const [runDetail, runEvents] = await Promise.all([
+          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}`),
+          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}/events`),
+        ]);
+        state.selectedRun = runDetail;
+        state.selectedRunEvents = runEvents.items || [];
+      } else {
+        state.selectedRun = null;
+        state.selectedRunEvents = [];
+      }
       state.lastRefreshAt = new Date().toISOString();
       state.lastError = "";
       saveCurrentFilters();
       renderAllAnalytics();
       renderPanelStatusMeta();
       scheduleActionPolling();
+      scheduleRunPolling();
     } catch (error) {
       state.lastError = error.message || String(error);
       renderPanelStatusMeta();
@@ -867,6 +897,17 @@
       return Number(state.selectedActionId);
     }
     return Number(list[0].id);
+  }
+
+  function resolveSelectedRunId(items) {
+    const list = items || [];
+    if (!list.length) {
+      return null;
+    }
+    if (state.selectedRunId && list.some((item) => String(item.run_id) === String(state.selectedRunId))) {
+      return String(state.selectedRunId);
+    }
+    return String(list[0].run_id);
   }
 
   async function loadActionDetail(actionId, options = {}) {
@@ -924,6 +965,66 @@
     actionPollTimer = window.setTimeout(async () => {
       try {
         await loadActionDetail(Number(state.selectedAction.id), { refreshRuntime: true, silent: true });
+      } catch (error) {
+        return;
+      }
+    }, 1500);
+  }
+
+  async function loadSelectedRunDetail(runId, options = {}) {
+    if (!runId) {
+      state.selectedRun = null;
+      state.selectedRunId = null;
+      state.selectedRunEvents = [];
+      renderRuns();
+      clearRunPolling();
+      return null;
+    }
+    const silent = Boolean(options.silent);
+    try {
+      const requests = [
+        fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}`),
+        fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}/events`),
+      ];
+      if (options.refreshRunsList !== false) {
+        requests.unshift(fetchJson(`/api/v1/admin/runs?${buildRunsQuery().toString()}`));
+      }
+      const responses = await Promise.all(requests);
+      if (options.refreshRunsList !== false) {
+        state.runs = responses[0];
+        state.selectedRun = responses[1];
+        state.selectedRunEvents = responses[2].items || [];
+      } else {
+        state.selectedRun = responses[0];
+        state.selectedRunEvents = responses[1].items || [];
+      }
+      state.selectedRunId = String(runId);
+      renderRuns();
+      scheduleRunPolling();
+      return state.selectedRun;
+    } catch (error) {
+      if (!silent) {
+        showMessage(error.message || String(error), "error");
+      }
+      throw error;
+    }
+  }
+
+  function clearRunPolling() {
+    if (runPollTimer) {
+      window.clearTimeout(runPollTimer);
+      runPollTimer = null;
+    }
+  }
+
+  function scheduleRunPolling() {
+    clearRunPolling();
+    if (!state.selectedRun || state.selectedRun.status !== "running") {
+      return;
+    }
+    runPollTimer = window.setTimeout(async () => {
+      try {
+        await loadSelectedRunDetail(String(state.selectedRun.run_id), { refreshRunsList: true, silent: true });
       } catch (error) {
         return;
       }
@@ -1120,30 +1221,33 @@
       return;
     }
     body.innerHTML = items.map((run) => `
-      <tr>
+      <tr class="interactive-row ${String(run.run_id) === String(state.selectedRunId || "") ? "selected" : ""}" data-run-id="${escapeHtml(run.run_id)}">
         <td>${escapeHtml(run.run_id)}</td>
         <td>${escapeHtml(runKindLabel(run.run_kind || ""))}</td>
         <td><span class="status-pill ${escapeHtml(run.status || "")}">${escapeHtml(statusLabel(run.status || ""))}</span></td>
         <td>${escapeHtml(formatTimestamp(run.started_at))}</td>
         <td>${run.findings_count || 0}</td>
-        <td><button type="button" data-run-id="${escapeHtml(run.run_id)}">${escapeHtml(t("viewDetail"))}</button></td>
+        <td>${escapeHtml(run.progress?.active_phase || run.progress?.last_event_kind || t("viewDetail"))}</td>
       </tr>
     `).join("");
-    if (!state.selectedRun && items[0]) {
-      loadRunDetail(items[0].run_id).catch((error) => showMessage(String(error), "error"));
-    }
+    renderRunDetail();
   }
 
   async function loadRunDetail(runId) {
-    const [payload, eventsPayload] = await Promise.all([
-      fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}`),
-      fetchJson(`/api/v1/admin/runs/${encodeURIComponent(runId)}/events`),
-    ]);
-    state.selectedRun = payload;
-    state.selectedRunEvents = eventsPayload.items || [];
-    const findings = payload.threshold_findings || [];
-    const probes = payload.probes || [];
+    return loadSelectedRunDetail(runId, { refreshRunsList: true });
+  }
+
+  function renderRunDetail() {
+    const payload = state.selectedRun;
+    const findings = payload?.threshold_findings || [];
+    const probes = payload?.probes || [];
+    const progress = payload?.progress || {};
     const links = [];
+    if (!payload) {
+      document.getElementById("runDetail").innerHTML = `<div class="empty">${escapeHtml(t("noRunDetail"))}</div>`;
+      document.getElementById("runEvents").innerHTML = `<div class="empty">${escapeHtml(t("noData"))}</div>`;
+      return;
+    }
     if (payload.html_path) {
       links.push(`<a href="${escapeHtml(resultPathToHref(payload.html_path))}" target="_blank" rel="noreferrer">${escapeHtml(t("openReport"))}</a>`);
     }
@@ -1156,7 +1260,12 @@
         <div class="muted">${escapeHtml(formatTimestamp(payload.started_at))}</div>
         <div class="muted">${escapeHtml(t("runKind"))}: ${escapeHtml(runKindLabel(payload.run_kind || ""))}</div>
         <div class="muted">${escapeHtml(t("findings"))}: ${findings.length}</div>
+        <div class="muted">${escapeHtml(t("eventsCount"))}: ${escapeHtml(String(progress.events_count || 0))}</div>
+        <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
+        <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
         <div class="muted">${links.join(" | ") || escapeHtml(t("noData"))}</div>
+        ${payload.status === "running" ? `<div class="muted">${escapeHtml(t("liveRunHint"))}</div>` : ""}
       </div>
       <div class="card">
         <h3>${escapeHtml(t("findings"))}</h3>
@@ -1298,6 +1407,14 @@
         <div>
           <h3>${escapeHtml(t("logExcerpt"))}</h3>
           ${logExcerpt.length ? `<div class="command-box">${escapeHtml(logExcerpt.join("\n"))}</div>` : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
+        </div>
+        <div>
+          <h3>${escapeHtml(t("requestPayload"))}</h3>
+          ${Object.keys(action.request || {}).length ? `<div class="command-box">${escapeHtml(formatJson(action.request))}</div>` : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
+        </div>
+        <div>
+          <h3>${escapeHtml(t("responsePayload"))}</h3>
+          ${Object.keys(action.response || {}).length ? `<div class="command-box">${escapeHtml(formatJson(action.response))}</div>` : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
         </div>
         <div>
           <h3>${escapeHtml(t("runtimeSnapshot"))}</h3>
@@ -1712,6 +1829,16 @@
     };
   }
 
+  function buildRunsQuery() {
+    const filters = readFilters();
+    return buildQuery({
+      time_range: filters.timeRange,
+      run_kind: filters.runKinds,
+      path_label: filters.paths,
+      has_findings: filters.onlyAnomalies ? "true" : "",
+    });
+  }
+
   function resetFilters() {
     populateSingleSelect("filter-time-range", state.filtersMeta?.time_ranges || DEFAULT_TIME_RANGES, "24h");
     populateMultiSelect("filter-roles", state.filtersMeta?.roles || FIXED_ROLES);
@@ -1947,6 +2074,14 @@
       parts.push(`${metricLabel(name)} ${formatMetricValue(name, value)}`);
     });
     return parts.join(" | ") || t("noData");
+  }
+
+  function formatJson(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (error) {
+      return String(value);
+    }
   }
 
   function formatMetricValue(metricName, value) {

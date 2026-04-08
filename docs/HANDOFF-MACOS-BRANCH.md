@@ -349,6 +349,7 @@ curl http://127.0.0.1:9870/api/v1/health
 - Panel 完整状态检查走带 `X-Node-Token` 的 `GET /api/v1/status`
 - 宿主启停与日志检查走 `control bridge`，不要把运维字段重新塞回 probe / heartbeat 面
 - action 详情接口会返回规范化字段：`request`、`response`、`log_excerpt`、`log_location`、`runtime_snapshot`、`failure`
+- run 详情对象会附带 `progress` 摘要，包含当前阶段、最近事件和事件计数
 - 运行时调试字段优先放进 `runtime_status.environment`
 - probe 侧附加信息继续放进 `metadata`
 
