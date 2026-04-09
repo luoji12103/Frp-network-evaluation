@@ -281,6 +281,7 @@ class RunEventEnvelope(BaseModel):
     run_id: str
     event_kind: str
     message: str
+    node_id: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     summary: str | None = None
     severity: str = "info"

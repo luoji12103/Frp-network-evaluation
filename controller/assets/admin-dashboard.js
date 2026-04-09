@@ -776,6 +776,12 @@
         focusNodeCard(nodeButton.dataset.focusNode);
       }
     });
+    document.getElementById("runEvents").addEventListener("click", (event) => {
+      const nodeButton = event.target.closest("button[data-focus-node]");
+      if (nodeButton) {
+        focusNodeCard(nodeButton.dataset.focusNode);
+      }
+    });
     window.addEventListener("resize", () => Object.values(charts).forEach((chart) => chart.resize()));
   }
 
@@ -1449,6 +1455,7 @@
             <div class="muted">${escapeHtml(item.message || "")}</div>
             ${item.summary ? `<div class="muted">${escapeHtml(item.summary)}</div>` : ""}
             ${item.code ? `<div class="muted">${escapeHtml(t("failureCode"))}: ${escapeHtml(item.code)}</div>` : ""}
+            ${item.node_id ? `<div class="node-actions" style="margin-top: 8px;"><button type="button" data-focus-node="${escapeHtml(String(item.node_id))}">${escapeHtml(t("openNode"))}</button></div>` : ""}
           </div>
         `).join("")}</div>`
       : `<div class="empty">${escapeHtml(t("noData"))}</div>`;

@@ -2608,6 +2608,11 @@ class PanelStore:
 
     def _decorate_run_event(self, event: dict[str, Any]) -> dict[str, Any]:
         event["payload"] = _loads(event.get("payload_json") or "{}")
+        payload = event.get("payload") or {}
+        if isinstance(payload, dict):
+            event["node_id"] = self._node_id_from_name(payload.get("node_name"))
+        else:
+            event["node_id"] = None
         summary, severity, code = self._summarize_run_event(event)
         event["summary"] = summary
         event["severity"] = severity

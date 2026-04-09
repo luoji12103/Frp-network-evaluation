@@ -417,6 +417,9 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
         assert detail["progress"]["latest_queue_job"]["node_id"] == relay_node["id"]
         assert detail["progress"]["headline_severity"] == "warning"
         assert "never reached the node" in (detail["progress"]["recommended_step"] or "")
+        events = client.get(f"/api/v1/admin/runs/{run_id}/events").json()["items"]
+        queue_event = next(item for item in events if item["event_kind"] == "queue_timeout")
+        assert queue_event["node_id"] == relay_node["id"]
 
 
 def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tmp_path: Path) -> None:
