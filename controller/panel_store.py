@@ -25,6 +25,7 @@ from controller.panel_models import (
     NodeUpsertRequest,
     PanelSettings,
     RuntimeSummary,
+    SuggestedAction,
     SupervisorSummary,
 )
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
@@ -76,6 +77,27 @@ PATH_CATEGORY_METRICS = {
     "load": ("load_rtt_inflation_ms",),
     "system": ("cpu_usage_pct", "memory_usage_pct"),
 }
+
+
+def _suggested_action(
+    *,
+    kind: str,
+    target_kind: str,
+    label: str,
+    target_id: int | None = None,
+    run_id: str | None = None,
+    action_id: int | None = None,
+    dangerous: bool = False,
+) -> dict[str, Any]:
+    return SuggestedAction(
+        kind=kind,  # type: ignore[arg-type]
+        target_kind=target_kind,  # type: ignore[arg-type]
+        target_id=target_id,
+        run_id=run_id,
+        action_id=action_id,
+        label=label,
+        dangerous=dangerous,
+    ).model_dump(exclude_none=True)
 
 
 class PanelStore:
@@ -2484,6 +2506,11 @@ class PanelStore:
         runtime_details["operator_summary"] = operator_summary
         runtime_details["operator_severity"] = operator_severity
         runtime_details["operator_recommended_step"] = operator_recommended_step
+        runtime_details["suggested_action"] = self._node_suggested_action(
+            node_id=int(node["id"]),
+            runtime_details=runtime_details,
+            connectivity=node["connectivity"],
+        )
         runtime_summary["details"] = runtime_details
         node["status"] = connectivity_status
         for key in (
@@ -2942,6 +2969,47 @@ class PanelStore:
             return str(readonly_reason), severity, None
         return None, "info", None
 
+    def _node_suggested_action(
+        self,
+        node_id: int,
+        runtime_details: dict[str, Any],
+        connectivity: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        active_action_id = runtime_details.get("active_action_id")
+        if active_action_id:
+            return _suggested_action(
+                kind="open_action",
+                target_kind="action",
+                action_id=int(active_action_id),
+                label="View action",
+            )
+        available_actions = set(runtime_details.get("available_actions") or [])
+        level = str(connectivity.get("attention_level") or "ok")
+        if level != "ok":
+            if "sync_runtime" in available_actions:
+                return _suggested_action(
+                    kind="sync_runtime",
+                    target_kind="node",
+                    target_id=node_id,
+                    label="Sync node runtime",
+                )
+            if "tail_log" in available_actions:
+                return _suggested_action(
+                    kind="tail_log",
+                    target_kind="node",
+                    target_id=node_id,
+                    label="Tail node log",
+                )
+        readonly_reason = str(runtime_details.get("readonly_reason") or "")
+        if readonly_reason and "tail_log" in available_actions:
+            return _suggested_action(
+                kind="tail_log",
+                target_kind="node",
+                target_id=node_id,
+                label="Tail node log",
+            )
+        return None
+
     def _run_recommended_step(self, code: str | None) -> str | None:
         if not code:
             return None
@@ -2992,6 +3060,16 @@ class PanelStore:
                     "severity": "warning",
                     "summary": summary,
                     "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
+                    "suggested_action": (
+                        _suggested_action(
+                            kind="open_node",
+                            target_kind="node",
+                            target_id=int(latest_queue_job["node_id"]),
+                            label="Open node",
+                        )
+                        if latest_queue_job.get("node_id") is not None
+                        else None
+                    ),
                     "node_name": latest_queue_job.get("node_name"),
                     "node_id": latest_queue_job.get("node_id"),
                     "path_label": latest_queue_job.get("path_label"),
@@ -3012,6 +3090,16 @@ class PanelStore:
                     "severity": "info",
                     "summary": summary,
                     "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
+                    "suggested_action": (
+                        _suggested_action(
+                            kind="open_node",
+                            target_kind="node",
+                            target_id=int(latest_queue_job["node_id"]),
+                            label="Open node",
+                        )
+                        if latest_queue_job.get("node_id") is not None
+                        else None
+                    ),
                     "node_name": latest_queue_job.get("node_name"),
                     "node_id": latest_queue_job.get("node_id"),
                     "path_label": latest_queue_job.get("path_label"),
@@ -3033,6 +3121,16 @@ class PanelStore:
                     + "."
                 ),
                 "recommended_step": "Wait for the probe result or inspect node diagnostics if the same probe remains the latest event for too long.",
+                "suggested_action": (
+                    _suggested_action(
+                        kind="open_node",
+                        target_kind="node",
+                        target_id=int(latest_probe["node_id"]),
+                        label="Open node",
+                    )
+                    if latest_probe.get("node_id") is not None
+                    else None
+                ),
                 "node_name": latest_probe.get("node_name"),
                 "node_id": latest_probe.get("node_id"),
                 "path_label": latest_probe.get("path_label"),

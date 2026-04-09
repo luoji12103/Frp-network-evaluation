@@ -661,6 +661,10 @@
       setActiveTab(button.dataset.tab);
     });
     document.getElementById("nodeGrid").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const detailButton = event.target.closest("button[data-action-detail]");
       if (detailButton) {
         await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
@@ -685,6 +689,10 @@
       }
     });
     document.getElementById("panelRuntimeCard").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const detailButton = event.target.closest("button[data-action-detail]");
       if (detailButton) {
         await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
@@ -697,6 +705,10 @@
       await queuePanelAction(button.dataset.panelAction);
     });
     document.getElementById("operationsFocus").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const runButton = event.target.closest("button[data-open-run]");
       if (runButton) {
         state.selectedRunId = String(runButton.dataset.openRun);
@@ -753,6 +765,10 @@
       await loadRunDetail(row.dataset.runId);
     });
     document.getElementById("actionDetail").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const runButton = event.target.closest("button[data-open-run]");
       if (runButton) {
         state.selectedRunId = String(runButton.dataset.openRun);
@@ -770,13 +786,21 @@
         focusPanelRuntimeCard();
       }
     });
-    document.getElementById("runDetail").addEventListener("click", (event) => {
+    document.getElementById("runDetail").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const nodeButton = event.target.closest("button[data-focus-node]");
       if (nodeButton) {
         focusNodeCard(nodeButton.dataset.focusNode);
       }
     });
-    document.getElementById("runEvents").addEventListener("click", (event) => {
+    document.getElementById("runEvents").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
+        return;
+      }
       const nodeButton = event.target.closest("button[data-focus-node]");
       if (nodeButton) {
         focusNodeCard(nodeButton.dataset.focusNode);
@@ -1100,6 +1124,100 @@
     return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
+  function suggestedActionLabel(action) {
+    if (!action) {
+      return "";
+    }
+    switch (action.kind) {
+      case "open_node":
+        return t("openNode");
+      case "open_panel":
+        return t("openPanel");
+      case "open_run":
+        return t("openRun");
+      case "open_action":
+        return t("viewAction");
+      case "sync_runtime":
+        return t("syncRuntime");
+      case "tail_log":
+        return t("tailLog");
+      default:
+        return action.label || t("viewDetail");
+    }
+  }
+
+  function renderSuggestedActionButton(action, extraStyle = "") {
+    if (!action || !action.kind) {
+      return "";
+    }
+    const attrs = [
+      `data-suggested-kind="${escapeHtml(String(action.kind))}"`,
+      `data-suggested-target-kind="${escapeHtml(String(action.target_kind || ""))}"`,
+    ];
+    if (action.target_id !== undefined && action.target_id !== null) {
+      attrs.push(`data-suggested-target-id="${escapeHtml(String(action.target_id))}"`);
+    }
+    if (action.run_id) {
+      attrs.push(`data-suggested-run-id="${escapeHtml(String(action.run_id))}"`);
+    }
+    if (action.action_id !== undefined && action.action_id !== null) {
+      attrs.push(`data-suggested-action-id="${escapeHtml(String(action.action_id))}"`);
+    }
+    const className = action.dangerous ? "danger" : "";
+    const style = extraStyle ? ` style="${escapeHtml(extraStyle)}"` : "";
+    return `<button type="button" class="${escapeHtml(className)}" ${attrs.join(" ")}${style}>${escapeHtml(suggestedActionLabel(action))}</button>`;
+  }
+
+  async function invokeSuggestedActionFromButton(button) {
+    if (!button) {
+      return false;
+    }
+    const kind = button.dataset.suggestedKind;
+    const targetKind = button.dataset.suggestedTargetKind;
+    const targetId = button.dataset.suggestedTargetId ? Number(button.dataset.suggestedTargetId) : null;
+    const runId = button.dataset.suggestedRunId || null;
+    const actionId = button.dataset.suggestedActionId ? Number(button.dataset.suggestedActionId) : null;
+    if (kind === "open_node" && targetId) {
+      focusNodeCard(targetId);
+      return true;
+    }
+    if (kind === "open_panel") {
+      focusPanelRuntimeCard();
+      return true;
+    }
+    if (kind === "open_run" && runId) {
+      state.selectedRunId = String(runId);
+      setActiveTab("runs");
+      await loadSelectedRunDetail(String(runId), { refreshRunsList: true, silent: true }).catch(() => undefined);
+      return true;
+    }
+    if (kind === "open_action" && actionId) {
+      await loadActionDetail(Number(actionId), { refreshRuntime: true, silent: true }).catch(() => undefined);
+      return true;
+    }
+    if (kind === "sync_runtime") {
+      if (targetKind === "panel") {
+        await queuePanelAction("sync_runtime");
+        return true;
+      }
+      if (targetKind === "node" && targetId) {
+        await submitControlAction(`/api/v1/admin/nodes/${targetId}/actions`, "sync_runtime");
+        return true;
+      }
+    }
+    if (kind === "tail_log") {
+      if (targetKind === "panel") {
+        await queuePanelAction("tail_log");
+        return true;
+      }
+      if (targetKind === "node" && targetId) {
+        await submitControlAction(`/api/v1/admin/nodes/${targetId}/actions`, "tail_log");
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function loadSelectedRunDetail(runId, options = {}) {
     if (!runId) {
       state.selectedRun = null;
@@ -1389,6 +1507,7 @@
     const latestQueueJob = progress.latest_queue_job || {};
     const currentBlocker = progress.current_blocker || {};
     const latestProbe = progress.latest_probe || {};
+    const blockerSuggestedAction = currentBlocker.suggested_action || null;
     const focusNodeId = currentBlocker.node_id || latestQueueJob.node_id || latestProbe.node_id || null;
     const links = [];
     if (!payload) {
@@ -1413,7 +1532,7 @@
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
         ${progress.headline ? `<div class="muted">${escapeHtml(t("result"))}: ${progress.headline_severity ? `<span class="status-pill ${escapeHtml(progress.headline_severity)}">${escapeHtml(severityLabel(progress.headline_severity))}</span> ` : ""}${escapeHtml(progress.headline)}</div>` : ""}
         <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(latestProbe.task || latestProbe.path_label || t("noData"))}</div>
-        ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}${currentBlocker.node_id ? ` <button type="button" data-focus-node="${escapeHtml(String(currentBlocker.node_id))}">${escapeHtml(t("openNode"))}</button>` : ""}</div>` : ""}
+        ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}</div>` : ""}
         ${latestQueueJob.job_id ? `
           <div class="muted">${escapeHtml(t("latestQueueJob"))}: ${escapeHtml([
             latestQueueJob.task || t("noData"),
@@ -1426,9 +1545,9 @@
         ` : ""}
         ${progress.last_failure_code ? `<div class="muted">${escapeHtml(t("failureCode"))}: ${escapeHtml(progress.last_failure_code)}</div>` : ""}
         ${progress.last_failure_message ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml(progress.last_failure_message)}</div>` : ""}
-        ${progress.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(progress.recommended_step)}</div>` : ""}
+        ${!blockerSuggestedAction && progress.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(progress.recommended_step)}</div>` : ""}
         <div class="muted">${links.join(" | ") || escapeHtml(t("noData"))}</div>
-        ${focusNodeId ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-focus-node="${escapeHtml(String(focusNodeId))}">${escapeHtml(t("openNode"))}</button></div>` : ""}
+        ${blockerSuggestedAction ? `<div class="node-actions" style="margin-top: 10px;">${renderSuggestedActionButton(blockerSuggestedAction)}</div>` : focusNodeId ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-focus-node="${escapeHtml(String(focusNodeId))}">${escapeHtml(t("openNode"))}</button></div>` : ""}
         ${payload.status === "running" ? `<div class="muted">${escapeHtml(t("liveRunHint"))}</div>` : ""}
       </div>
       <div class="card">
@@ -1485,6 +1604,7 @@
     const operatorSummary = details.operator_summary || "";
     const operatorSeverity = details.operator_severity || "";
     const operatorRecommendedStep = details.operator_recommended_step || "";
+    const suggestedAction = details.suggested_action || null;
     const availableActions = new Set(details.available_actions || []);
     const activeActionId = details.active_action_id || null;
     const activeActionSummary = details.active_action_summary || "";
@@ -1526,11 +1646,12 @@
         <div class="muted">${escapeHtml(paused ? t("schedulerPaused") : t("schedulerRunning"))}</div>
         <div class="muted">${escapeHtml(formatTimestamp(details.last_loop_at || runtime.checked_at))}</div>
         ${operatorSummary ? `<div class="muted">${escapeHtml(t("result"))}: ${operatorSeverity ? `<span class="status-pill ${escapeHtml(operatorSeverity)}">${escapeHtml(severityLabel(operatorSeverity))}</span> ` : ""}${escapeHtml(operatorSummary)}</div>` : ""}
-        ${operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
+        ${!suggestedAction && operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
         ${details.readonly_reason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(details.readonly_reason)}</div>` : ""}
-        ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
+        ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))}${suggestedAction?.kind === "open_action" ? "" : ` <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button>`}</div>` : ""}
         ${!supervisor.control_available && details.control_mode === "native-readonly" ? `<div class="muted">${escapeHtml(t("panelReadonlyHint"))}</div>` : ""}
         <div class="node-actions" style="margin-top: 12px;">
+          ${suggestedAction ? renderSuggestedActionButton(suggestedAction) : ""}
           ${buttons.join("")}
         </div>
       </div>
@@ -1549,20 +1670,22 @@
       root.innerHTML = `<div class="empty">${escapeHtml(t("noAttention"))}</div>`;
       return;
     }
-    root.innerHTML = `
+      root.innerHTML = `
       <div class="muted">${escapeHtml(t("attentionSummary"))}: ${escapeHtml(String(summary.total || items.length))}</div>
       ${items.map((item) => {
         const buttons = [];
-        if (item.target_kind === "node" && item.target_id) {
+        if (item.suggested_action) {
+          buttons.push(renderSuggestedActionButton(item.suggested_action));
+        } else if (item.target_kind === "node" && item.target_id) {
           buttons.push(`<button type="button" data-focus-node="${escapeHtml(String(item.target_id))}">${escapeHtml(t("openNode"))}</button>`);
         }
-        if (item.target_kind === "panel") {
+        if (!item.suggested_action && item.target_kind === "panel") {
           buttons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
         }
-        if (item.run_id) {
+        if (!item.suggested_action && item.run_id) {
           buttons.push(`<button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button>`);
         }
-        if (item.action_id) {
+        if (!item.suggested_action && item.action_id) {
           buttons.push(`<button type="button" data-action-detail="${escapeHtml(String(item.action_id))}">${escapeHtml(t("viewAction"))}</button>`);
         }
         return `
@@ -1573,7 +1696,7 @@
           </div>
           <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
           ${item.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
-          ${item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
+          ${!item.suggested_action && item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
           ${buttons.length ? `<div class="node-actions" style="margin-top: 10px;">${buttons.join("")}</div>` : ""}
         </div>
       `;
@@ -1625,14 +1748,17 @@
     const targetRuntimeDetails = targetRuntime.details || {};
     const targetSupervisor = targetSnapshot.supervisor || {};
     const targetConnectivity = targetSnapshot.connectivity || {};
+    const targetSuggestedAction = targetRuntimeDetails.suggested_action || targetSnapshot.suggested_action || null;
     const targetButtons = [];
-    if (targetSnapshot.target_kind === "node" && targetSnapshot.target_id) {
+    if (targetSuggestedAction) {
+      targetButtons.push(renderSuggestedActionButton(targetSuggestedAction));
+    } else if (targetSnapshot.target_kind === "node" && targetSnapshot.target_id) {
       targetButtons.push(`<button type="button" data-focus-node="${escapeHtml(String(targetSnapshot.target_id))}">${escapeHtml(t("openNode"))}</button>`);
     }
-    if (targetSnapshot.target_kind === "panel") {
+    if (!targetSuggestedAction && targetSnapshot.target_kind === "panel") {
       targetButtons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
     }
-    if (targetSnapshot.active_run_id) {
+    if (!targetSuggestedAction && targetSnapshot.active_run_id) {
       targetButtons.push(`<button type="button" data-open-run="${escapeHtml(String(targetSnapshot.active_run_id))}">${escapeHtml(t("openRun"))}</button>`);
     }
     root.innerHTML = `
@@ -1658,7 +1784,7 @@
           ${targetConnectivity.summary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(targetConnectivity.summary)}</div>` : ""}
           ${targetConnectivity.diagnostic_code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(targetConnectivity.diagnostic_code)}</div>` : ""}
           ${targetRuntimeDetails.operator_summary || targetSnapshot.operator_summary ? `<div class="muted">${escapeHtml(t("result"))}: ${(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity) ? `<span class="status-pill ${escapeHtml(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity)}">${escapeHtml(severityLabel(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity))}</span> ` : ""}${escapeHtml(targetRuntimeDetails.operator_summary || targetSnapshot.operator_summary)}</div>` : ""}
-          ${targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step)}</div>` : ""}
+          ${!targetSuggestedAction && (targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step) ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step)}</div>` : ""}
           ${targetButtons.length ? `<div class="node-actions" style="margin-top: 10px;">${targetButtons.join("")}</div>` : ""}
         </div>
         <div>
@@ -1736,6 +1862,7 @@
       const operatorSummary = runtimeDetails.operator_summary || "";
       const operatorSeverity = runtimeDetails.operator_severity || "";
       const operatorRecommendedStep = runtimeDetails.operator_recommended_step || "";
+      const suggestedAction = runtimeDetails.suggested_action || null;
       const availableActions = new Set(runtimeDetails.available_actions || []);
       const activeActionId = runtimeDetails.active_action_id || null;
       const activeActionSummary = runtimeDetails.active_action_summary || "";
@@ -1784,12 +1911,13 @@
           ${diagnosticCode ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(diagnosticCode)}</div>` : ""}
           ${connectivitySummary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(connectivitySummary)}</div>` : ""}
           ${operatorSummary ? `<div class="muted">${escapeHtml(t("result"))}: ${operatorSeverity ? `<span class="status-pill ${escapeHtml(operatorSeverity)}">${escapeHtml(severityLabel(operatorSeverity))}</span> ` : ""}${escapeHtml(operatorSummary)}</div>` : ""}
-          ${operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
+          ${!suggestedAction && operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
           ${runAttention?.run_id ? `<div class="muted">${escapeHtml(t("activeRunNow"))}: ${runAttention.severity ? `<span class="status-pill ${escapeHtml(runAttention.severity)}">${escapeHtml(severityLabel(runAttention.severity))}</span> ` : ""}${escapeHtml(runAttention.summary || runAttention.run_id)} <button type="button" data-open-run="${escapeHtml(String(runAttention.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
           ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}
-          ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
+          ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))}${suggestedAction?.kind === "open_action" ? "" : ` <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button>`}</div>` : ""}
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}
           <div class="node-actions">
+            ${suggestedAction ? renderSuggestedActionButton(suggestedAction) : ""}
             <button type="button" data-action="save-node" class="primary">${escapeHtml(t("saveNode"))}</button>
             <button type="button" data-action="pair-node">${escapeHtml(t("generatePairCommand"))}</button>
             ${controlButtons.join("")}

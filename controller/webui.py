@@ -44,6 +44,7 @@ from controller.panel_models import (
     PublicDashboardSnapshot,
     BridgeActionResponse,
     RunEventEnvelope,
+    SuggestedAction,
     SUPPORTED_AGENT_PROTOCOL_VERSION,
 )
 from controller.panel_orchestrator import PanelOrchestrator
@@ -57,6 +58,27 @@ PUBLIC_TEMPLATE_PATH = Path(__file__).with_name("public_webui_template.html")
 LOGIN_TEMPLATE_PATH = Path(__file__).with_name("login_template.html")
 ASSETS_DIR = Path(__file__).with_name("assets")
 ADMIN_COOKIE_NAME = "mc_netprobe_admin"
+
+
+def _suggested_action(
+    *,
+    kind: str,
+    target_kind: str,
+    label: str,
+    target_id: int | None = None,
+    run_id: str | None = None,
+    action_id: int | None = None,
+    dangerous: bool = False,
+) -> dict[str, Any]:
+    return SuggestedAction(
+        kind=kind,  # type: ignore[arg-type]
+        target_kind=target_kind,  # type: ignore[arg-type]
+        target_id=target_id,
+        run_id=run_id,
+        action_id=action_id,
+        label=label,
+        dangerous=dangerous,
+    ).model_dump(exclude_none=True)
 
 
 class PanelRuntime:
@@ -223,6 +245,10 @@ class PanelRuntime:
         details["operator_summary"] = operator_summary
         details["operator_severity"] = operator_severity
         details["operator_recommended_step"] = operator_recommended_step
+        details["suggested_action"] = self._panel_suggested_action(
+            details=details,
+            last_error=self._last_loop_error or (bridge_runtime.get("last_error") if self._panel_bridge_url else None),
+        )
         return {
             "runtime": {
                 "state": "running",
@@ -266,6 +292,7 @@ class PanelRuntime:
                     "operator_summary": runtime_details.get("operator_summary"),
                     "operator_severity": runtime_details.get("operator_severity"),
                     "operator_recommended_step": runtime_details.get("operator_recommended_step"),
+                    "suggested_action": runtime_details.get("suggested_action"),
                     "active_run_id": runtime_details.get("active_run_id"),
                     "active_action_id": runtime_details.get("active_action_id"),
                 }
@@ -284,6 +311,7 @@ class PanelRuntime:
                 "operator_summary": details.get("operator_summary"),
                 "operator_severity": details.get("operator_severity"),
                 "operator_recommended_step": details.get("operator_recommended_step"),
+                "suggested_action": details.get("suggested_action"),
                 "active_run_id": None,
                 "active_action_id": details.get("active_action_id"),
             }
@@ -299,6 +327,7 @@ class PanelRuntime:
             "operator_summary": None,
             "operator_severity": "info",
             "operator_recommended_step": None,
+            "suggested_action": None,
             "active_run_id": None,
             "active_action_id": None,
         }
@@ -341,6 +370,12 @@ class PanelRuntime:
             "severity": severity,
             "node_id": target_node_id,
             "recommended_step": current_blocker.get("recommended_step") or progress.get("recommended_step"),
+            "suggested_action": _suggested_action(
+                kind="open_run",
+                target_kind="run",
+                run_id=str(active_run.get("run_id") or ""),
+                label="View run",
+            ),
         }
         for node in nodes:
             if target_node_id and int(node.get("id") or 0) != int(target_node_id):
@@ -355,6 +390,7 @@ class PanelRuntime:
             runtime_details["operator_summary"] = summary
             runtime_details["operator_severity"] = severity
             runtime_details["operator_recommended_step"] = attention_payload.get("recommended_step")
+            runtime_details["suggested_action"] = attention_payload.get("suggested_action")
             node.setdefault("runtime", {})["details"] = runtime_details
             break
         return nodes
@@ -572,6 +608,31 @@ class PanelRuntime:
             return "Scheduler is paused.", "info", "Resume the scheduler when you are ready to restart automatic monitoring."
         return None, "info", None
 
+    def _panel_suggested_action(self, details: dict[str, Any], last_error: str | None) -> dict[str, Any] | None:
+        active_action_id = details.get("active_action_id")
+        if active_action_id:
+            return _suggested_action(
+                kind="open_action",
+                target_kind="action",
+                action_id=int(active_action_id),
+                label="View action",
+            )
+        available_actions = set(details.get("available_actions") or [])
+        if last_error and "sync_runtime" in available_actions:
+            return _suggested_action(
+                kind="sync_runtime",
+                target_kind="panel",
+                label="Sync panel runtime",
+            )
+        readonly_reason = str(details.get("readonly_reason") or "")
+        if readonly_reason and "tail_log" in available_actions:
+            return _suggested_action(
+                kind="tail_log",
+                target_kind="panel",
+                label="Tail panel log",
+            )
+        return None
+
     def _active_action_summary(self, action: dict[str, Any] | None) -> str | None:
         if not action:
             return None
@@ -612,6 +673,12 @@ class PanelRuntime:
                     "code": run_failure_code,
                     "target_kind": "run",
                     "target_name": active_run.get("run_id"),
+                    "suggested_action": _suggested_action(
+                        kind="open_run",
+                        target_kind="run",
+                        run_id=str(active_run.get("run_id") or ""),
+                        label="View run",
+                    ),
                     "recommended_step": current_blocker.get("recommended_step")
                     or progress.get("recommended_step")
                     or "Open the run detail to follow progress before starting another monitoring run.",
@@ -634,6 +701,21 @@ class PanelRuntime:
                         "code": run_failure_code or current_blocker.get("status"),
                         "target_kind": "run",
                         "target_name": active_run.get("run_id"),
+                        "suggested_action": (
+                            _suggested_action(
+                                kind="open_node",
+                                target_kind="node",
+                                target_id=int(current_blocker["node_id"]),
+                                label="Open node",
+                            )
+                            if current_blocker.get("node_id") is not None
+                            else _suggested_action(
+                                kind="open_run",
+                                target_kind="run",
+                                run_id=str(active_run.get("run_id") or ""),
+                                label="View run",
+                            )
+                        ),
                         "recommended_step": current_blocker.get("recommended_step")
                         or progress.get("recommended_step")
                         or "Open the run detail and inspect the queued job timeline before rerunning the phase.",
@@ -654,6 +736,12 @@ class PanelRuntime:
                     "target_kind": "panel",
                     "target_name": "panel",
                     "action_id": panel_runtime_details.get("active_action_id"),
+                    "suggested_action": _suggested_action(
+                        kind="open_action",
+                        target_kind="action",
+                        action_id=int(panel_runtime_details["active_action_id"]),
+                        label="View action",
+                    ),
                     "recommended_step": "Open the action detail to follow progress before issuing another panel action.",
                 }
             )
@@ -667,6 +755,8 @@ class PanelRuntime:
                     "code": panel_runtime_details.get("bridge_error_code") or "panel_runtime_error",
                     "target_kind": "panel",
                     "target_name": "panel",
+                    "suggested_action": panel_runtime_details.get("suggested_action")
+                    or _suggested_action(kind="open_panel", target_kind="panel", label="Open panel"),
                     "recommended_step": "Sync runtime or inspect panel logs before issuing more control actions.",
                 }
             )
@@ -688,6 +778,12 @@ class PanelRuntime:
                         "target_id": node.get("id"),
                         "target_name": node.get("node_name"),
                         "action_id": runtime_details.get("active_action_id"),
+                        "suggested_action": _suggested_action(
+                            kind="open_action",
+                            target_kind="action",
+                            action_id=int(runtime_details["active_action_id"]),
+                            label="View action",
+                        ),
                         "recommended_step": "Open the action detail to follow progress before issuing another lifecycle action for this node.",
                     }
                 )
@@ -702,6 +798,13 @@ class PanelRuntime:
                         "target_kind": "node",
                         "target_id": node.get("id"),
                         "target_name": node.get("node_name"),
+                        "suggested_action": runtime_details.get("suggested_action")
+                        or _suggested_action(
+                            kind="open_node",
+                            target_kind="node",
+                            target_id=int(node["id"]),
+                            label="Open node",
+                        ),
                         "recommended_step": connectivity.get("recommended_step"),
                     }
                 )
@@ -717,6 +820,12 @@ class PanelRuntime:
                         "target_kind": "node",
                         "target_id": node.get("id"),
                         "target_name": node.get("node_name"),
+                        "suggested_action": _suggested_action(
+                            kind="open_node",
+                            target_kind="node",
+                            target_id=int(node["id"]),
+                            label="Open node",
+                        ),
                         "recommended_step": "Wait for the control bridge to recover or restart the host-managed bridge before issuing lifecycle actions.",
                     }
                 )

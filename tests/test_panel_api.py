@@ -396,23 +396,29 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
         assert run_item["severity"] == "warning"
         assert run_item["code"] == "queue_not_leased"
         assert "queue job 42 pending" in run_item["summary"]
+        assert run_item["suggested_action"]["kind"] == "open_run"
+        assert run_item["suggested_action"]["run_id"] == run_id
 
         queue_item = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "run-queue")
         assert queue_item["run_id"] == run_id
         assert queue_item["code"] == "queue_not_leased"
         assert "Job 42" in queue_item["summary"]
+        assert queue_item["suggested_action"]["kind"] == "open_node"
 
         relay_node = next(item for item in runtime_payload["nodes"] if item["node_name"] == "relay-1")
         assert relay_node["run_attention"]["run_id"] == run_id
         assert relay_node["run_attention"]["node_id"] == relay_node["id"]
+        assert relay_node["run_attention"]["suggested_action"]["kind"] == "open_run"
         assert "job 42" in relay_node["run_attention"]["summary"]
         assert relay_node["runtime"]["details"]["active_run_id"] == run_id
         assert "job 42" in (relay_node["runtime"]["details"]["operator_summary"] or "")
+        assert relay_node["runtime"]["details"]["suggested_action"]["kind"] == "open_run"
         assert "never reached the node" in (relay_node["run_attention"]["recommended_step"] or "")
 
         detail = client.get(f"/api/v1/admin/runs/{run_id}").json()
         assert detail["progress"]["current_blocker"]["code"] == "queue_not_leased"
         assert detail["progress"]["current_blocker"]["kind"] == "queue"
+        assert detail["progress"]["current_blocker"]["suggested_action"]["kind"] == "open_node"
         assert detail["progress"]["current_blocker"]["node_id"] == relay_node["id"]
         assert detail["progress"]["latest_queue_job"]["node_id"] == relay_node["id"]
         assert detail["progress"]["headline_severity"] == "warning"
@@ -480,8 +486,10 @@ def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tm
         relay_node = next(item for item in runtime_payload["nodes"] if item["node_name"] == "relay-1")
         assert "run_attention" in relay_node
         assert relay_node["run_attention"]["node_id"] == relay_node["id"]
+        assert relay_node["run_attention"]["suggested_action"]["kind"] == "open_run"
         assert "last touched ping" in relay_node["run_attention"]["summary"]
         assert "last touched ping" in (relay_node["runtime"]["details"]["operator_summary"] or "")
+        assert relay_node["runtime"]["details"]["suggested_action"]["kind"] == "open_run"
         assert relay_node["run_attention"]["recommended_step"] is None
 
         detail = client.get(f"/api/v1/admin/runs/{run_id}").json()

@@ -185,6 +185,8 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
             "stop",
         ]
         assert "pull checks are failing" in (node_runtime["runtime"]["details"]["operator_summary"] or "")
+        assert node_runtime["runtime"]["details"]["suggested_action"]["kind"] == "sync_runtime"
+        assert node_runtime["runtime"]["details"]["suggested_action"]["target_id"] == node["id"]
 
         queued = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
         assert queued.status_code == 200
@@ -256,10 +258,14 @@ def test_node_actions_are_serialized_per_target_and_conflicts_include_active_act
         assert node_payload["runtime"]["details"]["active_action_id"] == first_action_id
         assert "sync_runtime" in (node_payload["runtime"]["details"]["active_action_summary"] or "")
         assert "sync_runtime" in (node_payload["runtime"]["details"]["operator_summary"] or "")
+        assert node_payload["runtime"]["details"]["suggested_action"]["kind"] == "open_action"
+        assert node_payload["runtime"]["details"]["suggested_action"]["action_id"] == first_action_id
         runtime_payload = client.get("/api/v1/admin/runtime").json()
         node_attention = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "node-action")
         assert node_attention["action_id"] == first_action_id
         assert "sync_runtime" in (node_attention["summary"] or "")
+        assert node_attention["suggested_action"]["kind"] == "open_action"
+        assert node_attention["suggested_action"]["action_id"] == first_action_id
 
 
 def test_panel_actions_require_confirmation_and_update_scheduler(tmp_path: Path) -> None:
@@ -307,10 +313,14 @@ def test_panel_actions_are_serialized_per_target(tmp_path: Path) -> None:
         runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
         assert runtime_payload["runtime"]["details"]["active_action_id"] == first_action_id
         assert "sync_runtime" in (runtime_payload["runtime"]["details"]["active_action_summary"] or "")
+        assert runtime_payload["runtime"]["details"]["suggested_action"]["kind"] == "open_action"
+        assert runtime_payload["runtime"]["details"]["suggested_action"]["action_id"] == first_action_id
         attention_payload = client.get("/api/v1/admin/runtime").json()["attention"]["items"]
         panel_attention = next(item for item in attention_payload if item["kind"] == "panel-action")
         assert panel_attention["action_id"] == first_action_id
         assert "sync_runtime" in (panel_attention["summary"] or "")
+        assert panel_attention["suggested_action"]["kind"] == "open_action"
+        assert panel_attention["suggested_action"]["action_id"] == first_action_id
 
 
 def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monkeypatch) -> None:
@@ -332,6 +342,7 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
             "tail_log",
         ]
         assert "read-only runtime" in (runtime_payload["runtime"]["details"]["operator_summary"] or "")
+        assert runtime_payload["runtime"]["details"]["suggested_action"]["kind"] == "tail_log"
         assert runtime_payload["supervisor"]["control_available"] is False
         assert runtime_payload["supervisor"]["supervisor_state"] == "native-readonly"
         assert runtime_payload["supervisor"]["process_state"] == "running"
@@ -381,6 +392,7 @@ def test_panel_bridge_actions_are_hidden_when_bridge_runtime_is_unreachable(tmp_
         ]
         assert "unreachable" in (runtime_payload["runtime"]["details"]["readonly_reason"] or "")
         assert "could not connect" in (runtime_payload["runtime"]["details"]["operator_summary"] or "")
+        assert runtime_payload["runtime"]["details"]["suggested_action"]["kind"] == "sync_runtime"
 
         restart = client.post("/api/v1/admin/panel/actions", json={"action": "restart", "actor": "admin-ui"})
         assert restart.status_code == 409

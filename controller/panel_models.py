@@ -17,6 +17,8 @@ RunKind = Literal["system", "baseline", "capacity", "full"]
 ChannelStateValue = Literal["unknown", "ok", "error"]
 NodeSummaryStatus = Literal["online", "push-only", "pull-only", "offline", "unpaired", "disabled"]
 ControlTargetKind = Literal["node", "panel"]
+SuggestedTargetKind = Literal["node", "panel", "run", "action"]
+SuggestedActionKind = Literal["open_node", "open_panel", "open_run", "open_action", "control_action", "sync_runtime", "tail_log"]
 ControlActionName = Literal["status", "start", "stop", "restart", "tail_log", "sync_runtime", "pause_scheduler", "resume_scheduler"]
 ControlActionStatus = Literal["queued", "running", "completed", "failed", "canceled"]
 
@@ -228,6 +230,18 @@ class AdminControlActionRequest(BaseModel):
     actor: str = "admin-ui"
     tail_lines: int | None = Field(default=None, ge=1, le=200)
     confirmation_token: str | None = None
+
+
+class SuggestedAction(BaseModel):
+    """Structured CTA returned by admin runtime endpoints."""
+
+    kind: SuggestedActionKind
+    target_kind: SuggestedTargetKind
+    target_id: int | None = None
+    run_id: str | None = None
+    action_id: int | None = None
+    label: str
+    dangerous: bool = False
 
 
 class ControlActionEnvelope(BaseModel):
