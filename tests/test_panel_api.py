@@ -360,6 +360,15 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
     with build_client(tmp_path) as client:
         login_admin(client)
         store = client.app.state.runtime.store
+        store.upsert_node(
+            NodeUpsertRequest(
+                node_name="relay-1",
+                role="relay",
+                runtime_mode="docker-linux",
+                configured_pull_url="http://relay.example:9870",
+                enabled=True,
+            )
+        )
         run_id = store.create_run("baseline", "test")
         store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
         store.record_run_event(
@@ -392,6 +401,11 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
         assert queue_item["run_id"] == run_id
         assert queue_item["code"] == "queue_not_leased"
         assert "Job 42" in queue_item["summary"]
+
+        relay_node = next(item for item in runtime_payload["nodes"] if item["node_name"] == "relay-1")
+        assert relay_node["run_attention"]["run_id"] == run_id
+        assert "job 42" in relay_node["run_attention"]["summary"]
+        assert relay_node["runtime"]["details"]["active_run_id"] == run_id
 
 
 def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> None:

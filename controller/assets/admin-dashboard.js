@@ -1616,6 +1616,7 @@
       const runtime = node.runtime || {};
       const supervisor = node.supervisor || {};
       const runtimeDetails = runtime.details || {};
+      const runAttention = node.run_attention || null;
       const availableActions = new Set(runtimeDetails.available_actions || []);
       const activeActionId = runtimeDetails.active_action_id || null;
       const activeActionSummary = runtimeDetails.active_action_summary || "";
@@ -1665,6 +1666,7 @@
           ${diagnosticCode ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(diagnosticCode)}</div>` : ""}
           ${connectivitySummary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(connectivitySummary)}</div>` : ""}
           ${recommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(recommendedStep)}</div>` : ""}
+          ${runAttention?.run_id ? `<div class="muted">${escapeHtml(t("activeRunNow"))}: ${escapeHtml(runAttention.summary || runAttention.run_id)} <button type="button" data-open-run="${escapeHtml(String(runAttention.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
           ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}
           ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}

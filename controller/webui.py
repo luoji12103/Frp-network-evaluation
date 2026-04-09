@@ -228,14 +228,52 @@ class PanelRuntime:
 
     def admin_runtime_payload(self) -> dict[str, Any]:
         panel = self.runtime_snapshot()
-        nodes = self.store.list_nodes()
         active_run = self.store.get_active_run()
+        nodes = self._attach_run_attention(self.store.list_nodes(), active_run=active_run)
         return {
             "panel": panel,
             "nodes": nodes,
             "active_run": active_run,
             "attention": self._build_attention_payload(panel=panel, nodes=nodes, active_run=active_run),
         }
+
+    def _attach_run_attention(self, nodes: list[dict[str, Any]], active_run: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if active_run is None:
+            return nodes
+        progress = active_run.get("progress") or {}
+        latest_queue_job = progress.get("latest_queue_job") or {}
+        latest_probe = progress.get("latest_probe") or {}
+        target_node_name = latest_queue_job.get("node_name") or latest_probe.get("node_name")
+        if not target_node_name:
+            return nodes
+        if latest_queue_job.get("job_id"):
+            summary = (
+                f"Active run is waiting on queued {latest_queue_job.get('task') or 'task'} "
+                f"job {latest_queue_job.get('job_id')} ({latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'})"
+            )
+        else:
+            summary = (
+                f"Active run last touched {latest_probe.get('task') or 'probe'}"
+                + (f" on {latest_probe.get('path_label')}" if latest_probe.get("path_label") else "")
+            )
+        severity = "warning" if progress.get("last_failure_code") else "info"
+        attention_payload = {
+            "run_id": active_run.get("run_id"),
+            "summary": summary,
+            "severity": severity,
+            "recommended_step": progress.get("recommended_step"),
+        }
+        for node in nodes:
+            if str(node.get("node_name") or "") != str(target_node_name):
+                continue
+            node["run_attention"] = attention_payload
+            runtime_details = dict((node.get("runtime") or {}).get("details") or {})
+            runtime_details["active_run_id"] = active_run.get("run_id")
+            runtime_details["active_run_summary"] = summary
+            runtime_details["active_run_severity"] = severity
+            node.setdefault("runtime", {})["details"] = runtime_details
+            break
+        return nodes
 
     def refresh_runtime_snapshots(self, force: bool = True) -> None:
         self._refresh_runtime_state(force=force)
