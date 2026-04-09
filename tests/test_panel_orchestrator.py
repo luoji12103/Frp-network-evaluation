@@ -170,7 +170,7 @@ def test_dispatch_probe_records_pull_error_code_and_queue_fallback(monkeypatch, 
     def fake_run_job(node, job_id, run_id, task, payload):
         raise AgentHttpError("timeout", "request to http://relay.example/api/v1/jobs/run timed out")
 
-    def fake_dispatch_via_queue(node, run_id, task, payload, timeout_sec):
+    def fake_dispatch_via_queue(node, run_id, task, payload, timeout_sec, event_run_id=None, path_label=None):
         return ProbeResult(
             name=task,
             source=node["role"],
@@ -209,3 +209,80 @@ def test_dispatch_probe_records_pull_error_code_and_queue_fallback(monkeypatch, 
     assert transport_error["payload"]["error_code"] == "timeout"
     completed = next(item for item in events if item["event_kind"] == "probe_completed")
     assert completed["payload"]["fallback_from_code"] == "timeout"
+
+
+def test_dispatch_via_queue_classifies_pending_timeout(tmp_path: Path) -> None:
+    store = PanelStore(db_path=tmp_path / "monitor.db", secret_path=tmp_path / "panel-secret.txt")
+    orchestrator = PanelOrchestrator(store=store, output_root=tmp_path / "results")
+
+    node = store.upsert_node(
+        NodeUpsertRequest(
+            node_name="relay-1",
+            role="relay",
+            runtime_mode="docker-linux",
+            configured_pull_url="http://relay.example:9870",
+            enabled=True,
+        )
+    )
+    pair_code, _ = store.create_pair_code(node["id"])
+    store.pair_agent(
+        identity=AgentIdentity(
+            node_name=node["node_name"],
+            role=node["role"],
+            runtime_mode=node["runtime_mode"],
+            protocol_version="1",
+            platform_name="linux",
+            hostname="relay-1-host",
+            agent_version="test-agent",
+        ),
+        pair_code=pair_code,
+        endpoint=AgentEndpointReport(
+            listen_host="0.0.0.0",
+            listen_port=9870,
+            advertise_url="http://relay.example:9870",
+        ),
+        capabilities=AgentCapabilities(pull_http=False, heartbeat_queue=True, result_lookup=True),
+    )
+    store.record_heartbeat(
+        node_id=node["id"],
+        endpoint=AgentEndpointReport(
+            listen_host="0.0.0.0",
+            listen_port=9870,
+            advertise_url="http://relay.example:9870",
+        ),
+        runtime_status=AgentRuntimeStatus(
+            paired=True,
+            started_at=now_iso(),
+            last_heartbeat_at=now_iso(),
+            last_error=None,
+            environment={},
+        ),
+    )
+    run_id = store.create_run("baseline", "test")
+    node = store.get_node(node["id"])
+    assert node is not None
+
+    result = orchestrator._dispatch_via_queue(
+        node=node,
+        run_id=run_id,
+        task="ping",
+        payload={"host": "relay.example", "timeout_sec": 0.0},
+        timeout_sec=0.0,
+        event_run_id=run_id,
+        path_label="client_to_relay",
+    )
+
+    assert result.success is False
+    assert result.metadata["error_code"] == "queue_not_leased"
+    assert result.metadata["job"]["status"] == "pending"
+
+    detail = store.get_run_detail(run_id)
+    assert detail is not None
+    assert detail["progress"]["last_failure_code"] == "queue_not_leased"
+    assert detail["progress"]["latest_queue_job"]["status"] == "pending"
+    assert detail["progress"]["latest_queue_job"]["job_id"]
+
+    events = store.list_run_events(run_id)
+    timeout_event = next(item for item in events if item["event_kind"] == "queue_timeout")
+    assert timeout_event["payload"]["error_code"] == "queue_not_leased"
+    assert timeout_event["payload"]["job"]["status"] == "pending"

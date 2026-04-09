@@ -1124,13 +1124,58 @@ def create_app(
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
         for completed in payload.completed_jobs:
-            runtime.store.complete_job(job_id=completed.job_id, node_id=int(node["id"]), result=completed.result)
+            if completed.job_id is None:
+                continue
+            accepted = runtime.store.complete_job(job_id=completed.job_id, node_id=int(node["id"]), result=completed.result)
+            job_snapshot = runtime.store.get_job_snapshot(completed.job_id)
+            result_metadata = completed.result.get("metadata") if isinstance(completed.result, dict) else {}
+            run_id = completed.run_id or (job_snapshot.get("run_id") if isinstance(job_snapshot, dict) else None)
+            if run_id:
+                runtime.store.record_run_event(
+                    str(run_id),
+                    "queue_completed" if accepted else "queue_completion_ignored",
+                    (
+                        f"{completed.task or (job_snapshot or {}).get('task') or 'queued task'} completed on {node['node_name']}"
+                        if accepted
+                        else f"{completed.task or (job_snapshot or {}).get('task') or 'queued task'} completion ignored on {node['node_name']}"
+                    ),
+                    {
+                        "job_id": completed.job_id,
+                        "task": completed.task or (job_snapshot or {}).get("task"),
+                        "node_name": node["node_name"],
+                        "path_label": (result_metadata or {}).get("path_label"),
+                        "queue_status": "completed" if accepted else "completion_ignored",
+                        "job": job_snapshot,
+                        "success": completed.result.get("success") if isinstance(completed.result, dict) else None,
+                        "error": completed.result.get("error") if isinstance(completed.result, dict) else None,
+                        "error_code": (result_metadata or {}).get("error_code"),
+                    },
+                )
 
         runtime.store.record_heartbeat(
             node_id=int(node["id"]),
             endpoint=payload.endpoint,
             runtime_status=payload.runtime_status,
         )
+        leased_rows = runtime.store.lease_jobs(node_id=int(node["id"]))
+        for job in leased_rows:
+            try:
+                runtime.store.record_run_event(
+                    str(job["run_id"]),
+                    "queue_leased",
+                    f"{job['job_kind']} leased to {node['node_name']}",
+                    {
+                        "job_id": int(job["id"]),
+                        "task": str(job["job_kind"]),
+                        "node_name": node["node_name"],
+                        "path_label": None,
+                        "timeout_sec": float(job["timeout_sec"]) if job.get("timeout_sec") is not None else None,
+                        "queue_status": "leased",
+                        "job": runtime.store.get_job_snapshot(int(job["id"])),
+                    },
+                )
+            except Exception:
+                continue
         jobs = [
             AgentTaskDispatch(
                 job_id=int(job["id"]),
@@ -1141,7 +1186,7 @@ def create_app(
                 lease_expires_at=job.get("lease_expires_at"),
                 timeout_sec=float(job["timeout_sec"]) if job.get("timeout_sec") is not None else None,
             )
-            for job in runtime.store.lease_jobs(node_id=int(node["id"]))
+            for job in leased_rows
         ]
         return AgentHeartbeatResponse(ok=True, jobs=jobs)
 

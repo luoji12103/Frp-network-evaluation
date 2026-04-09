@@ -413,7 +413,15 @@ class PanelOrchestrator:
                     },
                 )
                 if can_queue:
-                    result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+                    result = self._dispatch_via_queue(
+                        node=node,
+                        run_id=run_id,
+                        task=task,
+                        payload=payload,
+                        timeout_sec=timeout_sec,
+                        event_run_id=action_run_id,
+                        path_label=path_label,
+                    )
                     result.metadata.setdefault("fallback_from_transport", "pull")
                     result.metadata.setdefault("fallback_from_code", error_code)
                     transport = "queue-fallback"
@@ -428,7 +436,15 @@ class PanelOrchestrator:
                     transport = "pull-error"
         elif can_queue:
             self.store.reset_pull_status(int(node["id"]))
-            result = self._dispatch_via_queue(node=node, run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+            result = self._dispatch_via_queue(
+                node=node,
+                run_id=run_id,
+                task=task,
+                payload=payload,
+                timeout_sec=timeout_sec,
+                event_run_id=action_run_id,
+                path_label=path_label,
+            )
             transport = "queue"
         else:
             self.store.reset_pull_status(int(node["id"]))
@@ -462,7 +478,17 @@ class PanelOrchestrator:
         )
         return result
 
-    def _dispatch_via_queue(self, node: dict[str, Any], run_id: str, task: str, payload: dict[str, Any], timeout_sec: float) -> ProbeResult:
+    def _dispatch_via_queue(
+        self,
+        node: dict[str, Any],
+        run_id: str,
+        task: str,
+        payload: dict[str, Any],
+        timeout_sec: float,
+        event_run_id: str | None = None,
+        path_label: str | None = None,
+    ) -> ProbeResult:
+        action_run_id = event_run_id or run_id
         if not self._node_can_queue(node):
             return make_error_probe(
                 name=task,
@@ -472,24 +498,74 @@ class PanelOrchestrator:
                 metadata={"error_code": "transport_unavailable", "transport": "queue"},
             )
         job_id = self.store.enqueue_job(node_id=int(node["id"]), run_id=run_id, task=task, payload=payload, timeout_sec=timeout_sec)
+        job_snapshot = self.store.get_job_snapshot(job_id)
+        self.store.record_run_event(
+            action_run_id,
+            "queue_enqueued",
+            f"{task} queued for {node['node_name']}",
+            {
+                "job_id": job_id,
+                "task": task,
+                "node_name": node["node_name"],
+                "path_label": path_label,
+                "timeout_sec": timeout_sec,
+                "queue_status": "pending",
+                "job": job_snapshot or {"job_id": job_id, "task": task, "status": "pending", "timeout_sec": timeout_sec},
+            },
+        )
         try:
             job = self.store.wait_for_job(job_id=job_id, timeout_sec=timeout_sec)
         except TimeoutError as exc:
+            job_snapshot = self.store.get_job_snapshot(job_id)
+            error_code = self._queue_timeout_code(job_snapshot)
+            self.store.record_run_event(
+                action_run_id,
+                "queue_timeout",
+                f"{task} queued job timed out on {node['node_name']}",
+                {
+                    "job_id": job_id,
+                    "task": task,
+                    "node_name": node["node_name"],
+                    "path_label": path_label,
+                    "timeout_sec": timeout_sec,
+                    "queue_status": job_snapshot.get("status") if isinstance(job_snapshot, dict) else "timeout",
+                    "job": job_snapshot,
+                    "error": str(exc),
+                    "error_code": error_code,
+                },
+            )
             self.store.fail_job(job_id=job_id, error=str(exc))
             return make_error_probe(
                 name=task,
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=str(exc),
-                metadata={"error_code": "queue_timeout", "transport": "queue"},
+                metadata={"error_code": error_code, "transport": "queue", "job": job_snapshot},
             )
         if job["status"] != "completed":
+            job_snapshot = self.store.get_job_snapshot(job_id)
+            self.store.record_run_event(
+                action_run_id,
+                "queue_failed",
+                f"{task} queued job failed on {node['node_name']}",
+                {
+                    "job_id": job_id,
+                    "task": task,
+                    "node_name": node["node_name"],
+                    "path_label": path_label,
+                    "timeout_sec": timeout_sec,
+                    "queue_status": job.get("status"),
+                    "job": job_snapshot,
+                    "error": job.get("error") or f"Queued job {job_id} failed",
+                    "error_code": "queue_failed",
+                },
+            )
             return make_error_probe(
                 name=task,
                 source=node["role"],
                 target=str(payload.get("host", node["node_name"])),
                 error=job.get("error") or f"Queued job {job_id} failed",
-                metadata={"error_code": "queue_failed", "transport": "queue"},
+                metadata={"error_code": "queue_failed", "transport": "queue", "job": job_snapshot},
             )
         result = ProbeResult.from_dict(json.loads(job["result_json"]))
         result.metadata.setdefault("transport", "queue")
@@ -546,3 +622,15 @@ class PanelOrchestrator:
         if isinstance(exc, TimeoutError):
             return "timeout"
         return "pull_request_failed"
+
+    def _queue_timeout_code(self, job_snapshot: dict[str, Any] | None) -> str:
+        if not isinstance(job_snapshot, dict):
+            return "queue_timeout"
+        status = str(job_snapshot.get("status") or "")
+        if status == "pending":
+            return "queue_not_leased"
+        if status == "leased":
+            if job_snapshot.get("lease_expired"):
+                return "queue_lease_expired"
+            return "queue_lease_timeout"
+        return "queue_timeout"

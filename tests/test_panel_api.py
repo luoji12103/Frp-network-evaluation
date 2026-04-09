@@ -522,6 +522,107 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
         assert second.status_code == 200
         assert runtime.store.get_job(job_id)["status"] == "completed"
 
+        detail = client.get(f"/api/v1/admin/runs/{run_id}")
+        assert detail.status_code == 200
+        progress = detail.json()["progress"]
+        assert progress["latest_queue_job"]["status"] == "completed"
+        assert progress["latest_queue_job"]["job_id"] == job_id
+        assert progress["latest_queue_job"]["task"] == "ping"
+
+        events = client.get(f"/api/v1/admin/runs/{run_id}/events")
+        assert events.status_code == 200
+        event_kinds = [item["event_kind"] for item in events.json()["items"]]
+        assert "queue_leased" in event_kinds
+        assert "queue_completed" in event_kinds
+
+
+def test_late_queue_completion_is_recorded_as_ignored(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        node = client.post(
+            "/api/v1/nodes",
+            json={
+                "node_name": "client-1",
+                "role": "client",
+                "runtime_mode": "native-windows",
+                "configured_pull_url": "http://client.example:9870",
+                "enabled": True,
+            },
+        ).json()["node"]
+        pair_code = client.post(f"/api/v1/nodes/{node['id']}/pair-code").json()["pair_code"]
+        token = client.post(
+            "/api/v1/agents/pair",
+            json={
+                "pair_code": pair_code,
+                "identity": pair_identity("client-1", "client", "native-windows", "windows").model_dump(),
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://client.example:9870",
+                },
+                "capabilities": {"pull_http": True, "heartbeat_queue": True, "result_lookup": True},
+            },
+        ).json()["node_token"]
+
+        run_id = runtime.store.create_run("baseline", "test")
+        job_id = runtime.store.enqueue_job(
+            node_id=node["id"],
+            run_id=run_id,
+            task="ping",
+            payload={"host": "127.0.0.1", "count": 2, "timeout_sec": 1.0},
+            timeout_sec=3.0,
+        )
+        runtime.store.fail_job(job_id, "Timed out waiting for job result")
+
+        response = client.post(
+            "/api/v1/agents/heartbeat",
+            headers={"X-Node-Token": token},
+            json={
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://client.example:9870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": None,
+                    "last_error": None,
+                    "environment": {"ok": True},
+                },
+                "completed_jobs": [
+                    {
+                        "job_id": job_id,
+                        "run_id": run_id,
+                        "task": "ping",
+                        "result": {
+                            "name": "ping",
+                            "source": "client",
+                            "target": "127.0.0.1",
+                            "success": True,
+                            "metrics": {"packet_loss_pct": 0.0},
+                            "samples": [],
+                            "error": None,
+                            "started_at": None,
+                            "duration_ms": 2.0,
+                            "metadata": {"path_label": "client_to_relay"},
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200
+
+        detail = client.get(f"/api/v1/admin/runs/{run_id}")
+        assert detail.status_code == 200
+        progress = detail.json()["progress"]
+        assert progress["latest_queue_job"]["status"] == "completion_ignored"
+
+        events = client.get(f"/api/v1/admin/runs/{run_id}/events")
+        event_kinds = [item["event_kind"] for item in events.json()["items"]]
+        assert "queue_completion_ignored" in event_kinds
+
 
 def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:

@@ -152,6 +152,12 @@
       lastEvent: "最近事件",
       eventsCount: "事件数",
       latestProbe: "最近探针",
+      latestQueueJob: "最近队列任务",
+      queueStatus: "队列状态",
+      leaseState: "租约状态",
+      leaseExpiresAt: "租约到期",
+      jobId: "任务 ID",
+      taskLabel: "任务",
       liveRunHint: "运行仍在进行中，详情会自动刷新。",
       requestPayload: "请求快照",
       responsePayload: "响应快照",
@@ -412,6 +418,12 @@
       lastEvent: "Last event",
       eventsCount: "Event count",
       latestProbe: "Latest probe",
+      latestQueueJob: "Latest queued job",
+      queueStatus: "Queue status",
+      leaseState: "Lease state",
+      leaseExpiresAt: "Lease expires at",
+      jobId: "Job ID",
+      taskLabel: "Task",
       liveRunHint: "This run is still active. Detail will refresh automatically.",
       requestPayload: "Request snapshot",
       responsePayload: "Response snapshot",
@@ -1287,6 +1299,7 @@
     const findings = payload?.threshold_findings || [];
     const probes = payload?.probes || [];
     const progress = payload?.progress || {};
+    const latestQueueJob = progress.latest_queue_job || {};
     const links = [];
     if (!payload) {
       document.getElementById("runDetail").innerHTML = `<div class="empty">${escapeHtml(t("noRunDetail"))}</div>`;
@@ -1309,6 +1322,16 @@
         <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
+        ${latestQueueJob.job_id ? `
+          <div class="muted">${escapeHtml(t("latestQueueJob"))}: ${escapeHtml([
+            latestQueueJob.task || t("noData"),
+            latestQueueJob.node_name || "",
+            latestQueueJob.status || latestQueueJob.event_kind || "",
+          ].filter(Boolean).join(" | "))}</div>
+          <div class="muted">${escapeHtml(t("jobId"))}: ${escapeHtml(String(latestQueueJob.job_id))}</div>
+          ${latestQueueJob.lease_state ? `<div class="muted">${escapeHtml(t("leaseState"))}: ${escapeHtml(latestQueueJob.lease_state)}</div>` : ""}
+          ${latestQueueJob.lease_expires_at ? `<div class="muted">${escapeHtml(t("leaseExpiresAt"))}: ${escapeHtml(formatTimestamp(latestQueueJob.lease_expires_at))}</div>` : ""}
+        ` : ""}
         ${progress.last_failure_code ? `<div class="muted">${escapeHtml(t("failureCode"))}: ${escapeHtml(progress.last_failure_code)}</div>` : ""}
         ${progress.last_failure_message ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml(progress.last_failure_message)}</div>` : ""}
         ${progress.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(progress.recommended_step)}</div>` : ""}
@@ -1336,9 +1359,40 @@
             <strong>${escapeHtml(item.event_kind)}</strong>
             <div class="muted">${escapeHtml(formatTimestamp(item.created_at))}</div>
             <div class="muted">${escapeHtml(item.message || "")}</div>
+            ${summarizeRunEventPayload(item) ? `<div class="muted">${escapeHtml(summarizeRunEventPayload(item))}</div>` : ""}
           </div>
         `).join("")}</div>`
       : `<div class="empty">${escapeHtml(t("noData"))}</div>`;
+  }
+
+  function summarizeRunEventPayload(event) {
+    const payload = event?.payload || {};
+    if (!payload || typeof payload !== "object") {
+      return "";
+    }
+    if (!String(event?.event_kind || "").startsWith("queue_")) {
+      return "";
+    }
+    const parts = [];
+    if (payload.job_id) {
+      parts.push(`${t("jobId")}: ${payload.job_id}`);
+    }
+    if (payload.task) {
+      parts.push(`${t("taskLabel")}: ${payload.task}`);
+    }
+    if (payload.node_name) {
+      parts.push(`${t("nodeName")}: ${payload.node_name}`);
+    }
+    if (payload.queue_status) {
+      parts.push(`${t("queueStatus")}: ${payload.queue_status}`);
+    }
+    if (payload.error_code) {
+      parts.push(`${t("failureCode")}: ${payload.error_code}`);
+    }
+    if (payload.error) {
+      parts.push(`${t("failure")}: ${payload.error}`);
+    }
+    return parts.join(" | ");
   }
 
   function renderRunLauncherState() {

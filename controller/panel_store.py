@@ -842,6 +842,12 @@ class PanelStore:
             row = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row is not None else None
 
+    def get_job_snapshot(self, job_id: int) -> dict[str, Any] | None:
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        return self._job_snapshot(job)
+
     def wait_for_job(self, job_id: int, timeout_sec: float) -> dict[str, Any]:
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
@@ -2667,6 +2673,7 @@ class PanelStore:
         active_phase: str | None = None
         phase_started_at: str | None = None
         latest_probe: dict[str, Any] | None = None
+        latest_queue_job: dict[str, Any] | None = None
         last_failure_code: str | None = None
         last_failure_message: str | None = None
         for event in events:
@@ -2688,6 +2695,30 @@ class PanelStore:
                     "path_label": payload.get("path_label"),
                     "created_at": event.get("created_at"),
                 }
+            if event.get("event_kind") in {
+                "queue_enqueued",
+                "queue_leased",
+                "queue_timeout",
+                "queue_failed",
+                "queue_completed",
+                "queue_completion_ignored",
+            } and isinstance(payload, dict):
+                job_payload = payload.get("job") if isinstance(payload.get("job"), dict) else {}
+                latest_queue_job = {
+                    "event_kind": event.get("event_kind"),
+                    "created_at": event.get("created_at"),
+                    "job_id": payload.get("job_id") or job_payload.get("job_id"),
+                    "task": payload.get("task") or job_payload.get("task"),
+                    "node_name": payload.get("node_name"),
+                    "path_label": payload.get("path_label"),
+                    "status": payload.get("queue_status") or job_payload.get("status"),
+                    "timeout_sec": payload.get("timeout_sec") or job_payload.get("timeout_sec"),
+                    "lease_expires_at": job_payload.get("lease_expires_at"),
+                    "lease_state": job_payload.get("lease_state"),
+                    "success": payload.get("success"),
+                    "error_code": payload.get("error_code"),
+                    "error": payload.get("error"),
+                }
             if isinstance(payload, dict):
                 failure_code = payload.get("error_code")
                 failure_message = payload.get("error")
@@ -2702,6 +2733,7 @@ class PanelStore:
             "active_phase": active_phase,
             "phase_started_at": phase_started_at,
             "latest_probe": latest_probe,
+            "latest_queue_job": latest_queue_job,
             "last_failure_code": last_failure_code,
             "last_failure_message": last_failure_message,
             "recommended_step": self._run_recommended_step(last_failure_code),
@@ -2811,11 +2843,57 @@ class PanelStore:
             "auth_error": "Re-pair the node or verify the stored node token before retrying the run.",
             "protocol_mismatch": "Align panel and agent protocol versions before rerunning the affected phase.",
             "queue_timeout": "Check heartbeat freshness and control bridge logs, then retry once the node resumes queue processing.",
+            "queue_not_leased": "The queued job never reached the node. Verify heartbeat freshness and that the node still supports heartbeat_queue dispatch.",
+            "queue_lease_timeout": "The queued job was leased but never completed in time. Inspect node runtime, control bridge status, and agent logs before retrying.",
+            "queue_lease_expired": "The queued job lease expired before a result returned. Check whether the agent lost connectivity or stalled mid-task.",
             "queue_failed": "Inspect the queued job error and node logs before retrying the phase.",
             "transport_unavailable": "Restore either pull or heartbeat connectivity for the node before retrying the run.",
             "run_failed": "Inspect the latest run events and node diagnostics to identify the failing phase before rerunning.",
         }
         return mapping.get(code)
+
+    def _job_snapshot(self, job: dict[str, Any]) -> dict[str, Any]:
+        payload = _loads(job.get("payload_json") or "{}")
+        result = _loads(job.get("result_json") or "{}") if job.get("result_json") else None
+        snapshot = {
+            "job_id": int(job["id"]),
+            "run_id": str(job["run_id"]),
+            "node_id": int(job["node_id"]),
+            "task": str(job["job_kind"]),
+            "status": str(job["status"]),
+            "created_at": job.get("created_at"),
+            "available_at": job.get("available_at"),
+            "leased_at": job.get("leased_at"),
+            "lease_expires_at": job.get("lease_expires_at"),
+            "completed_at": job.get("completed_at"),
+            "timeout_sec": float(job["timeout_sec"]) if job.get("timeout_sec") is not None else None,
+            "error": job.get("error"),
+            "path_label": payload.get("path_label") if isinstance(payload, dict) else None,
+            "result_success": result.get("success") if isinstance(result, dict) else None,
+        }
+        lease_expires_at = snapshot.get("lease_expires_at")
+        if isinstance(lease_expires_at, str) and lease_expires_at:
+            try:
+                lease_remaining = (_parse_iso_timestamp(lease_expires_at) - datetime.now(timezone.utc)).total_seconds()
+                snapshot["lease_remaining_sec"] = round(lease_remaining, 3)
+                snapshot["lease_expired"] = lease_remaining <= 0
+            except Exception:
+                snapshot["lease_remaining_sec"] = None
+                snapshot["lease_expired"] = None
+        else:
+            snapshot["lease_remaining_sec"] = None
+            snapshot["lease_expired"] = None
+        if snapshot["status"] == "pending":
+            snapshot["lease_state"] = "not-leased"
+        elif snapshot["status"] == "leased":
+            snapshot["lease_state"] = "expired" if snapshot.get("lease_expired") else "active"
+        elif snapshot["status"] == "completed":
+            snapshot["lease_state"] = "completed"
+        elif snapshot["status"] == "failed":
+            snapshot["lease_state"] = "failed"
+        else:
+            snapshot["lease_state"] = snapshot["status"]
+        return snapshot
 
 
 def _dumps(value: Any) -> str:
@@ -2875,6 +2953,7 @@ def _empty_run_progress() -> dict[str, Any]:
         "active_phase": None,
         "phase_started_at": None,
         "latest_probe": None,
+        "latest_queue_job": None,
         "last_failure_code": None,
         "last_failure_message": None,
         "recommended_step": None,
