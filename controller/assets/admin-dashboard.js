@@ -1286,7 +1286,7 @@
         <td><span class="status-pill ${escapeHtml(run.status || "")}">${escapeHtml(statusLabel(run.status || ""))}</span></td>
         <td>${escapeHtml(formatTimestamp(run.started_at))}</td>
         <td>${run.findings_count || 0}</td>
-        <td>${escapeHtml(run.progress?.active_phase || run.progress?.last_event_kind || t("viewDetail"))}</td>
+        <td>${escapeHtml(run.progress?.headline || run.progress?.active_phase || run.progress?.last_event_kind || t("viewDetail"))}</td>
       </tr>
     `).join("");
     renderRunDetail();
@@ -1324,6 +1324,7 @@
         <div class="muted">${escapeHtml(t("eventsCount"))}: ${escapeHtml(String(progress.events_count || 0))}</div>
         <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
+        ${progress.headline ? `<div class="muted">${escapeHtml(t("result"))}: ${escapeHtml(progress.headline)}</div>` : ""}
         <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
         ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}</div>` : ""}
         ${latestQueueJob.job_id ? `

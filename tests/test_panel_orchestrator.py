@@ -283,6 +283,7 @@ def test_dispatch_via_queue_classifies_pending_timeout(tmp_path: Path) -> None:
     assert detail["progress"]["latest_queue_job"]["job_id"]
     assert detail["progress"]["current_blocker"]["code"] == "queue_not_leased"
     assert detail["progress"]["current_blocker"]["kind"] == "queue"
+    assert "Queued job" in (detail["progress"]["headline"] or "")
 
     events = store.list_run_events(run_id)
     timeout_event = next(item for item in events if item["event_kind"] == "queue_timeout")

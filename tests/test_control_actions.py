@@ -453,6 +453,7 @@ def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:
         assert detail_before_finish["progress"]["active_phase"] == "baseline"
         assert detail_before_finish["progress"]["events_count"] >= 3
         assert detail_before_finish["progress"]["latest_probe"]["task"] == "ping"
+        assert detail_before_finish["progress"]["headline"] == "Latest probe ping was dispatched."
 
         store.record_run_event(run_id, "phase_completed", "baseline phase completed", {"phase": "baseline"})
         store.finish_run(run_id=run_id, status="completed", run_result=RunResult(

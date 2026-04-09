@@ -2731,6 +2731,16 @@ class PanelStore:
                     last_failure_code = str(failure_code) if failure_code else "run_failed"
                     last_failure_message = str(failure_message or event.get("message") or "")
                     last_failure_at = event.get("created_at")
+        current_blocker = self._build_current_run_blocker(
+            latest=latest,
+            latest_probe=latest_probe,
+            latest_queue_job=latest_queue_job,
+        )
+        headline, headline_severity = self._run_progress_headline(
+            latest=latest,
+            active_phase=active_phase,
+            current_blocker=current_blocker,
+        )
         return {
             "events_count": len(events),
             "last_event_kind": latest.get("event_kind"),
@@ -2740,11 +2750,9 @@ class PanelStore:
             "phase_started_at": phase_started_at,
             "latest_probe": latest_probe,
             "latest_queue_job": latest_queue_job,
-            "current_blocker": self._build_current_run_blocker(
-                latest=latest,
-                latest_probe=latest_probe,
-                latest_queue_job=latest_queue_job,
-            ),
+            "current_blocker": current_blocker,
+            "headline": headline,
+            "headline_severity": headline_severity,
             "last_failure_code": last_failure_code,
             "last_failure_message": last_failure_message,
             "last_failure_at": last_failure_at,
@@ -2944,6 +2952,23 @@ class PanelStore:
             }
         return None
 
+    def _run_progress_headline(
+        self,
+        latest: dict[str, Any],
+        active_phase: str | None,
+        current_blocker: dict[str, Any] | None,
+    ) -> tuple[str | None, str]:
+        if current_blocker and current_blocker.get("summary"):
+            return str(current_blocker["summary"]), str(current_blocker.get("severity") or "info")
+        if active_phase:
+            return f"phase {active_phase}", "info"
+        if latest.get("message"):
+            severity = "warning" if str(latest.get("event_kind") or "") in {"run_failed", "probe_transport_error"} else "info"
+            return str(latest.get("message")), severity
+        if latest.get("event_kind"):
+            return str(latest.get("event_kind")), "info"
+        return None, "info"
+
     def _summarize_run_event(self, event: dict[str, Any]) -> tuple[str | None, str, str | None]:
         payload = event.get("payload") or {}
         if not isinstance(payload, dict):
@@ -3103,6 +3128,8 @@ def _empty_run_progress() -> dict[str, Any]:
         "latest_probe": None,
         "latest_queue_job": None,
         "current_blocker": None,
+        "headline": None,
+        "headline_severity": "info",
         "last_failure_code": None,
         "last_failure_message": None,
         "last_failure_at": None,
