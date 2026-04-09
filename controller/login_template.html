@@ -103,6 +103,18 @@
     button:hover, a.button-link:hover { transform: translateY(-1px); }
     .primary { background: var(--accent); color: white; }
     .secondary { background: #e8eee8; color: var(--ink); }
+    .build-meta {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .build-meta code {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      color: var(--ink);
+    }
   </style>
 </head>
 <body>
@@ -140,6 +152,11 @@
         <button class="primary" type="submit" data-i18n="signIn">Sign In</button>
       </div>
     </form>
+
+    <div class="build-meta">
+      <span>版本</span>
+      <code>{{ panel_build_label }}</code>
+    </div>
   </section>
 
   <script>

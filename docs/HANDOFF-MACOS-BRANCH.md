@@ -210,6 +210,14 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `runtime`
 - `supervisor`
 
+`GET /api/v1/admin/runtime` 的 `panel.runtime.details` 现在还固定包含以下部署识别字段：
+
+- `panel_release_version`
+- `panel_build_ref`
+- `panel_version_label`
+
+管理员后台、公开看板、登录页都会显示同一份 `panel_version_label`，用于确认 live panel 是否已经切到最新部署。
+
 其中 pull-mode 诊断码现在明确冻结以下语义：
 
 - `legacy_status_shape`

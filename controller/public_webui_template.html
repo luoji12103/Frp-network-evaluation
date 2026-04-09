@@ -72,6 +72,23 @@
       font-size: 13px;
     }
     .pill { background: var(--accent-soft); color: var(--accent); }
+    .build-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+    }
+    .build-badge code {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 12px;
+      color: var(--ink);
+    }
     .status-pill.online { background: #dcefe3; color: var(--ok); }
     .status-pill.push-only, .status-pill.degraded { background: #fff0cc; color: var(--warn); }
     .status-pill.pull-only, .status-pill.offline, .status-pill.critical, .status-pill.unpaired { background: #f8ddd8; color: var(--danger); }
@@ -147,6 +164,10 @@
         <div class="topline">
           <div class="pill" data-i18n="boardBadge">公开网络质量大盘</div>
           <div class="locale-wrap">
+            <div class="build-badge" title="Deployed panel build">
+              <span>版本</span>
+              <code>{{ panel_build_label }}</code>
+            </div>
             <label for="timeRangeSelect" data-i18n="timeRange">时间范围</label>
             <select id="timeRangeSelect" aria-label="Time range">
               <option value="24h">24h</option>

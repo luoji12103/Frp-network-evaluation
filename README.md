@@ -119,6 +119,19 @@ This starts the central panel container and persists:
 
 The Docker stack also starts `panel-control-bridge`, which is the only component allowed to issue restart / stop / tail-log operations against the panel container.
 
+The admin, public, and login pages now display the deployed panel build label. The Docker helper exports:
+
+- `MC_NETPROBE_RELEASE_VERSION` defaulting to `1.0`
+- `MC_NETPROBE_BUILD_REF` defaulting to `git rev-parse --short=12 HEAD`
+
+So after `bash bin/start_webui_docker.sh` or
+
+```bash
+MC_NETPROBE_BUILD_REF="$(git rev-parse --short=12 HEAD)" docker compose up --build -d
+```
+
+the top-right badge shows `v<release> · <commit>`, which is the fastest way to confirm a live panel really picked up the new build.
+
 ## Admin Authentication
 
 The public board is open at `/` and only shows network quality information.

@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 
 from controller.agent_http_client import AgentHttpClient, AgentHttpError
+from controller.build_info import get_panel_build_info
 from controller.control_bridge_client import ControlBridgeClient, ControlBridgeError
 from controller.panel_models import (
     AdminControlActionCreateResponse,
@@ -87,6 +88,7 @@ class PanelRuntime:
     def __init__(self, db_path: str | Path = "data/monitor.db", start_background: bool = True) -> None:
         self._panel_bridge_url = os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL")
         self._panel_log_file = os.getenv("MC_NETPROBE_PANEL_LOG_FILE")
+        self._build_info = get_panel_build_info()
         self.store = PanelStore(db_path=db_path)
         self.orchestrator = PanelOrchestrator(store=self.store, output_root=RESULTS_DIR)
         self.http = AgentHttpClient(store=self.store)
@@ -220,6 +222,9 @@ class PanelRuntime:
             "last_loop_at": self._last_loop_at,
             "scheduler_paused": self._scheduler_paused,
             "background_loop_active": self._thread is not None,
+            "panel_release_version": self._build_info["release_version"],
+            "panel_build_ref": self._build_info["build_ref"],
+            "panel_version_label": self._build_info["display_label"],
             "deployment_mode": "docker-bridge" if self._panel_bridge_url else "native",
             "control_mode": "bridge-managed" if self._panel_bridge_url else "native-readonly",
             "control_bridge_configured": bool(self._panel_bridge_url),
@@ -1032,16 +1037,18 @@ def create_app(
 ) -> FastAPI:
     runtime = PanelRuntime(db_path=db_path, start_background=start_background)
     admin_auth = AdminAuth(username=admin_username, password=admin_password)
+    build_info = get_panel_build_info()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.runtime = runtime
         app.state.admin_auth = admin_auth
+        app.state.build_info = build_info
         runtime.start()
         yield
         runtime.stop()
 
-    app = FastAPI(title="mc-netprobe-panel", version="1.0", lifespan=lifespan)
+    app = FastAPI(title="mc-netprobe-panel", version=str(build_info["release_version"]), lifespan=lifespan)
     if ASSETS_DIR.exists():
         app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
@@ -1054,6 +1061,7 @@ def create_app(
         body = template.render(
             next_path=next_path,
             login_error_key_json=json.dumps(error_key, ensure_ascii=False),
+            panel_build_label=build_info["display_label"],
         )
         return HTMLResponse(content=body, status_code=status_code)
 
@@ -1067,6 +1075,7 @@ def create_app(
         return render_template(
             PUBLIC_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
+            panel_build_label=build_info["display_label"],
         )
 
     @app.get("/admin", response_class=HTMLResponse)
@@ -1077,6 +1086,7 @@ def create_app(
         return render_template(
             ADMIN_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
+            panel_build_label=build_info["display_label"],
         )
 
     @app.get("/login", response_class=HTMLResponse)

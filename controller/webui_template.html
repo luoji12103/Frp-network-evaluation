@@ -73,6 +73,23 @@
       border: 1px solid transparent;
     }
     .pill { background: var(--accent-soft); color: var(--accent); }
+    .build-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+    }
+    .build-badge code {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 12px;
+      color: var(--ink);
+    }
     .status-pill.online { background: #dcefe3; color: var(--ok); }
     .status-pill.push-only, .status-pill.degraded, .status-pill.warning, .status-pill.acknowledged { background: #fff0cc; color: var(--warn); }
     .status-pill.pull-only, .status-pill.offline, .status-pill.critical, .status-pill.error, .status-pill.open { background: #f8ddd8; color: var(--danger); }
@@ -221,6 +238,10 @@
         <div class="topline">
           <div class="pill" data-i18n="panelOnline">面板在线</div>
           <div class="toolbar">
+            <div class="build-badge" title="Deployed panel build">
+              <span>版本</span>
+              <code>{{ panel_build_label }}</code>
+            </div>
             <label for="autoRefreshSelect" data-i18n="autoRefresh">自动刷新</label>
             <select id="autoRefreshSelect" aria-label="Auto refresh"></select>
             <label for="localeSelect" data-i18n="language">语言</label>

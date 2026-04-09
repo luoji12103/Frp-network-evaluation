@@ -173,6 +173,31 @@ def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None
         assert "/assets/public-dashboard.js" in body
 
 
+def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MC_NETPROBE_RELEASE_VERSION", "9.9.9")
+    monkeypatch.setenv("MC_NETPROBE_BUILD_REF", "abc123def456")
+    with build_client(tmp_path) as client:
+        public_page = client.get("/")
+        assert public_page.status_code == 200
+        assert "v9.9.9 · abc123def456" in public_page.text
+
+        login_page = client.get("/login")
+        assert login_page.status_code == 200
+        assert "v9.9.9 · abc123def456" in login_page.text
+
+        login_admin(client)
+        admin_page = client.get("/admin")
+        assert admin_page.status_code == 200
+        assert "v9.9.9 · abc123def456" in admin_page.text
+
+        runtime = client.get("/api/v1/admin/runtime")
+        assert runtime.status_code == 200
+        details = runtime.json()["panel"]["runtime"]["details"]
+        assert details["panel_release_version"] == "9.9.9"
+        assert details["panel_build_ref"] == "abc123def456"
+        assert details["panel_version_label"] == "v9.9.9 · abc123def456"
+
+
 def test_admin_login_required_for_management_routes(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         page = client.get("/admin", follow_redirects=False)
