@@ -250,6 +250,9 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `runtime.details.readonly_reason`
 - `runtime.details.active_action_id`
 - `runtime.details.active_action_summary`
+- `runtime.details.active_run_id`
+- `runtime.details.active_run_summary`
+- `runtime.details.active_run_severity`
 - `supervisor.control_available`
 - `supervisor.bridge_url`
 - `supervisor.supervisor_state`
@@ -355,6 +358,8 @@ curl http://127.0.0.1:9870/api/v1/health
 - action 详情接口会返回规范化字段：`request`、`response`、`log_excerpt`、`log_location`、`runtime_snapshot`、`failure`
 - run 详情对象会附带 `progress` 摘要，包含当前阶段、最近事件和事件计数
 - `GET /api/v1/admin/runtime` 会附带 `active_run` 和 `attention` 摘要，管理页用它来禁用重复 full run 并展示运行焦点
+- active run 的 `progress` 还可以附带 `latest_queue_job`
+- 节点 runtime 视图对象可以附带 `run_attention`，把当前 active run 的阻塞点直接贴到对应节点卡片上
 - 节点 `connectivity.push` / `connectivity.pull` 里可以附带可选 `code`
 - 运行时调试字段优先放进 `runtime_status.environment`
 - probe 侧附加信息继续放进 `metadata`
