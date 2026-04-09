@@ -1469,7 +1469,10 @@
           <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
           ${item.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
           ${item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
-          ${item.run_id ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
+          ${(item.run_id || item.action_id) ? `<div class="node-actions" style="margin-top: 10px;">
+            ${item.run_id ? `<button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button>` : ""}
+            ${item.action_id ? `<button type="button" data-action-detail="${escapeHtml(String(item.action_id))}">${escapeHtml(t("viewAction"))}</button>` : ""}
+          </div>` : ""}
         </div>
       `).join("")}
     `;

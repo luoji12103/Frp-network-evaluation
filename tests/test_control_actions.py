@@ -252,6 +252,10 @@ def test_node_actions_are_serialized_per_target_and_conflicts_include_active_act
         node_payload = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert node_payload["runtime"]["details"]["active_action_id"] == first_action_id
         assert "sync_runtime" in (node_payload["runtime"]["details"]["active_action_summary"] or "")
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        node_attention = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "node-action")
+        assert node_attention["action_id"] == first_action_id
+        assert "sync_runtime" in (node_attention["summary"] or "")
 
 
 def test_panel_actions_require_confirmation_and_update_scheduler(tmp_path: Path) -> None:
@@ -299,6 +303,10 @@ def test_panel_actions_are_serialized_per_target(tmp_path: Path) -> None:
         runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
         assert runtime_payload["runtime"]["details"]["active_action_id"] == first_action_id
         assert "sync_runtime" in (runtime_payload["runtime"]["details"]["active_action_summary"] or "")
+        attention_payload = client.get("/api/v1/admin/runtime").json()["attention"]["items"]
+        panel_attention = next(item for item in attention_payload if item["kind"] == "panel-action")
+        assert panel_attention["action_id"] == first_action_id
+        assert "sync_runtime" in (panel_attention["summary"] or "")
 
 
 def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monkeypatch) -> None:

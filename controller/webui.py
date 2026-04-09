@@ -534,7 +534,22 @@ class PanelRuntime:
                 )
 
         panel_runtime = panel.get("runtime", {})
+        panel_runtime_details = panel_runtime.get("details", {})
         panel_error = panel_runtime.get("last_error") or (panel.get("supervisor") or {}).get("last_error")
+        if panel_runtime_details.get("active_action_id"):
+            items.append(
+                {
+                    "severity": "info",
+                    "kind": "panel-action",
+                    "title": "Panel action in progress",
+                    "summary": panel_runtime_details.get("active_action_summary") or "Panel lifecycle action is running.",
+                    "code": None,
+                    "target_kind": "panel",
+                    "target_name": "panel",
+                    "action_id": panel_runtime_details.get("active_action_id"),
+                    "recommended_step": "Open the action detail to follow progress before issuing another panel action.",
+                }
+            )
         if panel_error:
             items.append(
                 {
@@ -542,7 +557,7 @@ class PanelRuntime:
                     "kind": "panel",
                     "title": "Panel runtime needs attention",
                     "summary": str(panel_error),
-                    "code": panel_runtime.get("details", {}).get("bridge_error_code") or "panel_runtime_error",
+                    "code": panel_runtime_details.get("bridge_error_code") or "panel_runtime_error",
                     "target_kind": "panel",
                     "target_name": "panel",
                     "recommended_step": "Sync runtime or inspect panel logs before issuing more control actions.",
@@ -554,6 +569,21 @@ class PanelRuntime:
             level = str(connectivity.get("attention_level") or "ok")
             runtime_details = node.get("runtime", {}).get("details", {})
             supervisor = node.get("supervisor", {})
+            if runtime_details.get("active_action_id"):
+                items.append(
+                    {
+                        "severity": "info",
+                        "kind": "node-action",
+                        "title": f"{node.get('role')} action in progress",
+                        "summary": runtime_details.get("active_action_summary") or "Node lifecycle action is running.",
+                        "code": None,
+                        "target_kind": "node",
+                        "target_id": node.get("id"),
+                        "target_name": node.get("node_name"),
+                        "action_id": runtime_details.get("active_action_id"),
+                        "recommended_step": "Open the action detail to follow progress before issuing another lifecycle action for this node.",
+                    }
+                )
             if level != "ok":
                 items.append(
                     {
