@@ -359,7 +359,9 @@ curl http://127.0.0.1:9870/api/v1/health
 - run 详情对象会附带 `progress` 摘要，包含当前阶段、最近事件和事件计数
 - `GET /api/v1/admin/runtime` 会附带 `active_run` 和 `attention` 摘要，管理页用它来禁用重复 full run 并展示运行焦点
 - active run 的 `progress` 还可以附带 `latest_queue_job`
+- active run 的 `progress` 还可以附带 `current_blocker` 与 `headline`
 - 节点 runtime 视图对象可以附带 `run_attention`，把当前 active run 的阻塞点直接贴到对应节点卡片上
+- run event 对象可以附带 `summary`、`severity`、`code`
 - 节点 `connectivity.push` / `connectivity.pull` 里可以附带可选 `code`
 - 运行时调试字段优先放进 `runtime_status.environment`
 - probe 侧附加信息继续放进 `metadata`

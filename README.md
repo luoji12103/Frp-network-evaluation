@@ -185,7 +185,9 @@ The admin UI now has a dedicated runtime-control surface.
 - Nodes now expose structured connectivity diagnostics: `connectivity.diagnostic_code`, `connectivity.attention_level`, `connectivity.summary`, `connectivity.recommended_step`, plus per-channel `push.code` / `pull.code`.
 - `GET /api/v1/admin/runtime` now also returns the current `active_run` and an `attention` summary list; the admin UI uses that payload to disable duplicate full-run launches and jump to the already-running run.
 - Active runs now expose structured queue diagnostics through `progress.latest_queue_job`, so queued dispatches, leases, timeouts, completions, and ignored late completions are visible without reading raw job rows.
+- Active runs also expose `progress.current_blocker` and `progress.headline`, so the backend can distinguish the current blocking step from older failures and the UI can reuse one canonical summary in the run list, run detail, and operations focus.
 - Node runtime cards can surface `run_attention` when the active run is currently blocked on that node, and the same signal is mirrored into `runtime.details.active_run_*` for backend-driven UI decisions.
+- Run event timeline items now carry backend-generated `summary`, `severity`, and `code` fields, which keeps queue and probe event explanations consistent between the API and WebUI.
 - Native panel log tailing checks these locations in order:
   - `MC_NETPROBE_PANEL_LOG_FILE`
   - `logs/panel-native.log`
