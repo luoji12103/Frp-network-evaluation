@@ -71,6 +71,15 @@ def test_agent_health_is_available_without_pairing(tmp_path: Path) -> None:
         response = client.get("/api/v1/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
+        assert response.headers["X-MC-Netprobe-Build"]
+
+        version = client.get("/api/v1/version")
+        assert version.status_code == 200
+        assert version.json()["service"] == "agent"
+        assert version.json()["node_name"] == "client-1"
+        assert version.json()["role"] == "client"
+        assert version.json()["runtime_mode"] == "native-windows"
+        assert version.headers["X-MC-Netprobe-Build"] == version.json()["build"]["header_label"]
 
         protected = client.get("/api/v1/status")
         assert protected.status_code == 409

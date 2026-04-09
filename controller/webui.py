@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 
 from controller.agent_http_client import AgentHttpClient, AgentHttpError
-from controller.build_info import get_panel_build_info
+from controller.build_info import get_build_info
 from controller.control_bridge_client import ControlBridgeClient, ControlBridgeError
 from controller.panel_models import (
     AdminControlActionCreateResponse,
@@ -47,6 +47,7 @@ from controller.panel_models import (
     RunEventEnvelope,
     SuggestedAction,
     SUPPORTED_AGENT_PROTOCOL_VERSION,
+    VersionProbeResponse,
 )
 from controller.panel_orchestrator import PanelOrchestrator
 from controller.panel_store import PanelStore
@@ -88,7 +89,7 @@ class PanelRuntime:
     def __init__(self, db_path: str | Path = "data/monitor.db", start_background: bool = True) -> None:
         self._panel_bridge_url = os.getenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL")
         self._panel_log_file = os.getenv("MC_NETPROBE_PANEL_LOG_FILE")
-        self._build_info = get_panel_build_info()
+        self._build_info = get_build_info()
         self.store = PanelStore(db_path=db_path)
         self.orchestrator = PanelOrchestrator(store=self.store, output_root=RESULTS_DIR)
         self.http = AgentHttpClient(store=self.store)
@@ -1037,7 +1038,7 @@ def create_app(
 ) -> FastAPI:
     runtime = PanelRuntime(db_path=db_path, start_background=start_background)
     admin_auth = AdminAuth(username=admin_username, password=admin_password)
-    build_info = get_panel_build_info()
+    build_info = get_build_info()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -1156,6 +1157,15 @@ def create_app(
         snapshot = runtime.store.build_dashboard_snapshot()
         snapshot["build"] = build_payload()
         return DashboardSnapshot.model_validate(snapshot)
+
+    @app.get("/api/v1/version")
+    def version_probe() -> VersionProbeResponse:
+        return VersionProbeResponse(
+            service="panel",
+            build=build_payload(),
+            started_at=runtime._started_at,
+            protocol_version=SUPPORTED_AGENT_PROTOCOL_VERSION,
+        )
 
     @app.post("/api/v1/dashboard")
     def save_dashboard_settings(payload: PanelSettings, request: Request) -> dict[str, Any]:

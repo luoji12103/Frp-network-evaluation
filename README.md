@@ -135,12 +135,17 @@ the top-right badge shows `v<release> · <commit>`, which is the fastest way to 
 You can also verify the live build without opening the UI:
 
 ```bash
+curl -s http://127.0.0.1:8765/api/v1/version | jq
 curl -I http://127.0.0.1:8765/api/v1/public-dashboard
 curl -s http://127.0.0.1:8765/api/v1/public-dashboard | jq '.build'
+curl -s http://127.0.0.1:9870/api/v1/version | jq
 ```
 
 The panel now exposes:
 
+- minimal version probes:
+  - `GET /api/v1/version` on the panel
+  - `GET /api/v1/version` on the agent
 - response headers:
   - `X-MC-Netprobe-Release-Version`
   - `X-MC-Netprobe-Build-Ref`

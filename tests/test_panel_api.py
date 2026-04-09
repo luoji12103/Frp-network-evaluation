@@ -208,6 +208,12 @@ def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> N
         assert dashboard.json()["build"]["header_label"] == "v9.9.9+abc123def456"
         assert dashboard.headers["X-MC-Netprobe-Build"] == "v9.9.9+abc123def456"
 
+        version = client.get("/api/v1/version")
+        assert version.status_code == 200
+        assert version.json()["service"] == "panel"
+        assert version.json()["build"]["display_label"] == "v9.9.9 · abc123def456"
+        assert version.headers["X-MC-Netprobe-Build"] == "v9.9.9+abc123def456"
+
         runtime = client.get("/api/v1/admin/runtime")
         assert runtime.status_code == 200
         assert runtime.json()["build"]["display_label"] == "v9.9.9 · abc123def456"

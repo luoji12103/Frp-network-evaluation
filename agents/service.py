@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from agents import execute_task
+from controller.build_info import get_build_info
 from controller.panel_models import (
     AgentCapabilities,
     AgentEndpointReport,
@@ -34,6 +35,7 @@ from controller.panel_models import (
     AgentTaskCompletion,
     AgentTaskDispatch,
     SUPPORTED_AGENT_PROTOCOL_VERSION,
+    VersionProbeResponse,
 )
 from probes.common import current_environment, detect_platform_name, now_iso
 
@@ -313,20 +315,51 @@ def create_agent_app(
     runtime: AgentRuntime | None = None,
 ) -> FastAPI:
     runtime = runtime or AgentRuntime(config_path=config_path, overrides=overrides, start_background=False)
+    build_info = get_build_info()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.runtime = runtime
+        app.state.build_info = build_info
         if start_background:
             runtime.start_background_threads()
         yield
         runtime.stop()
 
-    app = FastAPI(title="mc-netprobe-agent", version="1.0", lifespan=lifespan)
+    app = FastAPI(title="mc-netprobe-agent", version=str(build_info["release_version"]), lifespan=lifespan)
+
+    @app.middleware("http")
+    async def attach_build_headers(request, call_next):
+        response = await call_next(request)
+        response.headers["X-MC-Netprobe-Release-Version"] = str(build_info["release_version"])
+        response.headers["X-MC-Netprobe-Build"] = str(build_info["header_label"])
+        if build_info.get("build_ref"):
+            response.headers["X-MC-Netprobe-Build-Ref"] = str(build_info["build_ref"])
+        return response
+
+    def build_payload() -> dict[str, str | None]:
+        return {
+            "release_version": build_info["release_version"],
+            "build_ref": build_info["build_ref"],
+            "display_label": build_info["display_label"],
+            "header_label": build_info["header_label"],
+        }
 
     @app.get("/api/v1/health")
     def get_health() -> AgentHealthResponse:
         return AgentHealthResponse(started_at=runtime.runtime_status().started_at)
+
+    @app.get("/api/v1/version")
+    def get_version() -> VersionProbeResponse:
+        return VersionProbeResponse(
+            service="agent",
+            build=build_payload(),
+            started_at=runtime.runtime_status().started_at,
+            protocol_version=runtime.config.protocol_version,
+            node_name=runtime.config.node_name,
+            role=runtime.config.role,
+            runtime_mode=runtime.config.runtime_mode,
+        )
 
     @app.get("/api/v1/status")
     def get_status(x_node_token: str | None = Header(default=None)) -> dict[str, Any]:

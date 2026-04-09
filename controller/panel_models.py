@@ -179,6 +179,27 @@ class AgentHealthResponse(BaseModel):
     started_at: str
 
 
+class BuildInfoPayload(BaseModel):
+    """Normalized build metadata used by panel and agent APIs."""
+
+    release_version: str
+    build_ref: str | None = None
+    display_label: str
+    header_label: str
+
+
+class VersionProbeResponse(BaseModel):
+    """Minimal version probe for deployment verification."""
+
+    service: str
+    build: BuildInfoPayload
+    started_at: str
+    protocol_version: str | None = None
+    node_name: str | None = None
+    role: str | None = None
+    runtime_mode: str | None = None
+
+
 class RuntimeSummary(BaseModel):
     """Structured runtime summary for a managed process or service."""
 

@@ -59,7 +59,7 @@ def _read_git_ref(repo_root: Path) -> str | None:
     return _sanitize_token(head_value[:12])
 
 
-def get_panel_build_info() -> dict[str, str | None]:
+def get_build_info() -> dict[str, str | None]:
     repo_root = Path(__file__).resolve().parent.parent
     release_version = _sanitize_token(os.getenv("MC_NETPROBE_RELEASE_VERSION")) or DEFAULT_PANEL_RELEASE_VERSION
     build_ref = (
@@ -80,3 +80,7 @@ def get_panel_build_info() -> dict[str, str | None]:
         "display_label": display_label,
         "header_label": header_label,
     }
+
+
+def get_panel_build_info() -> dict[str, str | None]:
+    return get_build_info()

@@ -150,6 +150,11 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `POST /api/v1/admin/panel/actions`
 - `GET /api/v1/admin/runs/{run_id}/events`
 
+当前部署验收探针也视为冻结合同：
+
+- Panel: `GET /api/v1/version`
+- Agent: `GET /api/v1/version`
+
 ### 管理认证
 
 以下行为也视为冻结合同：
@@ -164,6 +169,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 ### Panel 调 Agent
 
+- `GET /api/v1/version`
 - `GET /api/v1/health`
 - `GET /api/v1/status`
 - `POST /api/v1/jobs/run`
@@ -176,6 +182,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 ### Agent 本地接口
 
+- `GET /api/v1/version`
 - `POST /api/v1/pair`
 - `POST /api/v1/heartbeat`
 
