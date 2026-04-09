@@ -218,6 +218,17 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 管理员后台、公开看板、登录页都会显示同一份 `panel_version_label`，用于确认 live panel 是否已经切到最新部署。
 
+另外以下版本暴露方式也视为当前基线：
+
+- `GET /api/v1/public-dashboard` 顶层包含 `build`
+- `GET /api/v1/dashboard` 顶层包含 `build`
+- 所有 panel 响应都会附带：
+  - `X-MC-Netprobe-Release-Version`
+  - `X-MC-Netprobe-Build-Ref`
+  - `X-MC-Netprobe-Build`
+
+其中 `build.display_label` 继续给 UI 展示使用，而 `X-MC-Netprobe-Build` 与 `build.header_label` 固定使用 ASCII 友好的 `v<release>+<commit>` 格式，方便 `curl -I` 和自动化脚本读取。
+
 其中 pull-mode 诊断码现在明确冻结以下语义：
 
 - `legacy_status_shape`

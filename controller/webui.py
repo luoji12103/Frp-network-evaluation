@@ -1052,6 +1052,23 @@ def create_app(
     if ASSETS_DIR.exists():
         app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
+    @app.middleware("http")
+    async def attach_build_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-MC-Netprobe-Release-Version"] = str(build_info["release_version"])
+        response.headers["X-MC-Netprobe-Build"] = str(build_info["header_label"])
+        if build_info.get("build_ref"):
+            response.headers["X-MC-Netprobe-Build-Ref"] = str(build_info["build_ref"])
+        return response
+
+    def build_payload() -> dict[str, str | None]:
+        return {
+            "release_version": build_info["release_version"],
+            "build_ref": build_info["build_ref"],
+            "display_label": build_info["display_label"],
+            "header_label": build_info["header_label"],
+        }
+
     def render_template(path: Path, **context: Any) -> HTMLResponse:
         template = Template(path.read_text(encoding="utf-8"))
         return HTMLResponse(content=template.render(**context))
@@ -1072,6 +1089,7 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def public_dashboard_page():
         snapshot = runtime.store.build_public_dashboard_snapshot()
+        snapshot["build"] = build_payload()
         return render_template(
             PUBLIC_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
@@ -1083,6 +1101,7 @@ def create_app(
         if not admin_auth.is_authenticated(request):
             return RedirectResponse(url=f"/login?next={quote('/admin', safe='/')}", status_code=303)
         snapshot = runtime.store.build_dashboard_snapshot()
+        snapshot["build"] = build_payload()
         return render_template(
             ADMIN_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
@@ -1120,14 +1139,16 @@ def create_app(
 
     @app.get("/api/v1/public-dashboard")
     def public_dashboard(time_range: str = "24h") -> PublicDashboardSnapshot:
-        return PublicDashboardSnapshot.model_validate(
-            runtime.store.build_public_dashboard_snapshot(time_range_hours=_parse_time_range(time_range))
-        )
+        snapshot = runtime.store.build_public_dashboard_snapshot(time_range_hours=_parse_time_range(time_range))
+        snapshot["build"] = build_payload()
+        return PublicDashboardSnapshot.model_validate(snapshot)
 
     @app.get("/api/v1/dashboard")
     def dashboard(request: Request) -> DashboardSnapshot:
         require_admin_api(request)
-        return DashboardSnapshot.model_validate(runtime.store.build_dashboard_snapshot())
+        snapshot = runtime.store.build_dashboard_snapshot()
+        snapshot["build"] = build_payload()
+        return DashboardSnapshot.model_validate(snapshot)
 
     @app.post("/api/v1/dashboard")
     def save_dashboard_settings(payload: PanelSettings, request: Request) -> dict[str, Any]:

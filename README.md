@@ -132,6 +132,23 @@ MC_NETPROBE_BUILD_REF="$(git rev-parse --short=12 HEAD)" docker compose up --bui
 
 the top-right badge shows `v<release> · <commit>`, which is the fastest way to confirm a live panel really picked up the new build.
 
+You can also verify the live build without opening the UI:
+
+```bash
+curl -I http://127.0.0.1:8765/api/v1/public-dashboard
+curl -s http://127.0.0.1:8765/api/v1/public-dashboard | jq '.build'
+```
+
+The panel now exposes:
+
+- response headers:
+  - `X-MC-Netprobe-Release-Version`
+  - `X-MC-Netprobe-Build-Ref`
+  - `X-MC-Netprobe-Build` using ASCII-safe format `v<release>+<commit>`
+- top-level `build` objects on:
+  - `GET /api/v1/public-dashboard`
+  - `GET /api/v1/dashboard`
+
 ## Admin Authentication
 
 The public board is open at `/` and only shows network quality information.

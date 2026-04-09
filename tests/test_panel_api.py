@@ -158,6 +158,8 @@ def test_public_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
         payload = response.json()
         assert payload["topology_name"] == "mc-netprobe-monitor"
         assert payload["summary"]["total_nodes"] == 0
+        assert payload["build"]["display_label"]
+        assert response.headers["X-MC-Netprobe-Build"]
 
 
 def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None:
@@ -180,15 +182,31 @@ def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> N
         public_page = client.get("/")
         assert public_page.status_code == 200
         assert "v9.9.9 · abc123def456" in public_page.text
+        assert public_page.headers["X-MC-Netprobe-Build"] == "v9.9.9+abc123def456"
 
         login_page = client.get("/login")
         assert login_page.status_code == 200
         assert "v9.9.9 · abc123def456" in login_page.text
+        assert login_page.headers["X-MC-Netprobe-Build-Ref"] == "abc123def456"
+
+        public_dashboard = client.get("/api/v1/public-dashboard")
+        assert public_dashboard.status_code == 200
+        assert public_dashboard.json()["build"]["display_label"] == "v9.9.9 · abc123def456"
+        assert public_dashboard.json()["build"]["header_label"] == "v9.9.9+abc123def456"
+        assert public_dashboard.headers["X-MC-Netprobe-Release-Version"] == "9.9.9"
+        assert public_dashboard.headers["X-MC-Netprobe-Build-Ref"] == "abc123def456"
+        assert public_dashboard.headers["X-MC-Netprobe-Build"] == "v9.9.9+abc123def456"
 
         login_admin(client)
         admin_page = client.get("/admin")
         assert admin_page.status_code == 200
         assert "v9.9.9 · abc123def456" in admin_page.text
+
+        dashboard = client.get("/api/v1/dashboard")
+        assert dashboard.status_code == 200
+        assert dashboard.json()["build"]["display_label"] == "v9.9.9 · abc123def456"
+        assert dashboard.json()["build"]["header_label"] == "v9.9.9+abc123def456"
+        assert dashboard.headers["X-MC-Netprobe-Build"] == "v9.9.9+abc123def456"
 
         runtime = client.get("/api/v1/admin/runtime")
         assert runtime.status_code == 200

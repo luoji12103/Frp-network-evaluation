@@ -307,6 +307,7 @@ class DashboardSnapshot(BaseModel):
     """Top-level dashboard response rendered by the panel."""
 
     topology_id: int
+    build: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, Any]
     schedules: list[dict[str, Any]]
     nodes: list[dict[str, Any]]
@@ -320,6 +321,7 @@ class PublicDashboardSnapshot(BaseModel):
 
     topology_id: int
     topology_name: str
+    build: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any]
     nodes: list[dict[str, Any]]
     latest_runs: list[dict[str, Any]]
