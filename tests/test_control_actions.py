@@ -454,6 +454,8 @@ def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:
         assert detail_before_finish["progress"]["events_count"] >= 3
         assert detail_before_finish["progress"]["latest_probe"]["task"] == "ping"
         assert detail_before_finish["progress"]["headline"] == "Latest probe ping was dispatched."
+        assert detail_before_finish["progress"]["headline_severity"] == "info"
+        assert "Wait for the probe result" in (detail_before_finish["progress"]["recommended_step"] or "")
 
         store.record_run_event(run_id, "phase_completed", "baseline phase completed", {"phase": "baseline"})
         store.finish_run(run_id=run_id, status="completed", run_result=RunResult(

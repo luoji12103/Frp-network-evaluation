@@ -2741,6 +2741,12 @@ class PanelStore:
             active_phase=active_phase,
             current_blocker=current_blocker,
         )
+        recommended_step = self._run_progress_recommended_step(
+            latest=latest,
+            current_blocker=current_blocker,
+            last_failure_code=last_failure_code,
+            last_failure_at=last_failure_at,
+        )
         return {
             "events_count": len(events),
             "last_event_kind": latest.get("event_kind"),
@@ -2756,7 +2762,7 @@ class PanelStore:
             "last_failure_code": last_failure_code,
             "last_failure_message": last_failure_message,
             "last_failure_at": last_failure_at,
-            "recommended_step": self._run_recommended_step(last_failure_code),
+            "recommended_step": recommended_step,
         }
 
     def _node_id_from_role(self, role: Any) -> int | None:
@@ -2968,6 +2974,19 @@ class PanelStore:
         if latest.get("event_kind"):
             return str(latest.get("event_kind")), "info"
         return None, "info"
+
+    def _run_progress_recommended_step(
+        self,
+        latest: dict[str, Any],
+        current_blocker: dict[str, Any] | None,
+        last_failure_code: str | None,
+        last_failure_at: str | None,
+    ) -> str | None:
+        if current_blocker and current_blocker.get("recommended_step"):
+            return str(current_blocker["recommended_step"])
+        if last_failure_code and last_failure_at and last_failure_at == latest.get("created_at"):
+            return self._run_recommended_step(last_failure_code)
+        return None
 
     def _summarize_run_event(self, event: dict[str, Any]) -> tuple[str | None, str, str | None]:
         payload = event.get("payload") or {}
