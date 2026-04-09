@@ -1069,6 +1069,13 @@ def create_app(
             "header_label": build_info["header_label"],
         }
 
+    def attach_build(payload: dict[str, Any]) -> dict[str, Any]:
+        if "build" in payload:
+            return payload
+        enriched = dict(payload)
+        enriched["build"] = build_payload()
+        return enriched
+
     def render_template(path: Path, **context: Any) -> HTMLResponse:
         template = Template(path.read_text(encoding="utf-8"))
         return HTMLResponse(content=template.render(**context))
@@ -1155,7 +1162,7 @@ def create_app(
         require_admin_api(request)
         runtime.store.update_settings(payload)
         runtime.store.update_schedule_intervals(payload)
-        return {"ok": True, "settings": runtime.store.get_settings().model_dump()}
+        return attach_build({"ok": True, "settings": runtime.store.get_settings().model_dump()})
 
     @app.get("/api/v1/history")
     def history(
@@ -1172,19 +1179,19 @@ def create_app(
     @app.get("/api/v1/admin/filters")
     def admin_filters(request: Request) -> dict[str, Any]:
         require_admin_api(request)
-        return runtime.store.list_filter_options()
+        return attach_build(runtime.store.list_filter_options())
 
     @app.get("/api/v1/admin/runtime")
     def admin_runtime(request: Request) -> dict[str, Any]:
         require_admin_api(request)
         runtime.refresh_runtime_snapshots(force=True)
-        return runtime.admin_runtime_payload()
+        return attach_build(runtime.admin_runtime_payload())
 
     @app.get("/api/v1/admin/actions")
     def admin_actions(request: Request, limit: int = 50) -> dict[str, Any]:
         require_admin_api(request)
         actions = runtime.store.list_control_actions(limit=max(1, min(limit, 200)))
-        return {"items": [runtime.enrich_control_action(action, include_snapshot=False) for action in actions]}
+        return attach_build({"items": [runtime.enrich_control_action(action, include_snapshot=False) for action in actions]})
 
     @app.get("/api/v1/admin/actions/{action_id}")
     def admin_action_detail(action_id: int, request: Request) -> dict[str, Any]:
@@ -1192,7 +1199,7 @@ def create_app(
         action = runtime.store.get_control_action(action_id)
         if action is None:
             raise HTTPException(status_code=404, detail="Action not found")
-        return runtime.enrich_control_action(action, include_snapshot=True)
+        return attach_build(runtime.enrich_control_action(action, include_snapshot=True))
 
     @app.get("/api/v1/admin/overview")
     def admin_overview(
@@ -1203,12 +1210,12 @@ def create_app(
         path_label: str | None = None,
     ) -> dict[str, Any]:
         require_admin_api(request)
-        return runtime.store.build_admin_overview(
+        return attach_build(runtime.store.build_admin_overview(
             time_range_hours=_parse_time_range(time_range),
             roles=_parse_csv_list(role),
             nodes=_parse_csv_list(node),
             path_labels=_parse_csv_list(path_label),
-        )
+        ))
 
     @app.get("/api/v1/admin/timeseries")
     def admin_timeseries(
@@ -1222,7 +1229,7 @@ def create_app(
         bucket: str = "auto",
     ) -> dict[str, Any]:
         require_admin_api(request)
-        return runtime.store.query_metric_series(
+        return attach_build(runtime.store.query_metric_series(
             time_range_hours=_parse_time_range(time_range),
             roles=_parse_csv_list(role),
             nodes=_parse_csv_list(node),
@@ -1230,7 +1237,7 @@ def create_app(
             probe_names=_parse_csv_list(probe_name),
             metric_name=metric_name,
             bucket=bucket,
-        )
+        ))
 
     @app.get("/api/v1/admin/path-health")
     def admin_path_health(
@@ -1241,12 +1248,12 @@ def create_app(
         path_label: str | None = None,
     ) -> dict[str, Any]:
         require_admin_api(request)
-        return runtime.store.build_path_health(
+        return attach_build(runtime.store.build_path_health(
             time_range_hours=_parse_time_range(time_range),
             roles=_parse_csv_list(role),
             nodes=_parse_csv_list(node),
             path_labels=_parse_csv_list(path_label),
-        )
+        ))
 
     @app.get("/api/v1/admin/runs")
     def admin_runs(
@@ -1265,7 +1272,7 @@ def create_app(
             path_labels=_parse_csv_list(path_label),
             has_findings=_parse_optional_bool(has_findings),
         )
-        return {"items": items}
+        return attach_build({"items": items})
 
     @app.get("/api/v1/admin/runs/{run_id}")
     def admin_run_detail(run_id: str, request: Request) -> dict[str, Any]:
@@ -1273,7 +1280,7 @@ def create_app(
         payload = runtime.store.get_run_detail(run_id)
         if payload is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        return payload
+        return attach_build(payload)
 
     @app.get("/api/v1/admin/runs/{run_id}/events")
     def admin_run_events(run_id: str, request: Request) -> dict[str, Any]:
@@ -1281,7 +1288,7 @@ def create_app(
         if runtime.store.get_run_detail(run_id) is None:
             raise HTTPException(status_code=404, detail="Run not found")
         items = [RunEventEnvelope.model_validate(item).model_dump() for item in runtime.store.list_run_events(run_id)]
-        return {"items": items}
+        return attach_build({"items": items})
 
     @app.get("/api/v1/admin/alerts")
     def admin_alerts(
@@ -1297,7 +1304,7 @@ def create_app(
         fingerprint: str | None = None,
     ) -> dict[str, Any]:
         require_admin_api(request)
-        return runtime.store.query_alert_events(
+        return attach_build(runtime.store.query_alert_events(
             time_range_hours=_parse_time_range(time_range),
             severities=_parse_csv_list(severity),
             statuses=_parse_csv_list(status),
@@ -1307,7 +1314,7 @@ def create_app(
             acknowledged=_parse_optional_bool(acknowledged),
             anomaly_only=anomaly_only,
             fingerprint=fingerprint,
-        )
+        ))
 
     @app.post("/api/v1/admin/alerts/{alert_id}/ack")
     def admin_ack_alert(alert_id: int, payload: AlertAcknowledgeRequest, request: Request) -> dict[str, Any]:
@@ -1315,7 +1322,7 @@ def create_app(
         alert = runtime.store.acknowledge_alert(alert_id=alert_id, actor=payload.actor)
         if alert is None:
             raise HTTPException(status_code=404, detail="Alert not found")
-        return {"ok": True, "alert": alert}
+        return attach_build({"ok": True, "alert": alert})
 
     @app.post("/api/v1/admin/alerts/{alert_id}/silence")
     def admin_silence_alert(alert_id: int, payload: AlertSilenceRequest, request: Request) -> dict[str, Any]:
@@ -1328,7 +1335,7 @@ def create_app(
         )
         if alert is None:
             raise HTTPException(status_code=404, detail="Alert not found")
-        return {"ok": True, "alert": alert}
+        return attach_build({"ok": True, "alert": alert})
 
     @app.post("/api/v1/nodes")
     def upsert_node(payload: NodeUpsertRequest, request: Request) -> dict[str, Any]:

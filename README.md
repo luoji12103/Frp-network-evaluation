@@ -148,6 +148,10 @@ The panel now exposes:
 - top-level `build` objects on:
   - `GET /api/v1/public-dashboard`
   - `GET /api/v1/dashboard`
+  - core admin JSON responses such as:
+    - `GET /api/v1/admin/runtime`
+    - `GET /api/v1/admin/actions`
+    - `GET /api/v1/admin/runs`
 
 ## Admin Authentication
 

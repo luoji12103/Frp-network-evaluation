@@ -175,6 +175,7 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
 
         runtime_response = client.get("/api/v1/admin/runtime")
         assert runtime_response.status_code == 200
+        assert runtime_response.json()["build"]["display_label"]
         node_runtime = runtime_response.json()["nodes"][0]
         assert node_runtime["endpoints"]["control_bridge_url"] == "http://relay.example:9871"
         assert node_runtime["runtime"]["details"]["available_actions"] == [
@@ -206,6 +207,11 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         assert "pull checks are failing" in (actions[0]["target_operator_summary"] or "")
         assert actions[0]["target_suggested_action"]["kind"] == "sync_runtime"
         assert actions[0]["target_suggested_action"]["target_id"] == node["id"]
+
+        action_list = client.get("/api/v1/admin/actions").json()
+        assert action_list["build"]["display_label"]
+        detail = client.get(f"/api/v1/admin/actions/{actions[0]['id']}").json()
+        assert detail["build"]["display_label"]
 
         stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored_node["runtime"]["state"] == "running"

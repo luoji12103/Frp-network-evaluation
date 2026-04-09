@@ -222,6 +222,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 - `GET /api/v1/public-dashboard` 顶层包含 `build`
 - `GET /api/v1/dashboard` 顶层包含 `build`
+- 主要 `GET /api/v1/admin/*` JSON 响应也会包含顶层 `build`
 - 所有 panel 响应都会附带：
   - `X-MC-Netprobe-Release-Version`
   - `X-MC-Netprobe-Build-Ref`

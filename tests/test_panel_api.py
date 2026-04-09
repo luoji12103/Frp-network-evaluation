@@ -210,6 +210,8 @@ def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> N
 
         runtime = client.get("/api/v1/admin/runtime")
         assert runtime.status_code == 200
+        assert runtime.json()["build"]["display_label"] == "v9.9.9 · abc123def456"
+        assert runtime.json()["build"]["header_label"] == "v9.9.9+abc123def456"
         details = runtime.json()["panel"]["runtime"]["details"]
         assert details["panel_release_version"] == "9.9.9"
         assert details["panel_build_ref"] == "abc123def456"
