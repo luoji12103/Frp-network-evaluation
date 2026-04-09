@@ -247,6 +247,9 @@ class ControlActionEnvelope(BaseModel):
     result_summary: str | None = None
     error_code: str | None = None
     error_detail: str | None = None
+    summary: str | None = None
+    severity: str = "info"
+    code: str | None = None
     target_name: str | None = None
     is_dangerous: bool = False
     has_log_excerpt: bool = False

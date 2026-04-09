@@ -197,6 +197,8 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         assert actions[0]["target_name"] == "relay-1"
         assert actions[0]["has_runtime_snapshot"] is True
         assert actions[0]["active"] is False
+        assert actions[0]["severity"] == "info"
+        assert "handled for relay-1" in (actions[0]["summary"] or "")
 
         stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored_node["runtime"]["state"] == "running"
@@ -337,8 +339,10 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
         assert action["status"] == "completed"
         assert action["target_name"] == "panel"
         assert action["has_log_excerpt"] is True
+        assert action["severity"] == "info"
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert "panel-native.log" in (detail["result_summary"] or "")
+        assert "panel-native.log" in (detail["summary"] or "")
         assert detail["log_excerpt"][-1] == "line-c"
         assert detail["runtime_snapshot"]["supervisor"]["supervisor_state"] == "native-readonly"
 
@@ -381,6 +385,9 @@ def test_failed_node_action_immediately_marks_bridge_unavailable(tmp_path: Path)
 
         action = client.get("/api/v1/admin/actions").json()["items"][0]
         assert action["status"] == "failed"
+        assert action["severity"] == "warning"
+        assert "could not connect" in (action["summary"] or "")
+        assert action["code"] == "connect_error"
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert detail["failure"]["code"] == "connect_error"
 
@@ -403,6 +410,9 @@ def test_failed_panel_action_immediately_marks_bridge_unavailable(tmp_path: Path
 
         action = client.get("/api/v1/admin/actions").json()["items"][0]
         assert action["status"] == "failed"
+        assert action["severity"] == "warning"
+        assert "could not connect" in (action["summary"] or "")
+        assert action["code"] == "connect_error"
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert detail["failure"]["code"] == "connect_error"
 

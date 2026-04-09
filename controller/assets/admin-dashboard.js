@@ -1491,7 +1491,7 @@
         <td>${escapeHtml(item.action || "")}</td>
         <td><span class="status-pill ${escapeHtml(item.status || "")}">${escapeHtml(statusLabel(item.status || ""))}</span></td>
         <td>${escapeHtml(formatTimestamp(item.started_at || item.requested_at))}</td>
-        <td>${escapeHtml(item.result_summary || item.error_detail || t("noData"))}</td>
+        <td>${item.severity ? `<span class="status-pill ${escapeHtml(item.severity)}">${escapeHtml(severityLabel(item.severity))}</span> ` : ""}${escapeHtml(item.summary || t("noData"))}</td>
       </tr>
     `).join("");
   }
@@ -1522,8 +1522,8 @@
         <div class="muted">${escapeHtml(t("startedAt"))}: ${escapeHtml(formatTimestamp(action.started_at || action.requested_at))}</div>
         <div class="muted">${escapeHtml(t("finishedAt"))}: ${escapeHtml(formatTimestamp(action.finished_at))}</div>
         <div class="muted">${escapeHtml(t("transport"))}: ${escapeHtml(action.transport || t("noData"))}</div>
-        <div class="muted">${escapeHtml(t("result"))}: ${escapeHtml(action.result_summary || t("noData"))}</div>
-        ${(failure.code || failure.detail) ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml([failure.code, failure.detail].filter(Boolean).join(" | "))}</div>` : ""}
+        <div class="muted">${escapeHtml(t("result"))}: ${action.severity ? `<span class="status-pill ${escapeHtml(action.severity)}">${escapeHtml(severityLabel(action.severity))}</span> ` : ""}${escapeHtml(action.summary || t("noData"))}</div>
+        ${(action.code || failure.code || failure.detail) ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml([action.code || failure.code, failure.detail].filter(Boolean).join(" | "))}</div>` : ""}
         <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(action.log_location || t("noData"))}</div>
         <div>
           <h3>${escapeHtml(t("logExcerpt"))}</h3>

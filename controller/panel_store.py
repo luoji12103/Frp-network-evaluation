@@ -2545,11 +2545,15 @@ class PanelStore:
                 "code": action.get("error_code"),
                 "detail": action.get("error_detail"),
             }
+        summary, severity, code = self._control_action_summary(action)
         action["target_name"] = target_name
         action["is_dangerous"] = _is_dangerous_control_action(str(action.get("action") or ""))
         action["has_log_excerpt"] = bool(log_excerpt)
         action["has_runtime_snapshot"] = bool(runtime_snapshot["runtime"] or runtime_snapshot["supervisor"])
         action["active"] = str(action.get("status") or "") in {"queued", "running"}
+        action["summary"] = summary
+        action["severity"] = severity
+        action["code"] = code
         if include_detail:
             action["request"] = request_payload
             action["response"] = response_payload
@@ -2561,6 +2565,38 @@ class PanelStore:
             action.pop("audit_payload", None)
         action.pop("audit_payload_json", None)
         return action
+
+    def _control_action_summary(self, action: dict[str, Any]) -> tuple[str | None, str, str | None]:
+        status = str(action.get("status") or "")
+        result_summary = action.get("result_summary")
+        error_code = action.get("error_code")
+        error_detail = action.get("error_detail")
+        action_name = str(action.get("action") or "action")
+        if status in {"queued", "running"}:
+            return (
+                result_summary or f"{action_name} is {status}",
+                "info",
+                None,
+            )
+        if status == "failed":
+            return (
+                error_detail or result_summary or f"{action_name} failed",
+                "warning",
+                str(error_code) if error_code else None,
+            )
+        if status == "canceled":
+            return (
+                result_summary or f"{action_name} was canceled",
+                "warning",
+                str(error_code) if error_code else None,
+            )
+        if status == "completed":
+            return (
+                result_summary or f"{action_name} completed",
+                "info",
+                str(error_code) if error_code else None,
+            )
+        return (result_summary or error_detail or None, "info", str(error_code) if error_code else None)
 
     def _decorate_run_event(self, event: dict[str, Any]) -> dict[str, Any]:
         event["payload"] = _loads(event.get("payload_json") or "{}")
