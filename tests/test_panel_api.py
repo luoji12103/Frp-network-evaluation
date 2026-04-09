@@ -356,6 +356,44 @@ def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Pat
         assert detail["active_run"]["progress"]["active_phase"] == "baseline"
 
 
+def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        store = client.app.state.runtime.store
+        run_id = store.create_run("baseline", "test")
+        store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
+        store.record_run_event(
+            run_id,
+            "queue_timeout",
+            "ping queued job timed out on relay-1",
+            {
+                "job_id": 42,
+                "task": "ping",
+                "node_name": "relay-1",
+                "queue_status": "pending",
+                "error": "Timed out waiting for job 42",
+                "error_code": "queue_not_leased",
+                "job": {
+                    "job_id": 42,
+                    "task": "ping",
+                    "status": "pending",
+                    "lease_state": "not-leased",
+                },
+            },
+        )
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        run_item = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "run")
+        assert run_item["severity"] == "warning"
+        assert run_item["code"] == "queue_not_leased"
+        assert "queue job 42 pending" in run_item["summary"]
+
+        queue_item = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "run-queue")
+        assert queue_item["run_id"] == run_id
+        assert queue_item["code"] == "queue_not_leased"
+        assert "Job 42" in queue_item["summary"]
+
+
 def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         login_admin(client)

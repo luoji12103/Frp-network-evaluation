@@ -446,23 +446,54 @@ class PanelRuntime:
             progress = active_run.get("progress") or {}
             phase = progress.get("active_phase")
             last_event = progress.get("last_event_message") or progress.get("last_event_kind")
+            latest_queue_job = progress.get("latest_queue_job") or {}
+            run_failure_code = progress.get("last_failure_code") or latest_queue_job.get("error_code")
+            queue_summary = ""
+            if latest_queue_job.get("job_id"):
+                queue_summary = (
+                    f"; queue job {latest_queue_job.get('job_id')} "
+                    f"{latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'}"
+                )
             items.append(
                 {
-                    "severity": "info",
+                    "severity": "warning" if run_failure_code else "info",
                     "kind": "run",
                     "title": "Monitoring run in progress",
                     "summary": (
                         f"{active_run.get('run_kind')} run {active_run.get('run_id')} is active"
                         + (f" in phase {phase}" if phase else "")
                         + (f"; latest event: {last_event}" if last_event else "")
+                        + queue_summary
                     ),
                     "run_id": active_run.get("run_id"),
-                    "code": progress.get("last_failure_code"),
+                    "code": run_failure_code,
                     "target_kind": "run",
                     "target_name": active_run.get("run_id"),
                     "recommended_step": progress.get("recommended_step") or "Open the run detail to follow progress before starting another monitoring run.",
                 }
             )
+            if latest_queue_job.get("job_id") and (
+                run_failure_code or latest_queue_job.get("status") in {"pending", "leased", "completion_ignored", "failed"}
+            ):
+                lease_expires_at = latest_queue_job.get("lease_expires_at")
+                items.append(
+                    {
+                        "severity": "warning" if run_failure_code or latest_queue_job.get("status") in {"completion_ignored", "failed"} else "info",
+                        "kind": "run-queue",
+                        "title": "Queued job needs attention",
+                        "summary": (
+                            f"Job {latest_queue_job.get('job_id')} for {latest_queue_job.get('task') or 'queued task'} "
+                            f"on {latest_queue_job.get('node_name') or 'node'} is "
+                            f"{latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'}"
+                            + (f"; lease expires at {lease_expires_at}" if lease_expires_at else "")
+                        ),
+                        "run_id": active_run.get("run_id"),
+                        "code": run_failure_code or latest_queue_job.get("status"),
+                        "target_kind": "run",
+                        "target_name": active_run.get("run_id"),
+                        "recommended_step": progress.get("recommended_step") or "Open the run detail and inspect the queued job timeline before rerunning the phase.",
+                    }
+                )
 
         panel_runtime = panel.get("runtime", {})
         panel_error = panel_runtime.get("last_error") or (panel.get("supervisor") or {}).get("last_error")
