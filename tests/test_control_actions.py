@@ -12,6 +12,7 @@ from controller.panel_models import (
     RuntimeSummary,
     SupervisorSummary,
 )
+from controller.control_bridge_client import ControlBridgeError
 from controller.webui import create_app
 from probes.common import RunResult, now_iso
 
@@ -121,6 +122,20 @@ class FakeControlClient:
         )
 
 
+class FailingBridgeControlClient(FakeControlClient):
+    def node_runtime(self, node: dict[str, object]) -> BridgeActionResponse:
+        raise ControlBridgeError("connect_error", "could not connect to http://relay.example:9871")
+
+    def node_action(self, node: dict[str, object], action: str, tail_lines: int | None = None) -> BridgeActionResponse:
+        raise ControlBridgeError("connect_error", "could not connect to http://relay.example:9871")
+
+    def panel_runtime(self) -> BridgeActionResponse:
+        raise ControlBridgeError("connect_error", "could not connect to http://panel-control-bridge:8877")
+
+    def panel_action(self, action: str, tail_lines: int | None = None) -> BridgeActionResponse:
+        raise ControlBridgeError("connect_error", "could not connect to http://panel-control-bridge:8877")
+
+
 def seed_paired_node(client: TestClient) -> dict[str, object]:
     node = client.post(
         "/api/v1/nodes",
@@ -187,6 +202,34 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         assert stored_node["runtime"]["state"] == "running"
         assert stored_node["supervisor"]["control_available"] is True
         assert stored_node["runtime"]["details"]["active_action_id"] is None
+
+
+def test_node_actions_are_hidden_when_control_bridge_runtime_is_unreachable(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = seed_paired_node(client)
+        runtime = client.app.state.runtime
+        runtime.control = FailingBridgeControlClient()
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        node_runtime = next(item for item in runtime_payload["nodes"] if item["id"] == node["id"])
+        assert node_runtime["supervisor"]["control_available"] is False
+        assert node_runtime["runtime"]["details"]["bridge_error_code"] == "connect_error"
+        assert node_runtime["runtime"]["details"]["available_actions"] == []
+        assert "unreachable" in (node_runtime["runtime"]["details"]["readonly_reason"] or "")
+        assert any(
+            item["kind"] == "node-control"
+            and item["target_name"] == "relay-1"
+            and item["code"] == "connect_error"
+            for item in runtime_payload["attention"]["items"]
+        )
+
+        restart = client.post(
+            f"/api/v1/admin/nodes/{node['id']}/actions",
+            json={"action": "restart", "actor": "admin-ui"},
+        )
+        assert restart.status_code == 409
+        assert "unreachable" in restart.json()["detail"]
 
 
 def test_node_actions_are_serialized_per_target_and_conflicts_include_active_action(tmp_path: Path) -> None:
@@ -298,6 +341,78 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
         assert "panel-native.log" in (detail["result_summary"] or "")
         assert detail["log_excerpt"][-1] == "line-c"
         assert detail["runtime_snapshot"]["supervisor"]["supervisor_state"] == "native-readonly"
+
+
+def test_panel_bridge_actions_are_hidden_when_bridge_runtime_is_unreachable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL", "http://panel-control-bridge:8877")
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        runtime.control = FailingBridgeControlClient()
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
+        assert runtime_payload["runtime"]["details"]["bridge_error_code"] == "connect_error"
+        assert runtime_payload["runtime"]["details"]["available_actions"] == [
+            "sync_runtime",
+            "pause_scheduler",
+            "resume_scheduler",
+        ]
+        assert "unreachable" in (runtime_payload["runtime"]["details"]["readonly_reason"] or "")
+
+        restart = client.post("/api/v1/admin/panel/actions", json={"action": "restart", "actor": "admin-ui"})
+        assert restart.status_code == 409
+        assert "unreachable" in restart.json()["detail"]
+
+
+def test_failed_node_action_immediately_marks_bridge_unavailable(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        node = seed_paired_node(client)
+        runtime = client.app.state.runtime
+        runtime.control = FailingBridgeControlClient()
+
+        queued = client.post(
+            f"/api/v1/admin/nodes/{node['id']}/actions",
+            json={"action": "sync_runtime", "actor": "admin-ui"},
+        )
+        assert queued.status_code == 200
+
+        runtime.run_maintenance_cycle(force_runtime_sync=True)
+
+        action = client.get("/api/v1/admin/actions").json()["items"][0]
+        assert action["status"] == "failed"
+        detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
+        assert detail["failure"]["code"] == "connect_error"
+
+        node_payload = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert node_payload["runtime"]["details"]["bridge_error_code"] == "connect_error"
+        assert node_payload["runtime"]["details"]["available_actions"] == []
+
+
+def test_failed_panel_action_immediately_marks_bridge_unavailable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL", "http://panel-control-bridge:8877")
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        runtime.control = FailingBridgeControlClient()
+
+        queued = client.post("/api/v1/admin/panel/actions", json={"action": "tail_log", "actor": "admin-ui"})
+        assert queued.status_code == 200
+
+        runtime.run_maintenance_cycle(force_runtime_sync=True)
+
+        action = client.get("/api/v1/admin/actions").json()["items"][0]
+        assert action["status"] == "failed"
+        detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
+        assert detail["failure"]["code"] == "connect_error"
+
+        panel_payload = client.get("/api/v1/admin/runtime").json()["panel"]
+        assert panel_payload["runtime"]["details"]["bridge_error_code"] == "connect_error"
+        assert panel_payload["runtime"]["details"]["available_actions"] == [
+            "sync_runtime",
+            "pause_scheduler",
+            "resume_scheduler",
+        ]
 
 
 def test_action_detail_returns_normalized_log_and_runtime_snapshot(tmp_path: Path) -> None:

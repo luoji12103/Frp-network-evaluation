@@ -166,9 +166,9 @@ class PanelRuntime:
         if action in {"status", "sync_runtime", "pause_scheduler", "resume_scheduler"}:
             return True
         if action == "tail_log":
-            return bool(self._panel_bridge_url or self._existing_panel_log_path())
+            return bool(self._existing_panel_log_path() or self._panel_bridge_control_available())
         if action in {"restart", "stop"}:
-            return bool(self._panel_bridge_url)
+            return self._panel_bridge_control_available()
         return False
 
     def panel_action_unavailable_reason(self, action: str) -> str | None:
@@ -182,6 +182,8 @@ class PanelRuntime:
                 "or a native log file such as MC_NETPROBE_PANEL_LOG_FILE / logs/panel-native.log"
             )
         if action in {"restart", "stop"}:
+            if self._panel_bridge_url:
+                return "Panel control bridge is configured but currently unreachable; retry sync runtime after the bridge recovers"
             return (
                 "Native panel deployments expose read-only runtime plus scheduler control; "
                 f"{action} requires a configured panel control bridge"
@@ -200,11 +202,7 @@ class PanelRuntime:
             "control_mode": "bridge-managed" if self._panel_bridge_url else "native-readonly",
             "control_bridge_configured": bool(self._panel_bridge_url),
             "available_actions": self._panel_available_actions(),
-            "readonly_reason": (
-                None
-                if self._panel_bridge_url
-                else "Native panel deployments expose read-only runtime, scheduler control, and optional local log tailing."
-            ),
+            "readonly_reason": self._panel_readonly_reason(),
             "active_action_id": active_action.get("id") if active_action else None,
             "active_action_summary": self._active_action_summary(active_action),
             "pid": os.getpid(),
@@ -215,6 +213,9 @@ class PanelRuntime:
             details["bridge_runtime_state"] = bridge_runtime.get("state")
             details["bridge_checked_at"] = bridge_runtime.get("checked_at")
             details["bridge_last_error"] = bridge_runtime.get("last_error")
+            bridge_runtime_details = bridge_runtime.get("details") or {}
+            if isinstance(bridge_runtime_details, dict) and bridge_runtime_details.get("bridge_error_code"):
+                details["bridge_error_code"] = bridge_runtime_details.get("bridge_error_code")
         return {
             "runtime": {
                 "state": "running",
@@ -254,24 +255,11 @@ class PanelRuntime:
                     supervisor_summary=bridge_state.supervisor.model_dump(),
                 )
             except Exception as exc:
+                runtime_summary, supervisor_summary = self._node_bridge_failure_payload(node=node, exc=exc)
                 self.store.update_node_runtime_summaries(
                     node_id=int(node["id"]),
-                    runtime_summary={
-                        "state": "unknown",
-                        "checked_at": now_iso(),
-                        "last_error": str(exc),
-                        "details": {},
-                    },
-                    supervisor_summary={
-                        "control_available": False,
-                        "bridge_url": node.get("endpoints", {}).get("control_bridge_url"),
-                        "supervisor_state": "unknown",
-                        "process_state": "unknown",
-                        "pid_or_container_id": None,
-                        "log_location": None,
-                        "last_error": str(exc),
-                        "checked_at": now_iso(),
-                    },
+                    runtime_summary=runtime_summary,
+                    supervisor_summary=supervisor_summary,
                 )
         if not self._panel_bridge_url:
             self._panel_bridge_state = self.runtime_snapshot()
@@ -283,28 +271,7 @@ class PanelRuntime:
                 "supervisor": response.supervisor.model_dump(),
             }
         except Exception as exc:
-            self._panel_bridge_state = {
-                "runtime": {
-                    "state": "running",
-                    "checked_at": now_iso(),
-                    "last_error": str(exc),
-                    "details": {
-                        "started_at": self._started_at,
-                        "last_loop_at": self._last_loop_at,
-                        "scheduler_paused": self._scheduler_paused,
-                    },
-                },
-                "supervisor": {
-                    "control_available": False,
-                    "bridge_url": self._panel_bridge_url,
-                    "supervisor_state": "unknown",
-                    "process_state": "unknown",
-                    "pid_or_container_id": None,
-                    "log_location": None,
-                    "last_error": str(exc),
-                    "checked_at": now_iso(),
-                },
-            }
+            self._panel_bridge_state = self._panel_bridge_failure_state(exc)
 
     def _process_control_actions(self) -> None:
         for action in self.store.list_pending_control_actions(limit=8):
@@ -316,6 +283,7 @@ class PanelRuntime:
         name = str(action["action"])
         tail_lines = action.get("audit_payload", {}).get("request", {}).get("tail_lines")
         transport = "panel_internal" if target_kind == "panel" and name in {"pause_scheduler", "resume_scheduler"} else f"{target_kind}_bridge"
+        node: dict[str, Any] | None = None
         self.store.start_control_action(int(action["id"]), transport=transport)
         try:
             if target_kind == "panel":
@@ -340,6 +308,15 @@ class PanelRuntime:
             )
         except Exception as exc:
             error_code = exc.code if isinstance(exc, (ControlBridgeError,)) else "control_action_failed"
+            if target_kind == "panel" and isinstance(exc, ControlBridgeError):
+                self._panel_bridge_state = self._panel_bridge_failure_state(exc)
+            if target_kind == "node" and isinstance(exc, ControlBridgeError) and node is not None:
+                runtime_summary, supervisor_summary = self._node_bridge_failure_payload(node=node, exc=exc)
+                self.store.update_node_runtime_summaries(
+                    node_id=int(node["id"]),
+                    runtime_summary=runtime_summary,
+                    supervisor_summary=supervisor_summary,
+                )
             self.store.finish_control_action(
                 int(action["id"]),
                 status="failed",
@@ -349,6 +326,55 @@ class PanelRuntime:
                 transport=transport,
                 audit_payload={"response": {"error": str(exc)}},
             )
+
+    def _node_bridge_failure_payload(self, node: dict[str, Any], exc: Exception) -> tuple[dict[str, Any], dict[str, Any]]:
+        error_code = exc.code if isinstance(exc, ControlBridgeError) else "control_bridge_unreachable"
+        current = now_iso()
+        return (
+            {
+                "state": "unknown",
+                "checked_at": current,
+                "last_error": str(exc),
+                "details": {"bridge_error_code": error_code},
+            },
+            {
+                "control_available": False,
+                "bridge_url": node.get("endpoints", {}).get("control_bridge_url"),
+                "supervisor_state": "unknown",
+                "process_state": "unknown",
+                "pid_or_container_id": None,
+                "log_location": None,
+                "last_error": str(exc),
+                "checked_at": current,
+            },
+        )
+
+    def _panel_bridge_failure_state(self, exc: Exception) -> dict[str, Any]:
+        error_code = exc.code if isinstance(exc, ControlBridgeError) else "control_bridge_unreachable"
+        current = now_iso()
+        return {
+            "runtime": {
+                "state": "running",
+                "checked_at": current,
+                "last_error": str(exc),
+                "details": {
+                    "started_at": self._started_at,
+                    "last_loop_at": self._last_loop_at,
+                    "scheduler_paused": self._scheduler_paused,
+                    "bridge_error_code": error_code,
+                },
+            },
+            "supervisor": {
+                "control_available": False,
+                "bridge_url": self._panel_bridge_url,
+                "supervisor_state": "unknown",
+                "process_state": "unknown",
+                "pid_or_container_id": None,
+                "log_location": None,
+                "last_error": str(exc),
+                "checked_at": current,
+            },
+        }
 
     def _execute_panel_action(self, name: str, tail_lines: int | None) -> tuple[Any, str]:
         if name == "pause_scheduler":
@@ -383,11 +409,26 @@ class PanelRuntime:
 
     def _panel_available_actions(self) -> list[str]:
         actions = ["sync_runtime", "pause_scheduler", "resume_scheduler"]
-        if self._panel_bridge_url or self._existing_panel_log_path():
+        if self._existing_panel_log_path() or self._panel_bridge_control_available():
             actions.append("tail_log")
-        if self._panel_bridge_url:
+        if self._panel_bridge_control_available():
             actions.extend(["restart", "stop"])
         return actions
+
+    def _panel_bridge_control_available(self) -> bool:
+        if not self._panel_bridge_url:
+            return False
+        supervisor = self._panel_bridge_state.get("supervisor") or {}
+        if supervisor.get("checked_at") is None:
+            return True
+        return bool(supervisor.get("control_available"))
+
+    def _panel_readonly_reason(self) -> str | None:
+        if not self._panel_bridge_url:
+            return "Native panel deployments expose read-only runtime, scheduler control, and optional local log tailing."
+        if not self._panel_bridge_control_available():
+            return "Panel control bridge is configured but currently unreachable; only scheduler control and any local log tailing remain available."
+        return None
 
     def _active_action_summary(self, action: dict[str, Any] | None) -> str | None:
         if not action:
@@ -432,7 +473,7 @@ class PanelRuntime:
                     "kind": "panel",
                     "title": "Panel runtime needs attention",
                     "summary": str(panel_error),
-                    "code": "panel_runtime_error",
+                    "code": panel_runtime.get("details", {}).get("bridge_error_code") or "panel_runtime_error",
                     "target_kind": "panel",
                     "target_name": "panel",
                     "recommended_step": "Sync runtime or inspect panel logs before issuing more control actions.",
@@ -442,21 +483,37 @@ class PanelRuntime:
         for node in nodes:
             connectivity = node.get("connectivity") or {}
             level = str(connectivity.get("attention_level") or "ok")
-            if level == "ok":
-                continue
-            items.append(
-                {
-                    "severity": level,
-                    "kind": "node",
-                    "title": f"{node.get('role')} node {node.get('status')}",
-                    "summary": connectivity.get("summary"),
-                    "code": connectivity.get("diagnostic_code"),
-                    "target_kind": "node",
-                    "target_id": node.get("id"),
-                    "target_name": node.get("node_name"),
-                    "recommended_step": connectivity.get("recommended_step"),
-                }
-            )
+            runtime_details = node.get("runtime", {}).get("details", {})
+            supervisor = node.get("supervisor", {})
+            if level != "ok":
+                items.append(
+                    {
+                        "severity": level,
+                        "kind": "node",
+                        "title": f"{node.get('role')} node {node.get('status')}",
+                        "summary": connectivity.get("summary"),
+                        "code": connectivity.get("diagnostic_code"),
+                        "target_kind": "node",
+                        "target_id": node.get("id"),
+                        "target_name": node.get("node_name"),
+                        "recommended_step": connectivity.get("recommended_step"),
+                    }
+                )
+            bridge_error_code = runtime_details.get("bridge_error_code")
+            if bridge_error_code and supervisor.get("control_available") is False:
+                items.append(
+                    {
+                        "severity": "warning",
+                        "kind": "node-control",
+                        "title": f"{node.get('role')} control bridge unavailable",
+                        "summary": supervisor.get("last_error") or runtime_details.get("readonly_reason"),
+                        "code": bridge_error_code,
+                        "target_kind": "node",
+                        "target_id": node.get("id"),
+                        "target_name": node.get("node_name"),
+                        "recommended_step": "Wait for the control bridge to recover or restart the host-managed bridge before issuing lifecycle actions.",
+                    }
+                )
 
         severity_order = {"error": 0, "warning": 1, "info": 2, "ok": 3}
         items.sort(key=lambda item: (severity_order.get(str(item.get("severity")), 99), str(item.get("title") or "")))

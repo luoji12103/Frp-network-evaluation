@@ -2422,6 +2422,8 @@ class PanelStore:
         endpoint_mismatch = bool(configured_pull_url and advertised_pull_url and not _urls_match(configured_pull_url, advertised_pull_url))
         action_lookup = active_actions or self._active_control_action_map(target_kind="node", target_id=int(node["id"]))
         active_action = action_lookup.get(("node", int(node["id"])))
+        node["runtime"] = runtime_summary
+        node["supervisor"] = supervisor_summary
         runtime_details = dict(runtime_summary.get("details") or {})
         available_actions, readonly_reason = self._derive_node_available_actions(node=node, control_bridge_url=control_bridge_url)
         runtime_details["available_actions"] = available_actions
@@ -2433,8 +2435,6 @@ class PanelStore:
         node["capabilities"] = capabilities
         node["endpoint_report"] = endpoint_report
         node["runtime_status"] = runtime_status
-        node["runtime"] = runtime_summary
-        node["supervisor"] = supervisor_summary
         node["active_action"] = active_action
         connectivity_status = self._classify_node(node)
         connectivity_diagnostic = self._build_connectivity_diagnostic(
@@ -2786,6 +2786,15 @@ class PanelStore:
             return [], "Node must be paired before runtime actions are available"
         if not control_bridge_url:
             return [], "Node control bridge is unavailable for this node"
+        runtime_details = node.get("runtime", {}).get("details", {})
+        supervisor = node.get("supervisor", {})
+        if supervisor.get("checked_at") and supervisor.get("control_available") is False:
+            code = str(runtime_details.get("bridge_error_code") or "control_bridge_unreachable")
+            if code == "auth_error":
+                return [], "Node control bridge rejected authentication; re-pair or refresh node credentials before lifecycle actions."
+            if code in {"timeout", "connect_error", "bridge_unavailable", "control_bridge_unreachable"}:
+                return [], "Node control bridge is currently unreachable; retry sync runtime after the bridge recovers."
+            return [], "Node control bridge is unavailable for lifecycle actions right now."
         return ["sync_runtime", "tail_log", "start", "restart", "stop"], None
 
     def _control_action_brief(self, action: dict[str, Any] | None) -> str | None:
