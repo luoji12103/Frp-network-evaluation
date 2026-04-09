@@ -342,6 +342,12 @@ class PanelRuntime:
         action["target_attention_level"] = connectivity.get("attention_level")
         action["target_operator_summary"] = runtime_details.get("operator_summary") or snapshot.get("operator_summary")
         action["target_operator_severity"] = runtime_details.get("operator_severity") or snapshot.get("operator_severity") or "info"
+        action["target_operator_recommended_step"] = (
+            runtime_details.get("operator_recommended_step") or snapshot.get("operator_recommended_step")
+        )
+        action["target_suggested_action"] = runtime_details.get("suggested_action") or snapshot.get("suggested_action")
+        action["target_active_run_id"] = snapshot.get("active_run_id")
+        action["target_active_action_id"] = snapshot.get("active_action_id")
         if include_snapshot:
             action["target_snapshot"] = snapshot
         return action

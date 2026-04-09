@@ -1727,18 +1727,30 @@
       body.innerHTML = `<tr><td colspan="5"><div class="empty">${escapeHtml(t("noData"))}</div></td></tr>`;
       return;
     }
-    body.innerHTML = items.map((item) => `
-      <tr class="interactive-row ${Number(item.id) === Number(state.selectedActionId || 0) ? "selected" : ""}" data-action-id="${escapeHtml(String(item.id))}">
-        <td>
-          <div>${escapeHtml(item.target_kind === "panel" ? t("panelTarget") : (item.target_name || String(item.target_id || "")))}</div>
-          ${(item.target_status || item.target_runtime_state) ? `<div class="muted">${item.target_status ? `<span class="status-pill ${escapeHtml(item.target_attention_level || item.target_status)}">${escapeHtml(statusLabel(item.target_status))}</span>` : ""}${item.target_runtime_state ? ` <span class="status-pill ${escapeHtml(item.target_runtime_state)}">${escapeHtml(statusLabel(item.target_runtime_state))}</span>` : ""}</div>` : ""}
-        </td>
-        <td>${escapeHtml(item.action || "")}</td>
-        <td><span class="status-pill ${escapeHtml(item.status || "")}">${escapeHtml(statusLabel(item.status || ""))}</span></td>
-        <td>${escapeHtml(formatTimestamp(item.started_at || item.requested_at))}</td>
-        <td>${item.severity ? `<span class="status-pill ${escapeHtml(item.severity)}">${escapeHtml(severityLabel(item.severity))}</span> ` : ""}${escapeHtml(item.summary || t("noData"))}${item.target_operator_summary ? `<div class="muted">${escapeHtml(item.target_operator_summary)}</div>` : ""}</td>
-      </tr>
-    `).join("");
+    body.innerHTML = items.map((item) => {
+      const targetSuggestedAction = item.target_suggested_action || null;
+      const actionButtons = [];
+      if (targetSuggestedAction) {
+        actionButtons.push(renderSuggestedActionButton(targetSuggestedAction));
+      }
+      return `
+        <tr class="interactive-row ${Number(item.id) === Number(state.selectedActionId || 0) ? "selected" : ""}" data-action-id="${escapeHtml(String(item.id))}">
+          <td>
+            <div>${escapeHtml(item.target_kind === "panel" ? t("panelTarget") : (item.target_name || String(item.target_id || "")))}</div>
+            ${(item.target_status || item.target_runtime_state) ? `<div class="muted">${item.target_status ? `<span class="status-pill ${escapeHtml(item.target_attention_level || item.target_status)}">${escapeHtml(statusLabel(item.target_status))}</span>` : ""}${item.target_runtime_state ? ` <span class="status-pill ${escapeHtml(item.target_runtime_state)}">${escapeHtml(statusLabel(item.target_runtime_state))}</span>` : ""}</div>` : ""}
+          </td>
+          <td>${escapeHtml(item.action || "")}</td>
+          <td><span class="status-pill ${escapeHtml(item.status || "")}">${escapeHtml(statusLabel(item.status || ""))}</span></td>
+          <td>${escapeHtml(formatTimestamp(item.started_at || item.requested_at))}</td>
+          <td>
+            ${item.severity ? `<span class="status-pill ${escapeHtml(item.severity)}">${escapeHtml(severityLabel(item.severity))}</span> ` : ""}${escapeHtml(item.summary || t("noData"))}
+            ${item.target_operator_summary ? `<div class="muted">${escapeHtml(item.target_operator_summary)}</div>` : ""}
+            ${!targetSuggestedAction && item.target_operator_recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.target_operator_recommended_step)}</div>` : ""}
+            ${actionButtons.length ? `<div class="node-actions" style="margin-top: 8px;">${actionButtons.join("")}</div>` : ""}
+          </td>
+        </tr>
+      `;
+    }).join("");
   }
 
   function renderActionDetail() {

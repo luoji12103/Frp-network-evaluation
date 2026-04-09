@@ -204,6 +204,8 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         assert "handled for relay-1" in (actions[0]["summary"] or "")
         assert actions[0]["target_runtime_state"] == "running"
         assert "pull checks are failing" in (actions[0]["target_operator_summary"] or "")
+        assert actions[0]["target_suggested_action"]["kind"] == "sync_runtime"
+        assert actions[0]["target_suggested_action"]["target_id"] == node["id"]
 
         stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored_node["runtime"]["state"] == "running"
@@ -373,6 +375,7 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
         assert action["severity"] == "info"
         assert action["target_runtime_state"] == "running"
         assert "read-only runtime" in (action["target_operator_summary"] or "")
+        assert action["target_suggested_action"]["kind"] == "tail_log"
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert "panel-native.log" in (detail["result_summary"] or "")
         assert "panel-native.log" in (detail["summary"] or "")
@@ -481,6 +484,8 @@ def test_action_detail_returns_normalized_log_and_runtime_snapshot(tmp_path: Pat
         action = client.get("/api/v1/admin/actions").json()["items"][0]
         assert action["has_log_excerpt"] is True
         assert action["has_runtime_snapshot"] is True
+        assert action["target_suggested_action"]["kind"] == "sync_runtime"
+        assert action["target_suggested_action"]["target_id"] == node["id"]
 
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert detail["request"]["tail_lines"] == 40

@@ -280,6 +280,8 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `target_runtime_state`
 - `target_attention_level`
 - `target_operator_summary`
+- `target_operator_recommended_step`
+- `target_suggested_action`
 - `target_snapshot`
 
 不要改当前 run progress / 运行事件里的关键字段语义：
