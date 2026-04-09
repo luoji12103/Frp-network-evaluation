@@ -71,8 +71,12 @@ def get_panel_build_info() -> dict[str, str | None]:
     display_label = f"v{release_version}"
     if build_ref:
         display_label = f"{display_label} · {build_ref}"
+    header_label = f"v{release_version}"
+    if build_ref:
+        header_label = f"{header_label}+{build_ref}"
     return {
         "release_version": release_version,
         "build_ref": build_ref,
         "display_label": display_label,
+        "header_label": header_label,
     }
