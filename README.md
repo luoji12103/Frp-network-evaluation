@@ -183,6 +183,7 @@ The admin UI now has a dedicated runtime-control surface.
 - Clicking an action opens normalized detail fields: target, actor, transport, failure summary, request / response snapshot, log excerpt, and runtime / supervisor snapshot.
 - Action detail also includes a live `target_snapshot`, so operators can compare the action result with the target's current runtime / supervisor / connectivity state without leaving the page.
 - Lifecycle actions are serialized per target. If a node or the panel already has a `queued` or `running` action, the next action is rejected and the UI jumps to the active action.
+- Run and lifecycle conflict responses now also include `suggested_action`, so the WebUI can jump directly to the active run or action without special-casing each 409 response shape.
 - Nodes now expose structured connectivity diagnostics: `connectivity.diagnostic_code`, `connectivity.attention_level`, `connectivity.summary`, `connectivity.recommended_step`, plus per-channel `push.code` / `pull.code`.
 - Pull-mode diagnostics now classify legacy contract drift explicitly: `legacy_status_shape` means the agent still returned the old flat `/api/v1/status` payload, and `protocol_mismatch` also covers missing current pull routes such as `/api/v1/jobs/run` / `/api/v1/results/*`.
 - Node and panel runtime payloads now expose backend-owned operator fields: `runtime.details.operator_summary`, `runtime.details.operator_severity`, `runtime.details.operator_recommended_step`, and `runtime.details.suggested_action`.

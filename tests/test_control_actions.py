@@ -251,8 +251,12 @@ def test_node_actions_are_serialized_per_target_and_conflicts_include_active_act
         conflict = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "restart", "actor": "admin-ui"})
         assert conflict.status_code == 409
         detail = conflict.json()["detail"]
+        assert detail["suggested_action"]["kind"] == "open_action"
+        assert detail["suggested_action"]["action_id"] == first_action_id
+        assert detail["recommended_step"]
         assert detail["active_action"]["id"] == first_action_id
         assert detail["active_action"]["action"] == "sync_runtime"
+        assert detail["active_action"]["suggested_action"]["kind"] == "open_action"
 
         node_payload = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert node_payload["runtime"]["details"]["active_action_id"] == first_action_id
@@ -307,8 +311,11 @@ def test_panel_actions_are_serialized_per_target(tmp_path: Path) -> None:
         conflict = client.post("/api/v1/admin/panel/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
         assert conflict.status_code == 409
         detail = conflict.json()["detail"]
+        assert detail["suggested_action"]["kind"] == "open_action"
+        assert detail["suggested_action"]["action_id"] == first_action_id
         assert detail["active_action"]["id"] == first_action_id
         assert detail["active_action"]["target_name"] == "panel"
+        assert detail["active_action"]["suggested_action"]["kind"] == "open_action"
 
         runtime_payload = client.get("/api/v1/admin/runtime").json()["panel"]
         assert runtime_payload["runtime"]["details"]["active_action_id"] == first_action_id

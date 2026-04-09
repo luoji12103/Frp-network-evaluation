@@ -294,6 +294,7 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 - `attention.items[*].suggested_action`
 - `runtime.details.suggested_action`
+- `409` 冲突响应里的 `suggested_action`
 - `suggested_action.kind`
 - `suggested_action.target_kind`
 - `suggested_action.target_id`
@@ -312,6 +313,11 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `tail_log`
 
 不要把 `suggested_action` 扩展成任意命令执行能力，也不要绕过现有确认 / 冲突处理。
+
+当前冲突返回也复用同一套 CTA：
+
+- `POST /api/v1/runs` 在已有 active run 时，`detail.suggested_action` 固定指向当前 run
+- `POST /api/v1/admin/nodes/{node_id}/actions` / `POST /api/v1/admin/panel/actions` 在有 active action 时，`detail.suggested_action` 固定指向当前 action
 
 ## 6. 双方都必须遵守的扩展规则
 

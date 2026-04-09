@@ -537,6 +537,9 @@ def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Pat
         detail = conflict.json()["detail"]
         assert detail["active_run"]["run_id"] == run_id
         assert detail["active_run"]["progress"]["active_phase"] == "baseline"
+        assert detail["suggested_action"]["kind"] == "open_run"
+        assert detail["suggested_action"]["run_id"] == run_id
+        assert "follow progress" in detail["recommended_step"]
 
 
 def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> None:

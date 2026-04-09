@@ -1516,6 +1516,13 @@ def create_app(
                 detail={
                     "message": "A monitoring run is already in progress",
                     "active_run": active_run,
+                    "suggested_action": _suggested_action(
+                        kind="open_run",
+                        target_kind="run",
+                        run_id=str(active_run.get("run_id") or ""),
+                        label="View run",
+                    ),
+                    "recommended_step": "Open the current run detail to follow progress before starting another monitoring run.",
                 },
             )
         run_id = runtime.orchestrator.start_run_in_background(run_kind=payload.run_kind, source=payload.source)
@@ -1641,11 +1648,19 @@ def _node_action_unavailable_reason(node: dict[str, Any], action: str) -> str | 
 
 
 def _control_action_conflict_detail(target_name: str, conflict: dict[str, Any]) -> dict[str, Any]:
+    suggested_action = _suggested_action(
+        kind="open_action",
+        target_kind="action",
+        action_id=int(conflict["id"]),
+        label="View action",
+    )
     return {
         "message": (
             f"{target_name} already has an active action: "
             f"{conflict.get('action')} ({conflict.get('status')})"
         ),
+        "suggested_action": suggested_action,
+        "recommended_step": "Open the action detail to follow progress before issuing another lifecycle action for this target.",
         "active_action": {
             "id": conflict.get("id"),
             "action": conflict.get("action"),
@@ -1653,6 +1668,7 @@ def _control_action_conflict_detail(target_name: str, conflict: dict[str, Any]) 
             "requested_at": conflict.get("requested_at"),
             "target_name": conflict.get("target_name"),
             "result_summary": conflict.get("result_summary"),
+            "suggested_action": suggested_action,
         },
     }
 

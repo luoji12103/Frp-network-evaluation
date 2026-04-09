@@ -1168,15 +1168,15 @@
     return `<button type="button" class="${escapeHtml(className)}" ${attrs.join(" ")}${style}>${escapeHtml(suggestedActionLabel(action))}</button>`;
   }
 
-  async function invokeSuggestedActionFromButton(button) {
-    if (!button) {
+  async function invokeSuggestedAction(action) {
+    if (!action || !action.kind) {
       return false;
     }
-    const kind = button.dataset.suggestedKind;
-    const targetKind = button.dataset.suggestedTargetKind;
-    const targetId = button.dataset.suggestedTargetId ? Number(button.dataset.suggestedTargetId) : null;
-    const runId = button.dataset.suggestedRunId || null;
-    const actionId = button.dataset.suggestedActionId ? Number(button.dataset.suggestedActionId) : null;
+    const kind = action.kind;
+    const targetKind = action.target_kind;
+    const targetId = action.target_id !== undefined && action.target_id !== null ? Number(action.target_id) : null;
+    const runId = action.run_id || null;
+    const actionId = action.action_id !== undefined && action.action_id !== null ? Number(action.action_id) : null;
     if (kind === "open_node" && targetId) {
       focusNodeCard(targetId);
       return true;
@@ -1216,6 +1216,19 @@
       }
     }
     return false;
+  }
+
+  async function invokeSuggestedActionFromButton(button) {
+    if (!button) {
+      return false;
+    }
+    return invokeSuggestedAction({
+      kind: button.dataset.suggestedKind,
+      target_kind: button.dataset.suggestedTargetKind,
+      target_id: button.dataset.suggestedTargetId ? Number(button.dataset.suggestedTargetId) : null,
+      run_id: button.dataset.suggestedRunId || null,
+      action_id: button.dataset.suggestedActionId ? Number(button.dataset.suggestedActionId) : null,
+    });
   }
 
   async function loadSelectedRunDetail(runId, options = {}) {
@@ -1954,11 +1967,16 @@
       setActiveTab("runs");
       await refreshAll();
     } catch (error) {
-      const activeRun = error.detailPayload?.active_run;
-      if (activeRun?.run_id) {
-        state.selectedRunId = String(activeRun.run_id);
-        setActiveTab("runs");
-        await loadSelectedRunDetail(String(activeRun.run_id), { refreshRunsList: true, silent: true }).catch(() => undefined);
+      const conflictAction = error.detailPayload?.suggested_action;
+      if (conflictAction) {
+        await invokeSuggestedAction(conflictAction).catch(() => undefined);
+      } else {
+        const activeRun = error.detailPayload?.active_run;
+        if (activeRun?.run_id) {
+          state.selectedRunId = String(activeRun.run_id);
+          setActiveTab("runs");
+          await loadSelectedRunDetail(String(activeRun.run_id), { refreshRunsList: true, silent: true }).catch(() => undefined);
+        }
       }
       showMessage(`${t("runFullFailed")}: ${error.message || error}`, "error");
     }
@@ -2053,9 +2071,14 @@
         await refreshAll();
       }
     } catch (error) {
-      const activeAction = error.detailPayload?.active_action;
-      if (activeAction?.id) {
-        await loadActionDetail(Number(activeAction.id), { refreshRuntime: true, silent: true }).catch(() => undefined);
+      const conflictAction = error.detailPayload?.suggested_action;
+      if (conflictAction) {
+        await invokeSuggestedAction(conflictAction).catch(() => undefined);
+      } else {
+        const activeAction = error.detailPayload?.active_action;
+        if (activeAction?.id) {
+          await loadActionDetail(Number(activeAction.id), { refreshRuntime: true, silent: true }).catch(() => undefined);
+        }
       }
       showMessage(`${t("actionQueuedFailed")}: ${error.message || error}`, "error");
     }
