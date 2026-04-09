@@ -356,6 +356,9 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
         assert "panel-native.log" in (detail["summary"] or "")
         assert detail["log_excerpt"][-1] == "line-c"
         assert detail["runtime_snapshot"]["supervisor"]["supervisor_state"] == "native-readonly"
+        assert detail["target_snapshot"]["target_kind"] == "panel"
+        assert detail["target_snapshot"]["runtime"]["details"]["control_mode"] == "native-readonly"
+        assert "read-only runtime" in (detail["target_snapshot"]["operator_summary"] or "")
 
 
 def test_panel_bridge_actions_are_hidden_when_bridge_runtime_is_unreachable(tmp_path: Path, monkeypatch) -> None:
@@ -461,6 +464,11 @@ def test_action_detail_returns_normalized_log_and_runtime_snapshot(tmp_path: Pat
         assert detail["log_excerpt"] == ["line-a", "line-b"]
         assert detail["log_location"] == "docker://node"
         assert detail["runtime_snapshot"]["supervisor"]["log_location"] == "docker://node"
+        assert detail["target_snapshot"]["target_kind"] == "node"
+        assert detail["target_snapshot"]["target_id"] == node["id"]
+        assert detail["target_snapshot"]["target_name"] == "relay-1"
+        assert detail["target_snapshot"]["supervisor"]["control_available"] is True
+        assert detail["target_snapshot"]["endpoints"]["control_bridge_url"] == "http://relay.example:9871"
 
 
 def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:

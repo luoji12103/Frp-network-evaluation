@@ -137,6 +137,8 @@
       attentionSummary: "待关注事项",
       recommendedStep: "建议动作",
       openRun: "查看运行",
+      openNode: "定位节点",
+      openPanel: "定位 Panel",
       connectivitySummary: "通信诊断",
       diagnosticCode: "诊断码",
       pushCode: "Push 诊断码",
@@ -170,6 +172,7 @@
       failure: "失败原因",
       logExcerpt: "日志摘录",
       runtimeSnapshot: "运行态快照",
+      currentTargetSnapshot: "当前目标快照",
       readonlyReason: "只读说明",
       actionBusy: "该目标已有动作执行中",
       start: "启动",
@@ -404,6 +407,8 @@
       attentionSummary: "Attention items",
       recommendedStep: "Recommended next step",
       openRun: "View run",
+      openNode: "Open node",
+      openPanel: "Open panel",
       connectivitySummary: "Connectivity diagnostic",
       diagnosticCode: "Diagnostic code",
       pushCode: "Push code",
@@ -437,6 +442,7 @@
       failure: "Failure",
       logExcerpt: "Log excerpt",
       runtimeSnapshot: "Runtime snapshot",
+      currentTargetSnapshot: "Current target snapshot",
       readonlyReason: "Read-only note",
       actionBusy: "Another action is already active for this target",
       start: "Start",
@@ -692,12 +698,26 @@
     });
     document.getElementById("operationsFocus").addEventListener("click", async (event) => {
       const runButton = event.target.closest("button[data-open-run]");
-      if (!runButton) {
+      if (runButton) {
+        state.selectedRunId = String(runButton.dataset.openRun);
+        setActiveTab("runs");
+        await loadSelectedRunDetail(String(runButton.dataset.openRun), { refreshRunsList: true, silent: true }).catch(() => undefined);
         return;
       }
-      state.selectedRunId = String(runButton.dataset.openRun);
-      setActiveTab("runs");
-      await loadSelectedRunDetail(String(runButton.dataset.openRun), { refreshRunsList: true, silent: true }).catch(() => undefined);
+      const detailButton = event.target.closest("button[data-action-detail]");
+      if (detailButton) {
+        await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
+        return;
+      }
+      const nodeButton = event.target.closest("button[data-focus-node]");
+      if (nodeButton) {
+        focusNodeCard(nodeButton.dataset.focusNode);
+        return;
+      }
+      const panelButton = event.target.closest("button[data-focus-panel]");
+      if (panelButton) {
+        focusPanelRuntimeCard();
+      }
     });
     document.getElementById("actionsTableBody").addEventListener("click", async (event) => {
       const row = event.target.closest("tr[data-action-id]");
@@ -731,6 +751,24 @@
         return;
       }
       await loadRunDetail(row.dataset.runId);
+    });
+    document.getElementById("actionDetail").addEventListener("click", async (event) => {
+      const runButton = event.target.closest("button[data-open-run]");
+      if (runButton) {
+        state.selectedRunId = String(runButton.dataset.openRun);
+        setActiveTab("runs");
+        await loadSelectedRunDetail(String(runButton.dataset.openRun), { refreshRunsList: true, silent: true }).catch(() => undefined);
+        return;
+      }
+      const nodeButton = event.target.closest("button[data-focus-node]");
+      if (nodeButton) {
+        focusNodeCard(nodeButton.dataset.focusNode);
+        return;
+      }
+      const panelButton = event.target.closest("button[data-focus-panel]");
+      if (panelButton) {
+        focusPanelRuntimeCard();
+      }
     });
     window.addEventListener("resize", () => Object.values(charts).forEach((chart) => chart.resize()));
   }
@@ -1016,6 +1054,38 @@
         return;
       }
     }, 1500);
+  }
+
+  function highlightTargetElement(element) {
+    if (!element) {
+      return;
+    }
+    element.classList.add("focused-target");
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => element.classList.remove("focused-target"), 1800);
+  }
+
+  function focusNodeCard(nodeId) {
+    if (!nodeId) {
+      return;
+    }
+    setActiveTab("management");
+    window.requestAnimationFrame(() => {
+      const card = document.querySelector(`#nodeGrid [data-node-id="${escapeSelector(String(nodeId))}"]`);
+      highlightTargetElement(card);
+    });
+  }
+
+  function focusPanelRuntimeCard() {
+    setActiveTab("management");
+    window.requestAnimationFrame(() => {
+      const card = document.querySelector("#panelRuntimeCard .card");
+      highlightTargetElement(card);
+    });
+  }
+
+  function escapeSelector(value) {
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
   async function loadSelectedRunDetail(runId, options = {}) {
@@ -1465,7 +1535,21 @@
     }
     root.innerHTML = `
       <div class="muted">${escapeHtml(t("attentionSummary"))}: ${escapeHtml(String(summary.total || items.length))}</div>
-      ${items.map((item) => `
+      ${items.map((item) => {
+        const buttons = [];
+        if (item.target_kind === "node" && item.target_id) {
+          buttons.push(`<button type="button" data-focus-node="${escapeHtml(String(item.target_id))}">${escapeHtml(t("openNode"))}</button>`);
+        }
+        if (item.target_kind === "panel") {
+          buttons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
+        }
+        if (item.run_id) {
+          buttons.push(`<button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button>`);
+        }
+        if (item.action_id) {
+          buttons.push(`<button type="button" data-action-detail="${escapeHtml(String(item.action_id))}">${escapeHtml(t("viewAction"))}</button>`);
+        }
+        return `
         <div class="card" style="margin-top: 12px;">
           <div class="section-head">
             <strong>${escapeHtml(item.title || t("noData"))}</strong>
@@ -1474,12 +1558,10 @@
           <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
           ${item.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
           ${item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
-          ${(item.run_id || item.action_id) ? `<div class="node-actions" style="margin-top: 10px;">
-            ${item.run_id ? `<button type="button" data-open-run="${escapeHtml(String(item.run_id))}">${escapeHtml(t("openRun"))}</button>` : ""}
-            ${item.action_id ? `<button type="button" data-action-detail="${escapeHtml(String(item.action_id))}">${escapeHtml(t("viewAction"))}</button>` : ""}
-          </div>` : ""}
+          ${buttons.length ? `<div class="node-actions" style="margin-top: 10px;">${buttons.join("")}</div>` : ""}
         </div>
-      `).join("")}
+      `;
+      }).join("")}
     `;
   }
 
@@ -1519,6 +1601,21 @@
     const supervisor = runtimeSnapshot.supervisor || {};
     const failure = action.failure || {};
     const logExcerpt = action.log_excerpt || [];
+    const targetSnapshot = action.target_snapshot || {};
+    const targetRuntime = targetSnapshot.runtime || {};
+    const targetRuntimeDetails = targetRuntime.details || {};
+    const targetSupervisor = targetSnapshot.supervisor || {};
+    const targetConnectivity = targetSnapshot.connectivity || {};
+    const targetButtons = [];
+    if (targetSnapshot.target_kind === "node" && targetSnapshot.target_id) {
+      targetButtons.push(`<button type="button" data-focus-node="${escapeHtml(String(targetSnapshot.target_id))}">${escapeHtml(t("openNode"))}</button>`);
+    }
+    if (targetSnapshot.target_kind === "panel") {
+      targetButtons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
+    }
+    if (targetSnapshot.active_run_id) {
+      targetButtons.push(`<button type="button" data-open-run="${escapeHtml(String(targetSnapshot.active_run_id))}">${escapeHtml(t("openRun"))}</button>`);
+    }
     root.innerHTML = `
       <div class="card detail-stack">
         <div class="section-head">
@@ -1533,6 +1630,18 @@
         <div class="muted">${escapeHtml(t("result"))}: ${action.severity ? `<span class="status-pill ${escapeHtml(action.severity)}">${escapeHtml(severityLabel(action.severity))}</span> ` : ""}${escapeHtml(action.summary || t("noData"))}</div>
         ${(action.code || failure.code || failure.detail) ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml([action.code || failure.code, failure.detail].filter(Boolean).join(" | "))}</div>` : ""}
         <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(action.log_location || t("noData"))}</div>
+        <div>
+          <h3>${escapeHtml(t("currentTargetSnapshot"))}</h3>
+          <div class="muted">${escapeHtml(t("target"))}: ${escapeHtml(targetSnapshot.target_kind === "panel" ? t("panelTarget") : (targetSnapshot.target_name || t("noData")))}</div>
+          <div class="muted">${escapeHtml(t("status"))}: ${escapeHtml(statusLabel(targetSnapshot.status || "unknown"))}</div>
+          <div class="muted">${escapeHtml(t("runtimeState"))}: ${escapeHtml(statusLabel(targetRuntime.state || "unknown"))}</div>
+          <div class="muted">${escapeHtml(t("supervisorState"))}: ${escapeHtml(targetSupervisor.supervisor_state || t("noData"))}</div>
+          ${targetConnectivity.summary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(targetConnectivity.summary)}</div>` : ""}
+          ${targetConnectivity.diagnostic_code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(targetConnectivity.diagnostic_code)}</div>` : ""}
+          ${targetRuntimeDetails.operator_summary || targetSnapshot.operator_summary ? `<div class="muted">${escapeHtml(t("result"))}: ${(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity) ? `<span class="status-pill ${escapeHtml(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity)}">${escapeHtml(severityLabel(targetRuntimeDetails.operator_severity || targetSnapshot.operator_severity))}</span> ` : ""}${escapeHtml(targetRuntimeDetails.operator_summary || targetSnapshot.operator_summary)}</div>` : ""}
+          ${targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(targetRuntimeDetails.operator_recommended_step || targetSnapshot.operator_recommended_step)}</div>` : ""}
+          ${targetButtons.length ? `<div class="node-actions" style="margin-top: 10px;">${targetButtons.join("")}</div>` : ""}
+        </div>
         <div>
           <h3>${escapeHtml(t("logExcerpt"))}</h3>
           ${logExcerpt.length ? `<div class="command-box">${escapeHtml(logExcerpt.join("\n"))}</div>` : `<div class="empty">${escapeHtml(t("noData"))}</div>`}

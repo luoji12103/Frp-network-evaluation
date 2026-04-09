@@ -244,6 +244,65 @@ class PanelRuntime:
             "attention": self._build_attention_payload(panel=panel, nodes=nodes, active_run=active_run),
         }
 
+    def control_action_target_snapshot(self, action: dict[str, Any]) -> dict[str, Any]:
+        target_kind = str(action.get("target_kind") or "")
+        target_id = action.get("target_id")
+        target_name = action.get("target_name")
+        if target_kind == "node" and target_id is not None:
+            active_run = self.store.get_active_run()
+            nodes = self._attach_run_attention(self.store.list_nodes(), active_run=active_run)
+            node = next((item for item in nodes if int(item.get("id") or 0) == int(target_id)), None)
+            if node is not None:
+                runtime_details = dict((node.get("runtime") or {}).get("details") or {})
+                return {
+                    "target_kind": "node",
+                    "target_id": node.get("id"),
+                    "target_name": node.get("node_name"),
+                    "status": node.get("status"),
+                    "runtime": node.get("runtime") or {},
+                    "supervisor": node.get("supervisor") or {},
+                    "connectivity": node.get("connectivity") or {},
+                    "endpoints": node.get("endpoints") or {},
+                    "operator_summary": runtime_details.get("operator_summary"),
+                    "operator_severity": runtime_details.get("operator_severity"),
+                    "operator_recommended_step": runtime_details.get("operator_recommended_step"),
+                    "active_run_id": runtime_details.get("active_run_id"),
+                    "active_action_id": runtime_details.get("active_action_id"),
+                }
+        if target_kind == "panel":
+            panel = self.runtime_snapshot()
+            details = dict((panel.get("runtime") or {}).get("details") or {})
+            return {
+                "target_kind": "panel",
+                "target_id": None,
+                "target_name": "panel",
+                "status": (panel.get("runtime") or {}).get("state"),
+                "runtime": panel.get("runtime") or {},
+                "supervisor": panel.get("supervisor") or {},
+                "connectivity": None,
+                "endpoints": None,
+                "operator_summary": details.get("operator_summary"),
+                "operator_severity": details.get("operator_severity"),
+                "operator_recommended_step": details.get("operator_recommended_step"),
+                "active_run_id": None,
+                "active_action_id": details.get("active_action_id"),
+            }
+        return {
+            "target_kind": target_kind or None,
+            "target_id": target_id,
+            "target_name": target_name,
+            "status": None,
+            "runtime": {},
+            "supervisor": {},
+            "connectivity": None,
+            "endpoints": None,
+            "operator_summary": None,
+            "operator_severity": "info",
+            "operator_recommended_step": None,
+            "active_run_id": None,
+            "active_action_id": None,
+        }
+
     def _attach_run_attention(self, nodes: list[dict[str, Any]], active_run: dict[str, Any] | None) -> list[dict[str, Any]]:
         if active_run is None:
             return nodes
@@ -968,6 +1027,7 @@ def create_app(
         action = runtime.store.get_control_action(action_id)
         if action is None:
             raise HTTPException(status_code=404, detail="Action not found")
+        action["target_snapshot"] = runtime.control_action_target_snapshot(action)
         return action
 
     @app.get("/api/v1/admin/overview")
