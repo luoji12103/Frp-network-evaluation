@@ -334,6 +334,189 @@ def test_node_connectivity_diagnostic_surfaces_endpoint_mismatch(tmp_path: Path)
         )
 
 
+def test_legacy_agent_status_shape_is_classified_in_pull_diagnostics(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        node = client.post(
+            "/api/v1/nodes",
+            json={
+                "node_name": "server-1",
+                "role": "server",
+                "runtime_mode": "native-macos",
+                "configured_pull_url": "http://100.100.0.8:39870",
+                "enabled": True,
+            },
+        ).json()["node"]
+        pair = client.post(f"/api/v1/nodes/{node['id']}/pair-code").json()
+        paired = client.post(
+            "/api/v1/agents/pair",
+            json={
+                "pair_code": pair["pair_code"],
+                "identity": pair_identity("server-1", "server", "native-macos", "macos").model_dump(),
+                "endpoint": {
+                    "listen_host": "100.100.0.8",
+                    "listen_port": 39870,
+                    "advertise_url": "http://100.100.0.8:39870",
+                },
+                "capabilities": AgentCapabilities().model_dump(),
+            },
+        )
+        token = paired.json()["node_token"]
+        heartbeat = client.post(
+            "/api/v1/agents/heartbeat",
+            headers={"X-Node-Token": token},
+            json={
+                "endpoint": {
+                    "listen_host": "100.100.0.8",
+                    "listen_port": 39870,
+                    "advertise_url": "http://100.100.0.8:39870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": now_iso(),
+                    "last_error": None,
+                    "environment": {"platform_name": "macos"},
+                },
+                "completed_jobs": [],
+            },
+        )
+        assert heartbeat.status_code == 200
+
+        def fake_request(node: dict[str, object], method: str, path: str, json_body=None, timeout_sec=None) -> dict[str, object]:
+            assert method == "GET"
+            assert path == "/api/v1/status"
+            return {
+                "node_name": "server-1",
+                "role": "server",
+                "runtime_mode": "native-macos",
+                "panel_url": "http://panel.example:8765",
+                "listen_host": "100.100.0.8",
+                "listen_port": 39870,
+                "advertise_url": "http://100.100.0.8:39870",
+                "paired": True,
+                "started_at": now_iso(),
+                "last_heartbeat_at": now_iso(),
+                "last_error": None,
+                "environment": {"platform_name": "macos"},
+            }
+
+        runtime.http._request = fake_request  # type: ignore[method-assign]
+        runtime.run_maintenance_cycle(force_runtime_sync=False)
+
+        stored = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert stored["status"] == "push-only"
+        assert stored["connectivity"]["diagnostic_code"] == "legacy_status_shape"
+        assert stored["connectivity"]["pull"]["code"] == "legacy_status_shape"
+        assert "legacy /api/v1/status payload" in stored["connectivity"]["pull"]["error"]
+        assert "structured status contract" in stored["connectivity"]["recommended_step"]
+        assert stored["runtime"]["details"]["suggested_action"]["kind"] == "open_node"
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        node_item = next(
+            item
+            for item in runtime_payload["attention"]["items"]
+            if item["kind"] == "node" and item["target_name"] == "server-1"
+        )
+        assert node_item["code"] == "legacy_status_shape"
+        assert node_item["suggested_action"]["kind"] == "open_node"
+
+
+def test_status_protocol_mismatch_is_classified_in_pull_diagnostics(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        node = client.post(
+            "/api/v1/nodes",
+            json={
+                "node_name": "relay-1",
+                "role": "relay",
+                "runtime_mode": "docker-linux",
+                "configured_pull_url": "http://relay.example:9870",
+                "enabled": True,
+            },
+        ).json()["node"]
+        pair = client.post(f"/api/v1/nodes/{node['id']}/pair-code").json()
+        paired = client.post(
+            "/api/v1/agents/pair",
+            json={
+                "pair_code": pair["pair_code"],
+                "identity": pair_identity("relay-1", "relay", "docker-linux", "linux").model_dump(),
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://relay.example:9870",
+                },
+                "capabilities": AgentCapabilities().model_dump(),
+            },
+        )
+        token = paired.json()["node_token"]
+        heartbeat = client.post(
+            "/api/v1/agents/heartbeat",
+            headers={"X-Node-Token": token},
+            json={
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://relay.example:9870",
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": now_iso(),
+                    "last_error": None,
+                    "environment": {"platform_name": "linux"},
+                },
+                "completed_jobs": [],
+            },
+        )
+        assert heartbeat.status_code == 200
+
+        def fake_request(node: dict[str, object], method: str, path: str, json_body=None, timeout_sec=None) -> dict[str, object]:
+            assert method == "GET"
+            assert path == "/api/v1/status"
+            return {
+                "identity": {
+                    "node_name": "relay-1",
+                    "role": "relay",
+                    "runtime_mode": "docker-linux",
+                    "protocol_version": "999",
+                    "platform_name": "linux",
+                    "hostname": "relay-1-host",
+                    "agent_version": "legacy-agent",
+                },
+                "endpoint": {
+                    "listen_host": "0.0.0.0",
+                    "listen_port": 9870,
+                    "advertise_url": "http://relay.example:9870",
+                },
+                "capabilities": {
+                    "pull_http": True,
+                    "heartbeat_queue": True,
+                    "result_lookup": True,
+                },
+                "runtime_status": {
+                    "paired": True,
+                    "started_at": now_iso(),
+                    "last_heartbeat_at": now_iso(),
+                    "last_error": None,
+                    "environment": {"platform_name": "linux"},
+                },
+            }
+
+        runtime.http._request = fake_request  # type: ignore[method-assign]
+        runtime.run_maintenance_cycle(force_runtime_sync=False)
+
+        stored = client.get(f"/api/v1/nodes/{node['id']}").json()
+        assert stored["status"] == "push-only"
+        assert stored["connectivity"]["diagnostic_code"] == "protocol_mismatch"
+        assert stored["connectivity"]["pull"]["code"] == "protocol_mismatch"
+        assert "Unsupported agent protocol_version '999'" in stored["connectivity"]["pull"]["error"]
+        assert "Align panel and agent protocol versions" in stored["connectivity"]["recommended_step"]
+        assert stored["runtime"]["details"]["suggested_action"]["kind"] == "open_node"
+
+
 def test_active_run_is_exposed_in_runtime_payload_and_run_conflict(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         login_admin(client)

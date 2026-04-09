@@ -210,6 +210,14 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `runtime`
 - `supervisor`
 
+其中 pull-mode 诊断码现在明确冻结以下语义：
+
+- `legacy_status_shape`
+  - agent 仍返回旧版扁平 `/api/v1/status` 结构，而不是当前的 `identity + endpoint + capabilities + runtime_status`
+- `protocol_mismatch`
+  - agent / panel 协议版本不兼容
+  - 或 agent 缺少当前 pull-mode 合同路由，比如 `/api/v1/jobs/run`、`/api/v1/results/*`
+
 不要改 Agent 配置字段名：
 
 - `panel_url`

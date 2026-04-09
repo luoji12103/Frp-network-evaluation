@@ -2742,6 +2742,9 @@ class PanelStore:
             "connect_error": "Verify the host and port in the effective pull URL and confirm the agent is listening there.",
             "auth_error": "Re-pair the node or verify the stored node token if pull-mode calls are rejected.",
             "protocol_mismatch": "Align panel and agent protocol versions before retrying pull-mode operations.",
+            "legacy_status_shape": "Upgrade the node agent to the current structured status contract so pull-mode health checks can validate identity, endpoint, capabilities, and runtime status.",
+            "invalid_json": "Upgrade or restart the node agent; pull-mode status returned invalid JSON instead of the expected API contract.",
+            "invalid_payload": "Upgrade or restart the node agent; pull-mode status returned an unexpected payload shape.",
             "heartbeat_timeout": "Restart the agent or inspect control bridge logs to restore outbound heartbeats.",
         }
         return mapping.get(code, fallback)
@@ -2985,7 +2988,22 @@ class PanelStore:
             )
         available_actions = set(runtime_details.get("available_actions") or [])
         level = str(connectivity.get("attention_level") or "ok")
+        diagnostic_code = str(connectivity.get("diagnostic_code") or "")
         if level != "ok":
+            if diagnostic_code in {"legacy_status_shape", "protocol_mismatch"}:
+                if "tail_log" in available_actions:
+                    return _suggested_action(
+                        kind="tail_log",
+                        target_kind="node",
+                        target_id=node_id,
+                        label="Tail node log",
+                    )
+                return _suggested_action(
+                    kind="open_node",
+                    target_kind="node",
+                    target_id=node_id,
+                    label="Open node",
+                )
             if "sync_runtime" in available_actions:
                 return _suggested_action(
                     kind="sync_runtime",
@@ -3018,6 +3036,8 @@ class PanelStore:
             "connect_error": "Check the effective pull URL and confirm the target agent is listening on the expected host and port.",
             "auth_error": "Re-pair the node or verify the stored node token before retrying the run.",
             "protocol_mismatch": "Align panel and agent protocol versions before rerunning the affected phase.",
+            "invalid_json": "Inspect node logs and upgrade or restart the agent before retrying the pull-dispatched phase.",
+            "invalid_payload": "Inspect node logs and upgrade or restart the agent before retrying the pull-dispatched phase.",
             "queue_timeout": "Check heartbeat freshness and control bridge logs, then retry once the node resumes queue processing.",
             "queue_not_leased": "The queued job never reached the node. Verify heartbeat freshness and that the node still supports heartbeat_queue dispatch.",
             "queue_lease_timeout": "The queued job was leased but never completed in time. Inspect node runtime, control bridge status, and agent logs before retrying.",

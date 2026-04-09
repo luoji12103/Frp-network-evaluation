@@ -5,8 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
-from controller.panel_models import AgentStatusResponse, AgentTaskCompletion, AgentTaskDispatch
+from controller.panel_models import (
+    SUPPORTED_AGENT_PROTOCOL_VERSION,
+    AgentStatusResponse,
+    AgentTaskCompletion,
+    AgentTaskDispatch,
+)
 from controller.panel_store import PanelStore
 
 
@@ -32,7 +38,26 @@ class AgentHttpClient:
 
     def check_status(self, node: dict[str, Any]) -> dict[str, Any]:
         payload = self._request(node=node, method="GET", path="/api/v1/status")
-        return AgentStatusResponse.model_validate(payload).model_dump()
+        try:
+            status = AgentStatusResponse.model_validate(payload)
+        except ValidationError as exc:
+            legacy_detail = self._legacy_status_detail(payload)
+            if legacy_detail is not None:
+                raise AgentHttpError("legacy_status_shape", legacy_detail) from exc
+            raise AgentHttpError(
+                "protocol_mismatch",
+                "Agent status payload did not match the current structured contract",
+            ) from exc
+        protocol_version = str(status.identity.protocol_version or "").strip()
+        if protocol_version != SUPPORTED_AGENT_PROTOCOL_VERSION:
+            raise AgentHttpError(
+                "protocol_mismatch",
+                (
+                    f"Unsupported agent protocol_version '{protocol_version}' "
+                    f"(expected {SUPPORTED_AGENT_PROTOCOL_VERSION})"
+                ),
+            )
+        return status.model_dump()
 
     def run_job(self, node: dict[str, Any], job_id: int | None, run_id: str, task: str, payload: dict[str, Any]) -> dict[str, Any]:
         request = AgentTaskDispatch(job_id=job_id, run_id=run_id, task=task, payload=payload)
@@ -68,7 +93,16 @@ class AgentHttpClient:
                     json=json_body,
                 )
                 response.raise_for_status()
-                return response.json()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise AgentHttpError("invalid_json", f"{base_url}{path} did not return valid JSON") from exc
+                if not isinstance(payload, dict):
+                    raise AgentHttpError(
+                        "invalid_payload",
+                        f"{base_url}{path} returned {type(payload).__name__}, expected a JSON object",
+                    )
+                return payload
             except httpx.TimeoutException as exc:
                 raise AgentHttpError("timeout", f"request to {base_url}{path} timed out") from exc
             except httpx.ConnectError as exc:
@@ -78,6 +112,9 @@ class AgentHttpClient:
                 code = "http_error"
                 if exc.response.status_code == 401:
                     code = "auth_error"
+                elif exc.response.status_code in {404, 405} and self._is_contract_route(path):
+                    code = "protocol_mismatch"
+                    detail = f"Agent did not expose {path}; upgrade the agent to a compatible control-plane contract"
                 elif exc.response.status_code == 409 or "protocol" in detail.lower():
                     code = "protocol_mismatch"
                 raise AgentHttpError(code, detail, status_code=exc.response.status_code) from exc
@@ -99,3 +136,29 @@ class AgentHttpClient:
         if detail:
             return str(detail)
         return f"HTTP {response.status_code}"
+
+    def _legacy_status_detail(self, payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        structured_keys = {"identity", "endpoint", "capabilities", "runtime_status"}
+        if structured_keys.issubset(payload):
+            return None
+        legacy_keys = {
+            "node_name",
+            "role",
+            "runtime_mode",
+            "listen_host",
+            "listen_port",
+            "panel_url",
+            "paired",
+            "started_at",
+        }
+        if legacy_keys.intersection(payload):
+            return (
+                "Agent responded with a legacy /api/v1/status payload; upgrade the agent to the current "
+                "structured contract before relying on pull-mode health checks"
+            )
+        return None
+
+    def _is_contract_route(self, path: str) -> bool:
+        return path == "/api/v1/status" or path == "/api/v1/jobs/run" or path.startswith("/api/v1/results/")
