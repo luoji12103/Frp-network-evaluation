@@ -303,6 +303,20 @@ class PanelRuntime:
             "active_action_id": None,
         }
 
+    def enrich_control_action(self, action: dict[str, Any], include_snapshot: bool = False) -> dict[str, Any]:
+        snapshot = self.control_action_target_snapshot(action)
+        runtime = snapshot.get("runtime") or {}
+        runtime_details = runtime.get("details") or {}
+        connectivity = snapshot.get("connectivity") or {}
+        action["target_status"] = snapshot.get("status")
+        action["target_runtime_state"] = runtime.get("state")
+        action["target_attention_level"] = connectivity.get("attention_level")
+        action["target_operator_summary"] = runtime_details.get("operator_summary") or snapshot.get("operator_summary")
+        action["target_operator_severity"] = runtime_details.get("operator_severity") or snapshot.get("operator_severity") or "info"
+        if include_snapshot:
+            action["target_snapshot"] = snapshot
+        return action
+
     def _attach_run_attention(self, nodes: list[dict[str, Any]], active_run: dict[str, Any] | None) -> list[dict[str, Any]]:
         if active_run is None:
             return nodes
@@ -1019,7 +1033,8 @@ def create_app(
     @app.get("/api/v1/admin/actions")
     def admin_actions(request: Request, limit: int = 50) -> dict[str, Any]:
         require_admin_api(request)
-        return {"items": runtime.store.list_control_actions(limit=max(1, min(limit, 200)))}
+        actions = runtime.store.list_control_actions(limit=max(1, min(limit, 200)))
+        return {"items": [runtime.enrich_control_action(action, include_snapshot=False) for action in actions]}
 
     @app.get("/api/v1/admin/actions/{action_id}")
     def admin_action_detail(action_id: int, request: Request) -> dict[str, Any]:
@@ -1027,8 +1042,7 @@ def create_app(
         action = runtime.store.get_control_action(action_id)
         if action is None:
             raise HTTPException(status_code=404, detail="Action not found")
-        action["target_snapshot"] = runtime.control_action_target_snapshot(action)
-        return action
+        return runtime.enrich_control_action(action, include_snapshot=True)
 
     @app.get("/api/v1/admin/overview")
     def admin_overview(

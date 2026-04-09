@@ -200,6 +200,8 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
         assert actions[0]["active"] is False
         assert actions[0]["severity"] == "info"
         assert "handled for relay-1" in (actions[0]["summary"] or "")
+        assert actions[0]["target_runtime_state"] == "running"
+        assert "pull checks are failing" in (actions[0]["target_operator_summary"] or "")
 
         stored_node = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert stored_node["runtime"]["state"] == "running"
@@ -351,6 +353,8 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
         assert action["target_name"] == "panel"
         assert action["has_log_excerpt"] is True
         assert action["severity"] == "info"
+        assert action["target_runtime_state"] == "running"
+        assert "read-only runtime" in (action["target_operator_summary"] or "")
         detail = client.get(f"/api/v1/admin/actions/{action['id']}").json()
         assert "panel-native.log" in (detail["result_summary"] or "")
         assert "panel-native.log" in (detail["summary"] or "")
