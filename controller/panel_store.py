@@ -2741,6 +2741,7 @@ class PanelStore:
                 latest_probe = {
                     "task": payload.get("task"),
                     "node_name": payload.get("node_name"),
+                    "node_id": self._node_id_from_name(payload.get("node_name")),
                     "path_label": payload.get("path_label"),
                     "created_at": event.get("created_at"),
                 }
@@ -2759,6 +2760,7 @@ class PanelStore:
                     "job_id": payload.get("job_id") or job_payload.get("job_id"),
                     "task": payload.get("task") or job_payload.get("task"),
                     "node_name": payload.get("node_name"),
+                    "node_id": self._node_id_from_name(payload.get("node_name")),
                     "path_label": payload.get("path_label"),
                     "status": payload.get("queue_status") or job_payload.get("status"),
                     "timeout_sec": payload.get("timeout_sec") or job_payload.get("timeout_sec"),
@@ -2814,6 +2816,13 @@ class PanelStore:
             return None
         node = self.get_node_by_role(str(role))
         return int(node["id"]) if node is not None else None
+
+    def _node_id_from_name(self, node_name: Any) -> int | None:
+        if not node_name:
+            return None
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM node WHERE node_name = ?", (str(node_name),)).fetchone()
+        return int(row["id"]) if row is not None else None
 
     def _node_id_from_path(self, path_label: str) -> int | None:
         label = path_label.lower()
@@ -2979,6 +2988,7 @@ class PanelStore:
                     "summary": summary,
                     "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
                     "node_name": latest_queue_job.get("node_name"),
+                    "node_id": latest_queue_job.get("node_id"),
                     "path_label": latest_queue_job.get("path_label"),
                     "task": latest_queue_job.get("task"),
                     "job_id": latest_queue_job.get("job_id"),
@@ -2998,6 +3008,7 @@ class PanelStore:
                     "summary": summary,
                     "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
                     "node_name": latest_queue_job.get("node_name"),
+                    "node_id": latest_queue_job.get("node_id"),
                     "path_label": latest_queue_job.get("path_label"),
                     "task": latest_queue_job.get("task"),
                     "job_id": latest_queue_job.get("job_id"),
@@ -3018,6 +3029,7 @@ class PanelStore:
                 ),
                 "recommended_step": "Wait for the probe result or inspect node diagnostics if the same probe remains the latest event for too long.",
                 "node_name": latest_probe.get("node_name"),
+                "node_id": latest_probe.get("node_id"),
                 "path_label": latest_probe.get("path_label"),
                 "task": latest_probe.get("task"),
                 "job_id": None,

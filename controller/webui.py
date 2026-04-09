@@ -323,8 +323,9 @@ class PanelRuntime:
         progress = active_run.get("progress") or {}
         current_blocker = progress.get("current_blocker") or {}
         latest_probe = progress.get("latest_probe") or {}
+        target_node_id = current_blocker.get("node_id") or latest_probe.get("node_id")
         target_node_name = current_blocker.get("node_name") or latest_probe.get("node_name")
-        if not target_node_name:
+        if not target_node_id and not target_node_name:
             return nodes
         if current_blocker.get("summary"):
             summary = str(current_blocker.get("summary"))
@@ -338,10 +339,13 @@ class PanelRuntime:
             "run_id": active_run.get("run_id"),
             "summary": summary,
             "severity": severity,
+            "node_id": target_node_id,
             "recommended_step": current_blocker.get("recommended_step") or progress.get("recommended_step"),
         }
         for node in nodes:
-            if str(node.get("node_name") or "") != str(target_node_name):
+            if target_node_id and int(node.get("id") or 0) != int(target_node_id):
+                continue
+            if not target_node_id and str(node.get("node_name") or "") != str(target_node_name):
                 continue
             node["run_attention"] = attention_payload
             runtime_details = dict((node.get("runtime") or {}).get("details") or {})

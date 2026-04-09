@@ -770,6 +770,12 @@
         focusPanelRuntimeCard();
       }
     });
+    document.getElementById("runDetail").addEventListener("click", (event) => {
+      const nodeButton = event.target.closest("button[data-focus-node]");
+      if (nodeButton) {
+        focusNodeCard(nodeButton.dataset.focusNode);
+      }
+    });
     window.addEventListener("resize", () => Object.values(charts).forEach((chart) => chart.resize()));
   }
 
@@ -1376,6 +1382,8 @@
     const progress = payload?.progress || {};
     const latestQueueJob = progress.latest_queue_job || {};
     const currentBlocker = progress.current_blocker || {};
+    const latestProbe = progress.latest_probe || {};
+    const focusNodeId = currentBlocker.node_id || latestQueueJob.node_id || latestProbe.node_id || null;
     const links = [];
     if (!payload) {
       document.getElementById("runDetail").innerHTML = `<div class="empty">${escapeHtml(t("noRunDetail"))}</div>`;
@@ -1398,14 +1406,14 @@
         <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
         ${progress.headline ? `<div class="muted">${escapeHtml(t("result"))}: ${progress.headline_severity ? `<span class="status-pill ${escapeHtml(progress.headline_severity)}">${escapeHtml(severityLabel(progress.headline_severity))}</span> ` : ""}${escapeHtml(progress.headline)}</div>` : ""}
-        <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
-        ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}</div>` : ""}
+        <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(latestProbe.task || latestProbe.path_label || t("noData"))}</div>
+        ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}${currentBlocker.node_id ? ` <button type="button" data-focus-node="${escapeHtml(String(currentBlocker.node_id))}">${escapeHtml(t("openNode"))}</button>` : ""}</div>` : ""}
         ${latestQueueJob.job_id ? `
           <div class="muted">${escapeHtml(t("latestQueueJob"))}: ${escapeHtml([
             latestQueueJob.task || t("noData"),
             latestQueueJob.node_name || "",
             latestQueueJob.status || latestQueueJob.event_kind || "",
-          ].filter(Boolean).join(" | "))}</div>
+          ].filter(Boolean).join(" | "))}${latestQueueJob.node_id ? ` <button type="button" data-focus-node="${escapeHtml(String(latestQueueJob.node_id))}">${escapeHtml(t("openNode"))}</button>` : ""}</div>
           <div class="muted">${escapeHtml(t("jobId"))}: ${escapeHtml(String(latestQueueJob.job_id))}</div>
           ${latestQueueJob.lease_state ? `<div class="muted">${escapeHtml(t("leaseState"))}: ${escapeHtml(latestQueueJob.lease_state)}</div>` : ""}
           ${latestQueueJob.lease_expires_at ? `<div class="muted">${escapeHtml(t("leaseExpiresAt"))}: ${escapeHtml(formatTimestamp(latestQueueJob.lease_expires_at))}</div>` : ""}
@@ -1414,6 +1422,7 @@
         ${progress.last_failure_message ? `<div class="muted">${escapeHtml(t("failure"))}: ${escapeHtml(progress.last_failure_message)}</div>` : ""}
         ${progress.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(progress.recommended_step)}</div>` : ""}
         <div class="muted">${links.join(" | ") || escapeHtml(t("noData"))}</div>
+        ${focusNodeId ? `<div class="node-actions" style="margin-top: 10px;"><button type="button" data-focus-node="${escapeHtml(String(focusNodeId))}">${escapeHtml(t("openNode"))}</button></div>` : ""}
         ${payload.status === "running" ? `<div class="muted">${escapeHtml(t("liveRunHint"))}</div>` : ""}
       </div>
       <div class="card">
