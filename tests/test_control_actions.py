@@ -184,6 +184,7 @@ def test_admin_runtime_and_node_action_flow(tmp_path: Path) -> None:
             "restart",
             "stop",
         ]
+        assert "pull checks are failing" in (node_runtime["runtime"]["details"]["operator_summary"] or "")
 
         queued = client.post(f"/api/v1/admin/nodes/{node['id']}/actions", json={"action": "sync_runtime", "actor": "admin-ui"})
         assert queued.status_code == 200
@@ -252,6 +253,7 @@ def test_node_actions_are_serialized_per_target_and_conflicts_include_active_act
         node_payload = client.get(f"/api/v1/nodes/{node['id']}").json()
         assert node_payload["runtime"]["details"]["active_action_id"] == first_action_id
         assert "sync_runtime" in (node_payload["runtime"]["details"]["active_action_summary"] or "")
+        assert "sync_runtime" in (node_payload["runtime"]["details"]["operator_summary"] or "")
         runtime_payload = client.get("/api/v1/admin/runtime").json()
         node_attention = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "node-action")
         assert node_attention["action_id"] == first_action_id
@@ -327,6 +329,7 @@ def test_native_panel_runtime_is_observable_without_bridge(tmp_path: Path, monke
             "resume_scheduler",
             "tail_log",
         ]
+        assert "read-only runtime" in (runtime_payload["runtime"]["details"]["operator_summary"] or "")
         assert runtime_payload["supervisor"]["control_available"] is False
         assert runtime_payload["supervisor"]["supervisor_state"] == "native-readonly"
         assert runtime_payload["supervisor"]["process_state"] == "running"
@@ -370,6 +373,7 @@ def test_panel_bridge_actions_are_hidden_when_bridge_runtime_is_unreachable(tmp_
             "resume_scheduler",
         ]
         assert "unreachable" in (runtime_payload["runtime"]["details"]["readonly_reason"] or "")
+        assert "could not connect" in (runtime_payload["runtime"]["details"]["operator_summary"] or "")
 
         restart = client.post("/api/v1/admin/panel/actions", json={"action": "restart", "actor": "admin-ui"})
         assert restart.status_code == 409

@@ -1396,6 +1396,9 @@
     const runtime = panel.runtime || {};
     const supervisor = panel.supervisor || {};
     const details = runtime.details || {};
+    const operatorSummary = details.operator_summary || "";
+    const operatorSeverity = details.operator_severity || "";
+    const operatorRecommendedStep = details.operator_recommended_step || "";
     const availableActions = new Set(details.available_actions || []);
     const activeActionId = details.active_action_id || null;
     const activeActionSummary = details.active_action_summary || "";
@@ -1436,6 +1439,8 @@
         <div class="muted">${escapeHtml(t("logLocation"))}: ${escapeHtml(logLocation || t("noData"))}</div>
         <div class="muted">${escapeHtml(paused ? t("schedulerPaused") : t("schedulerRunning"))}</div>
         <div class="muted">${escapeHtml(formatTimestamp(details.last_loop_at || runtime.checked_at))}</div>
+        ${operatorSummary ? `<div class="muted">${escapeHtml(t("result"))}: ${operatorSeverity ? `<span class="status-pill ${escapeHtml(operatorSeverity)}">${escapeHtml(severityLabel(operatorSeverity))}</span> ` : ""}${escapeHtml(operatorSummary)}</div>` : ""}
+        ${operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
         ${details.readonly_reason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(details.readonly_reason)}</div>` : ""}
         ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
         ${!supervisor.control_available && details.control_mode === "native-readonly" ? `<div class="muted">${escapeHtml(t("panelReadonlyHint"))}</div>` : ""}
@@ -1600,12 +1605,14 @@
       const supervisor = node.supervisor || {};
       const runtimeDetails = runtime.details || {};
       const runAttention = node.run_attention || null;
+      const operatorSummary = runtimeDetails.operator_summary || "";
+      const operatorSeverity = runtimeDetails.operator_severity || "";
+      const operatorRecommendedStep = runtimeDetails.operator_recommended_step || "";
       const availableActions = new Set(runtimeDetails.available_actions || []);
       const activeActionId = runtimeDetails.active_action_id || null;
       const activeActionSummary = runtimeDetails.active_action_summary || "";
       const readonlyReason = runtimeDetails.readonly_reason || "";
       const connectivitySummary = connectivity.summary || "";
-      const recommendedStep = connectivity.recommended_step || "";
       const diagnosticCode = connectivity.diagnostic_code || "";
       const controlButtons = [];
       if (availableActions.has("sync_runtime")) {
@@ -1648,9 +1655,9 @@
           ${pull.code ? `<div class="muted">${escapeHtml(t("pullCode"))}: ${escapeHtml(pull.code)}</div>` : ""}
           ${diagnosticCode ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(diagnosticCode)}</div>` : ""}
           ${connectivitySummary ? `<div class="muted">${escapeHtml(t("connectivitySummary"))}: ${escapeHtml(connectivitySummary)}</div>` : ""}
-          ${recommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(recommendedStep)}</div>` : ""}
+          ${operatorSummary ? `<div class="muted">${escapeHtml(t("result"))}: ${operatorSeverity ? `<span class="status-pill ${escapeHtml(operatorSeverity)}">${escapeHtml(severityLabel(operatorSeverity))}</span> ` : ""}${escapeHtml(operatorSummary)}</div>` : ""}
+          ${operatorRecommendedStep ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(operatorRecommendedStep)}</div>` : ""}
           ${runAttention?.run_id ? `<div class="muted">${escapeHtml(t("activeRunNow"))}: ${runAttention.severity ? `<span class="status-pill ${escapeHtml(runAttention.severity)}">${escapeHtml(severityLabel(runAttention.severity))}</span> ` : ""}${escapeHtml(runAttention.summary || runAttention.run_id)} <button type="button" data-open-run="${escapeHtml(String(runAttention.run_id))}">${escapeHtml(t("openRun"))}</button></div>` : ""}
-          ${runAttention?.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(runAttention.recommended_step)}</div>` : ""}
           ${readonlyReason ? `<div class="muted">${escapeHtml(t("readonlyReason"))}: ${escapeHtml(readonlyReason)}</div>` : ""}
           ${activeActionId ? `<div class="muted">${escapeHtml(t("currentAction"))}: ${escapeHtml(activeActionSummary || t("actionBusy"))} <button type="button" data-action-detail="${escapeHtml(String(activeActionId))}">${escapeHtml(t("viewAction"))}</button></div>` : ""}
           ${connectivity.endpoint_mismatch ? `<div class="muted">${escapeHtml(t("endpointMismatch"))}: ${escapeHtml(connectivity.endpoint_mismatch_detail || "")}</div>` : ""}

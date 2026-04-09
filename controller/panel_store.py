@@ -2477,6 +2477,14 @@ class PanelStore:
             "summary": connectivity_diagnostic["summary"],
             "recommended_step": connectivity_diagnostic["recommended_step"],
         }
+        operator_summary, operator_severity, operator_recommended_step = self._node_operator_hint(
+            runtime_details=runtime_details,
+            connectivity=node["connectivity"],
+        )
+        runtime_details["operator_summary"] = operator_summary
+        runtime_details["operator_severity"] = operator_severity
+        runtime_details["operator_recommended_step"] = operator_recommended_step
+        runtime_summary["details"] = runtime_details
         node["status"] = connectivity_status
         for key in (
             "agent_url",
@@ -2895,6 +2903,30 @@ class PanelStore:
         if not action:
             return None
         return f"{action.get('action')} ({action.get('status')})"
+
+    def _node_operator_hint(
+        self,
+        runtime_details: dict[str, Any],
+        connectivity: dict[str, Any],
+    ) -> tuple[str | None, str, str | None]:
+        if runtime_details.get("active_action_summary"):
+            return (
+                str(runtime_details.get("active_action_summary")),
+                "info",
+                "Open the action detail to follow progress before issuing another lifecycle action for this node.",
+            )
+        level = str(connectivity.get("attention_level") or "ok")
+        if level != "ok" and connectivity.get("summary"):
+            return (
+                str(connectivity.get("summary")),
+                level,
+                str(connectivity.get("recommended_step")) if connectivity.get("recommended_step") else None,
+            )
+        readonly_reason = runtime_details.get("readonly_reason")
+        if readonly_reason:
+            severity = "warning" if "unreachable" in str(readonly_reason).lower() else "info"
+            return str(readonly_reason), severity, None
+        return None, "info", None
 
     def _run_recommended_step(self, code: str | None) -> str | None:
         if not code:

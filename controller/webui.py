@@ -216,6 +216,13 @@ class PanelRuntime:
             bridge_runtime_details = bridge_runtime.get("details") or {}
             if isinstance(bridge_runtime_details, dict) and bridge_runtime_details.get("bridge_error_code"):
                 details["bridge_error_code"] = bridge_runtime_details.get("bridge_error_code")
+        operator_summary, operator_severity, operator_recommended_step = self._panel_operator_hint(
+            details=details,
+            last_error=self._last_loop_error or (bridge_runtime.get("last_error") if self._panel_bridge_url else None),
+        )
+        details["operator_summary"] = operator_summary
+        details["operator_severity"] = operator_severity
+        details["operator_recommended_step"] = operator_recommended_step
         return {
             "runtime": {
                 "state": "running",
@@ -268,6 +275,9 @@ class PanelRuntime:
             runtime_details["active_run_id"] = active_run.get("run_id")
             runtime_details["active_run_summary"] = summary
             runtime_details["active_run_severity"] = severity
+            runtime_details["operator_summary"] = summary
+            runtime_details["operator_severity"] = severity
+            runtime_details["operator_recommended_step"] = attention_payload.get("recommended_step")
             node.setdefault("runtime", {})["details"] = runtime_details
             break
         return nodes
@@ -464,6 +474,26 @@ class PanelRuntime:
         if not self._panel_bridge_control_available():
             return "Panel control bridge is configured but currently unreachable; only scheduler control and any local log tailing remain available."
         return None
+
+    def _panel_operator_hint(self, details: dict[str, Any], last_error: str | None) -> tuple[str | None, str, str | None]:
+        if details.get("active_action_summary"):
+            return (
+                str(details.get("active_action_summary")),
+                "info",
+                "Open the action detail to follow progress before issuing another panel action.",
+            )
+        if last_error:
+            return (
+                str(last_error),
+                "warning",
+                "Sync runtime or inspect panel logs before issuing more control actions.",
+            )
+        readonly_reason = details.get("readonly_reason")
+        if readonly_reason:
+            return str(readonly_reason), "info", None
+        if details.get("scheduler_paused"):
+            return "Scheduler is paused.", "info", "Resume the scheduler when you are ready to restart automatic monitoring."
+        return None, "info", None
 
     def _active_action_summary(self, action: dict[str, Any] | None) -> str | None:
         if not action:
