@@ -468,9 +468,13 @@ def test_run_events_endpoint_returns_timeline(tmp_path: Path) -> None:
 
         response = client.get(f"/api/v1/admin/runs/{run_id}/events")
         assert response.status_code == 200
-        kinds = [item["event_kind"] for item in response.json()["items"]]
+        items = response.json()["items"]
+        kinds = [item["event_kind"] for item in items]
         assert "run_created" in kinds
         assert "probe_dispatched" in kinds
+        dispatched = next(item for item in items if item["event_kind"] == "probe_dispatched")
+        assert dispatched["summary"] == "ping"
+        assert dispatched["severity"] == "info"
 
         runs = client.get("/api/v1/admin/runs?time_range=24h").json()["items"]
         run_summary = next(item for item in runs if item["run_id"] == run_id)

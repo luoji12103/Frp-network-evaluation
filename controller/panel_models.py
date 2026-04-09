@@ -279,6 +279,9 @@ class RunEventEnvelope(BaseModel):
     event_kind: str
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    summary: str | None = None
+    severity: str = "info"
+    code: str | None = None
     created_at: str
 
 

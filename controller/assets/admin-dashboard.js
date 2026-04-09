@@ -1361,42 +1361,14 @@
       ? `<div class="card">${state.selectedRunEvents.map((item) => `
           <div style="margin-bottom: 10px;">
             <strong>${escapeHtml(item.event_kind)}</strong>
+            ${item.severity ? `<span class="status-pill ${escapeHtml(item.severity)}" style="margin-left: 8px;">${escapeHtml(severityLabel(item.severity))}</span>` : ""}
             <div class="muted">${escapeHtml(formatTimestamp(item.created_at))}</div>
             <div class="muted">${escapeHtml(item.message || "")}</div>
-            ${summarizeRunEventPayload(item) ? `<div class="muted">${escapeHtml(summarizeRunEventPayload(item))}</div>` : ""}
+            ${item.summary ? `<div class="muted">${escapeHtml(item.summary)}</div>` : ""}
+            ${item.code ? `<div class="muted">${escapeHtml(t("failureCode"))}: ${escapeHtml(item.code)}</div>` : ""}
           </div>
         `).join("")}</div>`
       : `<div class="empty">${escapeHtml(t("noData"))}</div>`;
-  }
-
-  function summarizeRunEventPayload(event) {
-    const payload = event?.payload || {};
-    if (!payload || typeof payload !== "object") {
-      return "";
-    }
-    if (!String(event?.event_kind || "").startsWith("queue_")) {
-      return "";
-    }
-    const parts = [];
-    if (payload.job_id) {
-      parts.push(`${t("jobId")}: ${payload.job_id}`);
-    }
-    if (payload.task) {
-      parts.push(`${t("taskLabel")}: ${payload.task}`);
-    }
-    if (payload.node_name) {
-      parts.push(`${t("nodeName")}: ${payload.node_name}`);
-    }
-    if (payload.queue_status) {
-      parts.push(`${t("queueStatus")}: ${payload.queue_status}`);
-    }
-    if (payload.error_code) {
-      parts.push(`${t("failureCode")}: ${payload.error_code}`);
-    }
-    if (payload.error) {
-      parts.push(`${t("failure")}: ${payload.error}`);
-    }
-    return parts.join(" | ");
   }
 
   function renderRunLauncherState() {

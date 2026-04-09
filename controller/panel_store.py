@@ -2564,6 +2564,10 @@ class PanelStore:
 
     def _decorate_run_event(self, event: dict[str, Any]) -> dict[str, Any]:
         event["payload"] = _loads(event.get("payload_json") or "{}")
+        summary, severity, code = self._summarize_run_event(event)
+        event["summary"] = summary
+        event["severity"] = severity
+        event["code"] = code
         event.pop("payload_json", None)
         return event
 
@@ -2939,6 +2943,62 @@ class PanelStore:
                 "status": None,
             }
         return None
+
+    def _summarize_run_event(self, event: dict[str, Any]) -> tuple[str | None, str, str | None]:
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        kind = str(event.get("event_kind") or "")
+        if kind.startswith("queue_"):
+            parts: list[str] = []
+            if payload.get("job_id"):
+                parts.append(f"job {payload['job_id']}")
+            if payload.get("task"):
+                parts.append(str(payload["task"]))
+            if payload.get("node_name"):
+                parts.append(f"node {payload['node_name']}")
+            if payload.get("queue_status"):
+                parts.append(f"status {payload['queue_status']}")
+            if payload.get("error_code"):
+                parts.append(f"code {payload['error_code']}")
+            if payload.get("error"):
+                parts.append(str(payload["error"]))
+            severity = "warning" if kind in {"queue_timeout", "queue_failed", "queue_completion_ignored"} else "info"
+            return (" | ".join(parts) if parts else None), severity, payload.get("error_code")
+        if kind == "probe_dispatched":
+            parts = [str(payload.get("task") or "probe")]
+            if payload.get("node_name"):
+                parts.append(f"node {payload['node_name']}")
+            if payload.get("path_label"):
+                parts.append(f"path {payload['path_label']}")
+            return (" | ".join(parts) if parts else None), "info", None
+        if kind == "probe_transport_error":
+            parts = [str(payload.get("task") or "probe transport error")]
+            if payload.get("transport"):
+                parts.append(f"transport {payload['transport']}")
+            if payload.get("node_name"):
+                parts.append(f"node {payload['node_name']}")
+            if payload.get("error_code"):
+                parts.append(f"code {payload['error_code']}")
+            if payload.get("error"):
+                parts.append(str(payload["error"]))
+            return (" | ".join(parts) if parts else None), "warning", payload.get("error_code")
+        if kind == "probe_completed":
+            parts = [str(payload.get("task") or "probe completed")]
+            if payload.get("transport"):
+                parts.append(f"transport {payload['transport']}")
+            if payload.get("node_name"):
+                parts.append(f"node {payload['node_name']}")
+            if payload.get("error_code"):
+                parts.append(f"code {payload['error_code']}")
+            severity = "info" if payload.get("success", True) else "warning"
+            return (" | ".join(parts) if parts else None), severity, payload.get("error_code")
+        if kind in {"phase_started", "phase_completed"}:
+            phase = payload.get("phase")
+            return (f"phase {phase}" if phase else None), "info", None
+        if kind == "run_failed":
+            return str(payload.get("error") or event.get("message") or "run failed"), "warning", payload.get("error_code") or "run_failed"
+        return None, "info", payload.get("error_code")
 
     def _job_snapshot(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = _loads(job.get("payload_json") or "{}")

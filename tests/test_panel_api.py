@@ -650,9 +650,13 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
 
         events = client.get(f"/api/v1/admin/runs/{run_id}/events")
         assert events.status_code == 200
-        event_kinds = [item["event_kind"] for item in events.json()["items"]]
+        items = events.json()["items"]
+        event_kinds = [item["event_kind"] for item in items]
         assert "queue_leased" in event_kinds
         assert "queue_completed" in event_kinds
+        completed = next(item for item in items if item["event_kind"] == "queue_completed")
+        assert completed["severity"] == "info"
+        assert "job" in (completed["summary"] or "")
 
 
 def test_late_queue_completion_is_recorded_as_ignored(tmp_path: Path) -> None:
@@ -739,8 +743,12 @@ def test_late_queue_completion_is_recorded_as_ignored(tmp_path: Path) -> None:
         assert progress["latest_queue_job"]["status"] == "completion_ignored"
 
         events = client.get(f"/api/v1/admin/runs/{run_id}/events")
-        event_kinds = [item["event_kind"] for item in events.json()["items"]]
+        items = events.json()["items"]
+        event_kinds = [item["event_kind"] for item in items]
         assert "queue_completion_ignored" in event_kinds
+        ignored = next(item for item in items if item["event_kind"] == "queue_completion_ignored")
+        assert ignored["severity"] == "warning"
+        assert ignored["code"] in {None, "queue_failed"}
 
 
 def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) -> None:
