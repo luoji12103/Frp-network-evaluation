@@ -2736,6 +2736,11 @@ class PanelStore:
             "phase_started_at": phase_started_at,
             "latest_probe": latest_probe,
             "latest_queue_job": latest_queue_job,
+            "current_blocker": self._build_current_run_blocker(
+                latest=latest,
+                latest_probe=latest_probe,
+                latest_queue_job=latest_queue_job,
+            ),
             "last_failure_code": last_failure_code,
             "last_failure_message": last_failure_message,
             "last_failure_at": last_failure_at,
@@ -2855,6 +2860,86 @@ class PanelStore:
         }
         return mapping.get(code)
 
+    def _current_run_blocker_recommended_step(self, code: str | None) -> str | None:
+        if not code:
+            return None
+        mapping = {
+            "queue_waiting": "Wait for the next heartbeat lease cycle or inspect the node's push connectivity if the job stays pending.",
+            "queue_inflight": "Wait for the leased job to complete, or inspect node runtime and logs if it stops making progress.",
+        }
+        return mapping.get(code) or self._run_recommended_step(code)
+
+    def _build_current_run_blocker(
+        self,
+        latest: dict[str, Any],
+        latest_probe: dict[str, Any] | None,
+        latest_queue_job: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        latest_event_kind = str(latest.get("event_kind") or "")
+        latest_event_at = latest.get("created_at")
+        if latest_queue_job and latest_queue_job.get("job_id") and latest_queue_job.get("created_at") == latest_event_at:
+            status = str(latest_queue_job.get("status") or latest_queue_job.get("event_kind") or "")
+            code = str(latest_queue_job.get("error_code") or "")
+            if latest_event_kind in {"queue_timeout", "queue_failed", "queue_completion_ignored"} or code:
+                blocker_code = code or ("queue_failed" if status == "failed" else status or "queue_failed")
+                summary = (
+                    f"Queued job {latest_queue_job.get('job_id')} for {latest_queue_job.get('task') or 'queued task'} "
+                    f"failed on {latest_queue_job.get('node_name') or 'node'}."
+                )
+                return {
+                    "kind": "queue",
+                    "code": blocker_code,
+                    "severity": "warning",
+                    "summary": summary,
+                    "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
+                    "node_name": latest_queue_job.get("node_name"),
+                    "path_label": latest_queue_job.get("path_label"),
+                    "task": latest_queue_job.get("task"),
+                    "job_id": latest_queue_job.get("job_id"),
+                    "lease_expires_at": latest_queue_job.get("lease_expires_at"),
+                    "status": status,
+                }
+            if status in {"pending", "leased"}:
+                blocker_code = "queue_waiting" if status == "pending" else "queue_inflight"
+                summary = (
+                    f"Queued job {latest_queue_job.get('job_id')} for {latest_queue_job.get('task') or 'queued task'} "
+                    f"is {status} on {latest_queue_job.get('node_name') or 'node'}."
+                )
+                return {
+                    "kind": "queue",
+                    "code": blocker_code,
+                    "severity": "info",
+                    "summary": summary,
+                    "recommended_step": self._current_run_blocker_recommended_step(blocker_code),
+                    "node_name": latest_queue_job.get("node_name"),
+                    "path_label": latest_queue_job.get("path_label"),
+                    "task": latest_queue_job.get("task"),
+                    "job_id": latest_queue_job.get("job_id"),
+                    "lease_expires_at": latest_queue_job.get("lease_expires_at"),
+                    "status": status,
+                }
+            return None
+        if latest_event_kind == "probe_dispatched" and latest_probe:
+            return {
+                "kind": "probe",
+                "code": "probe_dispatched",
+                "severity": "info",
+                "summary": (
+                    f"Latest probe {latest_probe.get('task') or 'probe'} was dispatched"
+                    + (f" on {latest_probe.get('path_label')}" if latest_probe.get("path_label") else "")
+                    + (f" to {latest_probe.get('node_name')}" if latest_probe.get("node_name") else "")
+                    + "."
+                ),
+                "recommended_step": "Wait for the probe result or inspect node diagnostics if the same probe remains the latest event for too long.",
+                "node_name": latest_probe.get("node_name"),
+                "path_label": latest_probe.get("path_label"),
+                "task": latest_probe.get("task"),
+                "job_id": None,
+                "lease_expires_at": None,
+                "status": None,
+            }
+        return None
+
     def _job_snapshot(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = _loads(job.get("payload_json") or "{}")
         result = _loads(job.get("result_json") or "{}") if job.get("result_json") else None
@@ -2957,6 +3042,7 @@ def _empty_run_progress() -> dict[str, Any]:
         "phase_started_at": None,
         "latest_probe": None,
         "latest_queue_job": None,
+        "current_blocker": None,
         "last_failure_code": None,
         "last_failure_message": None,
         "last_failure_at": None,

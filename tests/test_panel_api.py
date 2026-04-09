@@ -407,6 +407,10 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
         assert "job 42" in relay_node["run_attention"]["summary"]
         assert relay_node["runtime"]["details"]["active_run_id"] == run_id
 
+        detail = client.get(f"/api/v1/admin/runs/{run_id}").json()
+        assert detail["progress"]["current_blocker"]["code"] == "queue_not_leased"
+        assert detail["progress"]["current_blocker"]["kind"] == "queue"
+
 
 def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
@@ -466,6 +470,9 @@ def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tm
         relay_node = next(item for item in runtime_payload["nodes"] if item["node_name"] == "relay-1")
         assert "run_attention" in relay_node
         assert "last touched ping" in relay_node["run_attention"]["summary"]
+
+        detail = client.get(f"/api/v1/admin/runs/{run_id}").json()
+        assert detail["progress"]["current_blocker"] is None
 
 
 def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> None:

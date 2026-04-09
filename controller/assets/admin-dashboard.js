@@ -153,6 +153,7 @@
       eventsCount: "事件数",
       latestProbe: "最近探针",
       latestQueueJob: "最近队列任务",
+      currentBlocker: "当前阻塞",
       queueStatus: "队列状态",
       leaseState: "租约状态",
       leaseExpiresAt: "租约到期",
@@ -419,6 +420,7 @@
       eventsCount: "Event count",
       latestProbe: "Latest probe",
       latestQueueJob: "Latest queued job",
+      currentBlocker: "Current blocker",
       queueStatus: "Queue status",
       leaseState: "Lease state",
       leaseExpiresAt: "Lease expires at",
@@ -1300,6 +1302,7 @@
     const probes = payload?.probes || [];
     const progress = payload?.progress || {};
     const latestQueueJob = progress.latest_queue_job || {};
+    const currentBlocker = progress.current_blocker || {};
     const links = [];
     if (!payload) {
       document.getElementById("runDetail").innerHTML = `<div class="empty">${escapeHtml(t("noRunDetail"))}</div>`;
@@ -1322,6 +1325,7 @@
         <div class="muted">${escapeHtml(t("currentPhase"))}: ${escapeHtml(progress.active_phase || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("lastEvent"))}: ${escapeHtml(progress.last_event_message || progress.last_event_kind || t("noData"))}</div>
         <div class="muted">${escapeHtml(t("latestProbe"))}: ${escapeHtml(progress.latest_probe?.task || progress.latest_probe?.path_label || t("noData"))}</div>
+        ${currentBlocker.summary ? `<div class="muted">${escapeHtml(t("currentBlocker"))}: ${escapeHtml(currentBlocker.summary)}</div>` : ""}
         ${latestQueueJob.job_id ? `
           <div class="muted">${escapeHtml(t("latestQueueJob"))}: ${escapeHtml([
             latestQueueJob.task || t("noData"),

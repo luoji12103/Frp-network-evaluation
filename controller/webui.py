@@ -241,27 +241,24 @@ class PanelRuntime:
         if active_run is None:
             return nodes
         progress = active_run.get("progress") or {}
-        latest_queue_job = self._current_queue_focus(progress)
+        current_blocker = progress.get("current_blocker") or {}
         latest_probe = progress.get("latest_probe") or {}
-        target_node_name = latest_queue_job.get("node_name") or latest_probe.get("node_name")
+        target_node_name = current_blocker.get("node_name") or latest_probe.get("node_name")
         if not target_node_name:
             return nodes
-        if latest_queue_job.get("job_id"):
-            summary = (
-                f"Active run is waiting on queued {latest_queue_job.get('task') or 'task'} "
-                f"job {latest_queue_job.get('job_id')} ({latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'})"
-            )
+        if current_blocker.get("summary"):
+            summary = str(current_blocker.get("summary"))
         else:
             summary = (
                 f"Active run last touched {latest_probe.get('task') or 'probe'}"
                 + (f" on {latest_probe.get('path_label')}" if latest_probe.get("path_label") else "")
             )
-        severity = "warning" if self._current_run_failure_code(progress) else "info"
+        severity = str(current_blocker.get("severity") or "info")
         attention_payload = {
             "run_id": active_run.get("run_id"),
             "summary": summary,
             "severity": severity,
-            "recommended_step": progress.get("recommended_step"),
+            "recommended_step": current_blocker.get("recommended_step") or progress.get("recommended_step"),
         }
         for node in nodes:
             if str(node.get("node_name") or "") != str(target_node_name):
@@ -484,17 +481,18 @@ class PanelRuntime:
             progress = active_run.get("progress") or {}
             phase = progress.get("active_phase")
             last_event = progress.get("last_event_message") or progress.get("last_event_kind")
-            latest_queue_job = self._current_queue_focus(progress)
-            run_failure_code = self._current_run_failure_code(progress) or latest_queue_job.get("error_code")
+            current_blocker = progress.get("current_blocker") or {}
+            latest_queue_job = progress.get("latest_queue_job") or {}
+            run_failure_code = current_blocker.get("code")
             queue_summary = ""
-            if latest_queue_job.get("job_id"):
+            if current_blocker.get("job_id"):
                 queue_summary = (
-                    f"; queue job {latest_queue_job.get('job_id')} "
-                    f"{latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'}"
+                    f"; queue job {current_blocker.get('job_id')} "
+                    f"{current_blocker.get('status') or current_blocker.get('code') or 'queued'}"
                 )
             items.append(
                 {
-                    "severity": "warning" if run_failure_code else "info",
+                    "severity": str(current_blocker.get("severity") or ("warning" if run_failure_code else "info")),
                     "kind": "run",
                     "title": "Monitoring run in progress",
                     "summary": (
@@ -507,29 +505,31 @@ class PanelRuntime:
                     "code": run_failure_code,
                     "target_kind": "run",
                     "target_name": active_run.get("run_id"),
-                    "recommended_step": progress.get("recommended_step") or "Open the run detail to follow progress before starting another monitoring run.",
+                    "recommended_step": current_blocker.get("recommended_step")
+                    or progress.get("recommended_step")
+                    or "Open the run detail to follow progress before starting another monitoring run.",
                 }
             )
-            if latest_queue_job.get("job_id") and (
-                run_failure_code or latest_queue_job.get("status") in {"pending", "leased", "completion_ignored", "failed"}
-            ):
-                lease_expires_at = latest_queue_job.get("lease_expires_at")
+            if current_blocker.get("kind") == "queue" and current_blocker.get("job_id"):
+                lease_expires_at = current_blocker.get("lease_expires_at")
                 items.append(
                     {
-                        "severity": "warning" if run_failure_code or latest_queue_job.get("status") in {"completion_ignored", "failed"} else "info",
+                        "severity": str(current_blocker.get("severity") or "info"),
                         "kind": "run-queue",
                         "title": "Queued job needs attention",
                         "summary": (
-                            f"Job {latest_queue_job.get('job_id')} for {latest_queue_job.get('task') or 'queued task'} "
-                            f"on {latest_queue_job.get('node_name') or 'node'} is "
-                            f"{latest_queue_job.get('status') or latest_queue_job.get('event_kind') or 'queued'}"
+                            f"Job {current_blocker.get('job_id')} for {current_blocker.get('task') or 'queued task'} "
+                            f"on {current_blocker.get('node_name') or 'node'} is "
+                            f"{current_blocker.get('status') or current_blocker.get('code') or 'queued'}"
                             + (f"; lease expires at {lease_expires_at}" if lease_expires_at else "")
                         ),
                         "run_id": active_run.get("run_id"),
-                        "code": run_failure_code or latest_queue_job.get("status"),
+                        "code": run_failure_code or current_blocker.get("status"),
                         "target_kind": "run",
                         "target_name": active_run.get("run_id"),
-                        "recommended_step": progress.get("recommended_step") or "Open the run detail and inspect the queued job timeline before rerunning the phase.",
+                        "recommended_step": current_blocker.get("recommended_step")
+                        or progress.get("recommended_step")
+                        or "Open the run detail and inspect the queued job timeline before rerunning the phase.",
                     }
                 )
 
@@ -593,24 +593,6 @@ class PanelRuntime:
             "info": sum(1 for item in items if item.get("severity") == "info"),
         }
         return {"summary": summary, "items": items[:8]}
-
-    def _current_run_failure_code(self, progress: dict[str, Any]) -> str | None:
-        failure_code = progress.get("last_failure_code")
-        if not failure_code:
-            return None
-        if progress.get("last_failure_at") and progress.get("last_failure_at") == progress.get("last_event_at"):
-            return str(failure_code)
-        return None
-
-    def _current_queue_focus(self, progress: dict[str, Any]) -> dict[str, Any]:
-        latest_queue_job = progress.get("latest_queue_job") or {}
-        if not isinstance(latest_queue_job, dict):
-            return {}
-        if not latest_queue_job.get("job_id"):
-            return {}
-        if latest_queue_job.get("created_at") and latest_queue_job.get("created_at") == progress.get("last_event_at"):
-            return latest_queue_job
-        return {}
 
     def _panel_supervisor_snapshot(self) -> dict[str, Any]:
         if self._panel_bridge_url:
