@@ -246,6 +246,10 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `runtime.checked_at`
 - `runtime.last_error`
 - `runtime.details`
+- `runtime.details.operator_summary`
+- `runtime.details.operator_severity`
+- `runtime.details.operator_recommended_step`
+- `runtime.details.suggested_action`
 - `runtime.details.available_actions`
 - `runtime.details.readonly_reason`
 - `runtime.details.active_action_id`
@@ -261,6 +265,45 @@ macOS 分支不要改以下 Panel 侧接口合同。
 - `supervisor.log_location`
 - `supervisor.last_error`
 - `supervisor.checked_at`
+
+不要改当前管理动作详情 / 历史里的关键字段语义：
+
+- `target_status`
+- `target_runtime_state`
+- `target_attention_level`
+- `target_operator_summary`
+- `target_snapshot`
+
+不要改当前 run progress / 运行事件里的关键字段语义：
+
+- `progress.latest_probe.node_id`
+- `progress.latest_queue_job.node_id`
+- `progress.current_blocker.node_id`
+- `progress.current_blocker.suggested_action`
+- `run_event.node_id`
+
+不要改当前 attention / CTA 语义：
+
+- `attention.items[*].suggested_action`
+- `runtime.details.suggested_action`
+- `suggested_action.kind`
+- `suggested_action.target_kind`
+- `suggested_action.target_id`
+- `suggested_action.run_id`
+- `suggested_action.action_id`
+- `suggested_action.label`
+- `suggested_action.dangerous`
+
+当前 `suggested_action` 只允许这些受限值：
+
+- `open_node`
+- `open_panel`
+- `open_run`
+- `open_action`
+- `sync_runtime`
+- `tail_log`
+
+不要把 `suggested_action` 扩展成任意命令执行能力，也不要绕过现有确认 / 冲突处理。
 
 ## 6. 双方都必须遵守的扩展规则
 
@@ -362,10 +405,12 @@ curl http://127.0.0.1:9870/api/v1/health
 - active run 的 `progress` 还可以附带 `current_blocker` 与 `headline`
 - 节点 runtime 视图对象可以附带 `run_attention`，把当前 active run 的阻塞点直接贴到对应节点卡片上
 - run event 对象可以附带 `summary`、`severity`、`code`
+- run event 对象还可以附带 `node_id`
 - 节点 `connectivity.push` / `connectivity.pull` 里可以附带可选 `code`
 - 运行时调试字段优先放进 `runtime_status.environment`
 - probe 侧附加信息继续放进 `metadata`
 - run `progress` 可以附带 `last_failure_code`、`last_failure_message`、`recommended_step`
+- run `progress.current_blocker`、`attention.items[*]`、`runtime.details` 都可以附带 `suggested_action`
 
 ## 9. 合并前检查清单
 
@@ -404,3 +449,22 @@ macOS 分支提交前，至少检查：
 - `WebUI-dev` 继续只做 WebUI / Panel
 - macOS 分支只做 Agent / launchd / 本地兼容
 - 双边都不要跨边界改接口
+
+## 11. 当前人工验收基线
+
+当前管理面人工验收以这组场景为准：
+
+1. Panel 在线且节点 `online`
+2. 节点 `push-only` 或 pull 退化
+3. control bridge 不可达
+4. 同一目标 action 冲突返回 `409`
+5. active run 卡在 queue
+6. active run 从 queue 问题恢复到 probe 成功
+
+每个场景都要同时核对三层一致性：
+
+1. 后端接口返回
+2. 管理页展示
+3. 跳转 / 定位行为
+
+如果后续改动命中了这条链，默认先修这些回归，再考虑新的交互增强。

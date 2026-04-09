@@ -181,19 +181,47 @@ The admin UI now has a dedicated runtime-control surface.
 - The management page now keeps action history and action detail on the same screen.
 - The management page also keeps an `Operations focus` stack driven by backend runtime diagnostics, so active runs and node communication issues are visible without digging through logs first.
 - Clicking an action opens normalized detail fields: target, actor, transport, failure summary, request / response snapshot, log excerpt, and runtime / supervisor snapshot.
+- Action detail also includes a live `target_snapshot`, so operators can compare the action result with the target's current runtime / supervisor / connectivity state without leaving the page.
 - Lifecycle actions are serialized per target. If a node or the panel already has a `queued` or `running` action, the next action is rejected and the UI jumps to the active action.
 - Nodes now expose structured connectivity diagnostics: `connectivity.diagnostic_code`, `connectivity.attention_level`, `connectivity.summary`, `connectivity.recommended_step`, plus per-channel `push.code` / `pull.code`.
+- Node and panel runtime payloads now expose backend-owned operator fields: `runtime.details.operator_summary`, `runtime.details.operator_severity`, `runtime.details.operator_recommended_step`, and `runtime.details.suggested_action`.
+- `GET /api/v1/admin/actions` now also returns target-side summary fields: `target_status`, `target_runtime_state`, `target_attention_level`, and `target_operator_summary`.
+- `GET /api/v1/admin/actions/{action_id}` now returns `target_snapshot`, including current runtime, supervisor, connectivity, endpoints, and any active CTA for that target.
 - `GET /api/v1/admin/runtime` now also returns the current `active_run` and an `attention` summary list; the admin UI uses that payload to disable duplicate full-run launches and jump to the already-running run.
+- `attention.items[*]` may now include `suggested_action`, so the UI can render one explicit CTA instead of inferring next steps from text.
 - Active runs now expose structured queue diagnostics through `progress.latest_queue_job`, so queued dispatches, leases, timeouts, completions, and ignored late completions are visible without reading raw job rows.
 - Active runs also expose `progress.current_blocker` and `progress.headline`, so the backend can distinguish the current blocking step from older failures and the UI can reuse one canonical summary in the run list, run detail, and operations focus.
+- `progress.current_blocker`, `progress.latest_queue_job`, and `progress.latest_probe` now carry `node_id` when the backend can resolve the affected node, and `progress.current_blocker` may include `suggested_action`.
 - Node runtime cards can surface `run_attention` when the active run is currently blocked on that node, and the same signal is mirrored into `runtime.details.active_run_*` for backend-driven UI decisions.
-- Run event timeline items now carry backend-generated `summary`, `severity`, and `code` fields, which keeps queue and probe event explanations consistent between the API and WebUI.
+- Run event timeline items now carry backend-generated `summary`, `severity`, `code`, and `node_id`, which keeps queue and probe event explanations consistent between the API and WebUI and lets the UI jump straight to the affected node.
 - Native panel log tailing checks these locations in order:
   - `MC_NETPROBE_PANEL_LOG_FILE`
   - `logs/panel-native.log`
   - `logs/panel.log`
   - `logs/webui.log`
 - Running run details now auto-refresh in the admin UI and surface current phase, latest event, event count, latest dispatched probe, latest queued job state, and the latest structured failure code / recovery hint when a phase degrades.
+- `suggested_action` is intentionally limited to admin-safe CTA kinds: `open_node`, `open_panel`, `open_run`, `open_action`, `sync_runtime`, and `tail_log`. The UI reuses existing confirmation / conflict handling for executable CTA buttons and does not support arbitrary commands.
+
+### Runtime Validation Checklist
+
+Recommended live validation order after deploying a new panel / agent build:
+
+1. `online` node:
+   - `GET /api/v1/admin/runtime` shows runtime, supervisor, connectivity, and `suggested_action`
+   - node card and action detail agree on status and operator summary
+2. `push-only` or pull-degraded node:
+   - `connectivity.diagnostic_code` and `runtime.details.suggested_action` match the node card CTA
+   - `Operations focus` shows the same summary and CTA
+3. active lifecycle action conflict:
+   - the second action returns `409`
+   - the response contains the active action summary
+   - the UI jumps to the current action detail
+4. active run blocked on queue:
+   - `progress.current_blocker`, `progress.latest_queue_job`, and run event timeline expose the same node identity
+   - run detail, node card, and `Operations focus` all jump to the same node / run
+5. queue issue recovers to probe success:
+   - `current_blocker` clears
+   - node runtime / `Operations focus` stop showing the stale blocker
 
 ## Relay Agent On Linux Docker
 
