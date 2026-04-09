@@ -2676,6 +2676,7 @@ class PanelStore:
         latest_queue_job: dict[str, Any] | None = None
         last_failure_code: str | None = None
         last_failure_message: str | None = None
+        last_failure_at: str | None = None
         for event in events:
             payload = event.get("payload") or {}
             phase = payload.get("phase") if isinstance(payload, dict) else None
@@ -2688,7 +2689,7 @@ class PanelStore:
             elif event.get("event_kind") in {"run_finished", "run_failed"}:
                 active_phase = None
                 phase_started_at = None
-            if event.get("event_kind") == "probe_dispatched" and isinstance(payload, dict):
+            if event.get("event_kind") in {"probe_dispatched", "probe_completed"} and isinstance(payload, dict):
                 latest_probe = {
                     "task": payload.get("task"),
                     "node_name": payload.get("node_name"),
@@ -2725,6 +2726,7 @@ class PanelStore:
                 if failure_code or (event.get("event_kind") == "run_failed" and failure_message):
                     last_failure_code = str(failure_code) if failure_code else "run_failed"
                     last_failure_message = str(failure_message or event.get("message") or "")
+                    last_failure_at = event.get("created_at")
         return {
             "events_count": len(events),
             "last_event_kind": latest.get("event_kind"),
@@ -2736,6 +2738,7 @@ class PanelStore:
             "latest_queue_job": latest_queue_job,
             "last_failure_code": last_failure_code,
             "last_failure_message": last_failure_message,
+            "last_failure_at": last_failure_at,
             "recommended_step": self._run_recommended_step(last_failure_code),
         }
 
@@ -2956,5 +2959,6 @@ def _empty_run_progress() -> dict[str, Any]:
         "latest_queue_job": None,
         "last_failure_code": None,
         "last_failure_message": None,
+        "last_failure_at": None,
         "recommended_step": None,
     }

@@ -241,7 +241,7 @@ class PanelRuntime:
         if active_run is None:
             return nodes
         progress = active_run.get("progress") or {}
-        latest_queue_job = progress.get("latest_queue_job") or {}
+        latest_queue_job = self._current_queue_focus(progress)
         latest_probe = progress.get("latest_probe") or {}
         target_node_name = latest_queue_job.get("node_name") or latest_probe.get("node_name")
         if not target_node_name:
@@ -256,7 +256,7 @@ class PanelRuntime:
                 f"Active run last touched {latest_probe.get('task') or 'probe'}"
                 + (f" on {latest_probe.get('path_label')}" if latest_probe.get("path_label") else "")
             )
-        severity = "warning" if progress.get("last_failure_code") else "info"
+        severity = "warning" if self._current_run_failure_code(progress) else "info"
         attention_payload = {
             "run_id": active_run.get("run_id"),
             "summary": summary,
@@ -484,8 +484,8 @@ class PanelRuntime:
             progress = active_run.get("progress") or {}
             phase = progress.get("active_phase")
             last_event = progress.get("last_event_message") or progress.get("last_event_kind")
-            latest_queue_job = progress.get("latest_queue_job") or {}
-            run_failure_code = progress.get("last_failure_code") or latest_queue_job.get("error_code")
+            latest_queue_job = self._current_queue_focus(progress)
+            run_failure_code = self._current_run_failure_code(progress) or latest_queue_job.get("error_code")
             queue_summary = ""
             if latest_queue_job.get("job_id"):
                 queue_summary = (
@@ -593,6 +593,24 @@ class PanelRuntime:
             "info": sum(1 for item in items if item.get("severity") == "info"),
         }
         return {"summary": summary, "items": items[:8]}
+
+    def _current_run_failure_code(self, progress: dict[str, Any]) -> str | None:
+        failure_code = progress.get("last_failure_code")
+        if not failure_code:
+            return None
+        if progress.get("last_failure_at") and progress.get("last_failure_at") == progress.get("last_event_at"):
+            return str(failure_code)
+        return None
+
+    def _current_queue_focus(self, progress: dict[str, Any]) -> dict[str, Any]:
+        latest_queue_job = progress.get("latest_queue_job") or {}
+        if not isinstance(latest_queue_job, dict):
+            return {}
+        if not latest_queue_job.get("job_id"):
+            return {}
+        if latest_queue_job.get("created_at") and latest_queue_job.get("created_at") == progress.get("last_event_at"):
+            return latest_queue_job
+        return {}
 
     def _panel_supervisor_snapshot(self) -> dict[str, Any]:
         if self._panel_bridge_url:

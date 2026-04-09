@@ -408,6 +408,66 @@ def test_active_run_attention_surfaces_queued_job_diagnostic(tmp_path: Path) -> 
         assert relay_node["runtime"]["details"]["active_run_id"] == run_id
 
 
+def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        store = client.app.state.runtime.store
+        store.upsert_node(
+            NodeUpsertRequest(
+                node_name="relay-1",
+                role="relay",
+                runtime_mode="docker-linux",
+                configured_pull_url="http://relay.example:9870",
+                enabled=True,
+            )
+        )
+        run_id = store.create_run("baseline", "test")
+        store.record_run_event(run_id, "phase_started", "baseline phase started", {"phase": "baseline"})
+        store.record_run_event(
+            run_id,
+            "queue_timeout",
+            "ping queued job timed out on relay-1",
+            {
+                "job_id": 42,
+                "task": "ping",
+                "node_name": "relay-1",
+                "queue_status": "pending",
+                "error": "Timed out waiting for job 42",
+                "error_code": "queue_not_leased",
+                "job": {
+                    "job_id": 42,
+                    "task": "ping",
+                    "status": "pending",
+                    "lease_state": "not-leased",
+                },
+            },
+        )
+        store.record_run_event(
+            run_id,
+            "probe_completed",
+            "ping completed on relay-1 via pull",
+            {
+                "task": "ping",
+                "node_name": "relay-1",
+                "path_label": "client_to_relay",
+                "transport": "pull",
+                "success": True,
+                "error": None,
+            },
+        )
+
+        runtime_payload = client.get("/api/v1/admin/runtime").json()
+        run_item = next(item for item in runtime_payload["attention"]["items"] if item["kind"] == "run")
+        assert run_item["severity"] == "info"
+        assert run_item["code"] is None
+        assert "queue job 42" not in run_item["summary"]
+        assert all(item["kind"] != "run-queue" for item in runtime_payload["attention"]["items"])
+
+        relay_node = next(item for item in runtime_payload["nodes"] if item["node_name"] == "relay-1")
+        assert "run_attention" in relay_node
+        assert "last touched ping" in relay_node["run_attention"]["summary"]
+
+
 def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         login_admin(client)
