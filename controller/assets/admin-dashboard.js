@@ -132,6 +132,16 @@
       sessionExpired: "登录已失效，请刷新后重新登录。",
       runtimeControl: "运行控制",
       operationsFocus: "运行焦点",
+      releaseValidation: "发布验收",
+      runValidation: "执行只读验收",
+      validationNotRun: "尚未执行发布验收。",
+      validationRunning: "发布验收执行中",
+      validationLastChecked: "最近验收",
+      validationSummary: "验收摘要",
+      validationIssues: "验收问题",
+      validationNoIssues: "当前验收没有发现警告或失败项。",
+      validationChecks: "检查项",
+      generatedAt: "生成时间",
       noAttention: "当前没有需要立刻处理的运行问题。",
       activeRunNow: "运行中任务",
       attentionSummary: "待关注事项",
@@ -303,6 +313,10 @@
         completed: "完成",
         canceled: "已取消",
         failed: "失败",
+        pass: "通过",
+        warn: "警告",
+        fail: "失败",
+        skip: "跳过",
         healthy: "健康",
         degraded: "降级",
         critical: "严重",
@@ -402,6 +416,16 @@
       sessionExpired: "Session expired. Refresh and log in again.",
       runtimeControl: "Runtime controls",
       operationsFocus: "Operations focus",
+      releaseValidation: "Release Validation",
+      runValidation: "Run Read-only Validation",
+      validationNotRun: "No release validation snapshot is available yet.",
+      validationRunning: "Release validation is running",
+      validationLastChecked: "Last validation",
+      validationSummary: "Validation summary",
+      validationIssues: "Validation issues",
+      validationNoIssues: "The latest validation did not report warn or fail items.",
+      validationChecks: "Checks",
+      generatedAt: "Generated",
       noAttention: "Nothing needs immediate runtime attention right now.",
       activeRunNow: "Active run",
       attentionSummary: "Attention items",
@@ -573,6 +597,10 @@
         completed: "Completed",
         canceled: "Canceled",
         failed: "Failed",
+        pass: "Pass",
+        warn: "Warn",
+        fail: "Fail",
+        skip: "Skip",
         healthy: "Healthy",
         degraded: "Degraded",
         critical: "Critical",
@@ -592,21 +620,32 @@
     runs: null,
     runtimeInfo: null,
     actionHistory: null,
+    releaseValidation: null,
     selectedAction: null,
     selectedActionId: null,
     selectedRun: null,
     selectedRunId: null,
     selectedRunEvents: null,
+    pendingActionAutoSelectId: null,
+    pendingRunAutoSelectId: null,
     activeTab: "overview",
     pairCommands: { primary: "", fallback: "" },
-    lastRefreshAt: null,
+    lastRefreshAt: (window.__INITIAL_STATE__ || {}).generated_at || null,
     lastError: "",
+    requestEpochs: {
+      snapshot: 0,
+      refreshAll: 0,
+      actionDetail: 0,
+      runDetail: 0,
+      releaseValidation: 0,
+    },
   };
 
   const charts = {};
   let refreshTimer = null;
   let actionPollTimer = null;
   let runPollTimer = null;
+  let releaseValidationPollTimer = null;
 
   document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
@@ -643,6 +682,7 @@
       await refreshSnapshot();
       await refreshAll();
     });
+    document.getElementById("runReleaseValidationBtn").addEventListener("click", runReleaseValidation);
     document.getElementById("applyFiltersBtn").addEventListener("click", refreshAll);
     document.getElementById("resetFiltersBtn").addEventListener("click", async () => {
       resetFilters();
@@ -719,6 +759,21 @@
       const detailButton = event.target.closest("button[data-action-detail]");
       if (detailButton) {
         await loadActionDetail(Number(detailButton.dataset.actionDetail), { refreshRuntime: false });
+        return;
+      }
+      const nodeButton = event.target.closest("button[data-focus-node]");
+      if (nodeButton) {
+        focusNodeCard(nodeButton.dataset.focusNode);
+        return;
+      }
+      const panelButton = event.target.closest("button[data-focus-panel]");
+      if (panelButton) {
+        focusPanelRuntimeCard();
+      }
+    });
+    document.getElementById("releaseValidationBody").addEventListener("click", async (event) => {
+      const suggestedButton = event.target.closest("button[data-suggested-kind]");
+      if (suggestedButton && await invokeSuggestedActionFromButton(suggestedButton)) {
         return;
       }
       const nodeButton = event.target.closest("button[data-focus-node]");
@@ -888,6 +943,24 @@
     }).join("");
   }
 
+  function nextRequestEpoch(key) {
+    state.requestEpochs[key] = Number(state.requestEpochs[key] || 0) + 1;
+    return state.requestEpochs[key];
+  }
+
+  function isLatestRequest(key, epoch) {
+    return Number(state.requestEpochs[key] || 0) === Number(epoch);
+  }
+
+  function updateLastRefreshAt(...payloads) {
+    const generatedAt = payloads
+      .map((payload) => payload?.generated_at)
+      .find((value) => typeof value === "string" && value);
+    if (generatedAt) {
+      state.lastRefreshAt = generatedAt;
+    }
+  }
+
   function rebuildFilterOptions() {
     if (!state.filtersMeta) {
       return;
@@ -921,12 +994,19 @@
   }
 
   async function refreshSnapshot() {
-    state.snapshot = await fetchJson("/api/v1/dashboard");
+    const epoch = nextRequestEpoch("snapshot");
+    const snapshot = await fetchJson("/api/v1/dashboard");
+    if (!isLatestRequest("snapshot", epoch)) {
+      return;
+    }
+    state.snapshot = snapshot;
+    updateLastRefreshAt(snapshot);
     hydrateManagement();
     renderHeadlineAlerts();
   }
 
   async function refreshAll() {
+    const epoch = nextRequestEpoch("refreshAll");
     const filters = readFilters();
     const alertStatuses = filters.includeResolved
       ? selectedValues("filter-alert-statuses")
@@ -963,7 +1043,8 @@
     });
 
     try {
-      const [overview, pathHealth, metricSeries, alerts, runs, runtimeInfo, actions] = await Promise.all([
+      const releaseValidationEpoch = nextRequestEpoch("releaseValidation");
+      const [overview, pathHealth, metricSeries, alerts, runs, runtimeInfo, actions, releaseValidation] = await Promise.all([
         fetchJson(`/api/v1/admin/overview?${queryBase.toString()}`),
         fetchJson(`/api/v1/admin/path-health?${queryBase.toString()}`),
         fetchJson(`/api/v1/admin/timeseries?${metricQuery.toString()}`),
@@ -971,7 +1052,11 @@
         fetchJson(`/api/v1/admin/runs?${runsQuery.toString()}`),
         fetchJson("/api/v1/admin/runtime"),
         fetchJson("/api/v1/admin/actions?limit=40"),
+        fetchJson("/api/v1/admin/release-validation"),
       ]);
+      if (!isLatestRequest("refreshAll", epoch)) {
+        return;
+      }
       state.overview = overview;
       state.pathHealth = pathHealth;
       state.metricSeries = metricSeries;
@@ -979,30 +1064,78 @@
       state.runs = runs;
       state.runtimeInfo = runtimeInfo;
       state.actionHistory = actions;
+      if (isLatestRequest("releaseValidation", releaseValidationEpoch)) {
+        state.releaseValidation = releaseValidation;
+      }
       const selectedActionId = resolveSelectedActionId(actions.items || []);
       state.selectedActionId = selectedActionId;
-      state.selectedAction = selectedActionId ? await fetchJson(`/api/v1/admin/actions/${encodeURIComponent(selectedActionId)}`) : null;
+      if (selectedActionId) {
+        const actionDetailEpoch = nextRequestEpoch("actionDetail");
+        const detail = await fetchJson(`/api/v1/admin/actions/${encodeURIComponent(selectedActionId)}`).catch((error) => {
+          if (error?.payload?.detail === "Action not found") {
+            return null;
+          }
+          throw error;
+        });
+        if (detail === null) {
+          state.selectedActionId = null;
+          state.selectedAction = null;
+        } else if (isLatestRequest("actionDetail", actionDetailEpoch) && isLatestRequest("refreshAll", epoch)) {
+          state.selectedAction = detail;
+          state.selectedActionId = Number(detail.id);
+          if (state.pendingActionAutoSelectId && Number(state.pendingActionAutoSelectId) === Number(detail.id)) {
+            state.pendingActionAutoSelectId = null;
+          }
+        }
+      } else {
+        state.selectedAction = null;
+      }
       const selectedRunId = resolveSelectedRunId(runs.items || []);
       state.selectedRunId = selectedRunId;
       if (selectedRunId) {
+        const runDetailEpoch = nextRequestEpoch("runDetail");
         const [runDetail, runEvents] = await Promise.all([
-          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}`),
-          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}/events`),
+          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}`).catch((error) => {
+            if (error?.payload?.detail === "Run not found") {
+              return null;
+            }
+            throw error;
+          }),
+          fetchJson(`/api/v1/admin/runs/${encodeURIComponent(selectedRunId)}/events`).catch((error) => {
+            if (error?.payload?.detail === "Run not found") {
+              return { items: [] };
+            }
+            throw error;
+          }),
         ]);
-        state.selectedRun = runDetail;
-        state.selectedRunEvents = runEvents.items || [];
+        if (runDetail === null) {
+          state.selectedRunId = null;
+          state.selectedRun = null;
+          state.selectedRunEvents = [];
+        } else if (isLatestRequest("runDetail", runDetailEpoch) && isLatestRequest("refreshAll", epoch)) {
+          state.selectedRun = runDetail;
+          state.selectedRunEvents = runEvents.items || [];
+          state.selectedRunId = String(runDetail.run_id);
+          if (state.pendingRunAutoSelectId && String(state.pendingRunAutoSelectId) === String(runDetail.run_id)) {
+            state.pendingRunAutoSelectId = null;
+          }
+        }
       } else {
         state.selectedRun = null;
         state.selectedRunEvents = [];
       }
-      state.lastRefreshAt = new Date().toISOString();
+      updateLastRefreshAt(runtimeInfo, overview, releaseValidation, state.snapshot);
       state.lastError = "";
       saveCurrentFilters();
       renderAllAnalytics();
       renderPanelStatusMeta();
       scheduleActionPolling();
       scheduleRunPolling();
+      scheduleReleaseValidationPolling();
     } catch (error) {
+      if (!isLatestRequest("refreshAll", epoch)) {
+        return;
+      }
       state.lastError = error.message || String(error);
       renderPanelStatusMeta();
       showMessage(error.message || String(error), "error");
@@ -1012,12 +1145,18 @@
   function resolveSelectedActionId(items) {
     const list = items || [];
     if (!list.length) {
+      if (state.selectedActionId && !state.pendingActionAutoSelectId) {
+        state.selectedAction = null;
+      }
       return null;
     }
     if (state.selectedActionId && list.some((item) => Number(item.id) === Number(state.selectedActionId))) {
       return Number(state.selectedActionId);
     }
-    return Number(list[0].id);
+    if (state.pendingActionAutoSelectId && list.some((item) => Number(item.id) === Number(state.pendingActionAutoSelectId))) {
+      return Number(state.pendingActionAutoSelectId);
+    }
+    return null;
   }
 
   function resolveSelectedRunId(items) {
@@ -1028,7 +1167,10 @@
     if (state.selectedRunId && list.some((item) => String(item.run_id) === String(state.selectedRunId))) {
       return String(state.selectedRunId);
     }
-    return String(list[0].run_id);
+    if (state.pendingRunAutoSelectId && list.some((item) => String(item.run_id) === String(state.pendingRunAutoSelectId))) {
+      return String(state.pendingRunAutoSelectId);
+    }
+    return null;
   }
 
   async function loadActionDetail(actionId, options = {}) {
@@ -1040,6 +1182,7 @@
       clearActionPolling();
       return null;
     }
+    const epoch = nextRequestEpoch("actionDetail");
     const refreshRuntime = options.refreshRuntime !== false;
     const silent = Boolean(options.silent);
     try {
@@ -1051,19 +1194,37 @@
         requests.push(fetchJson("/api/v1/admin/runtime"));
       }
       const [actions, detail, runtimeInfo] = await Promise.all(requests);
+      if (!isLatestRequest("actionDetail", epoch)) {
+        return state.selectedAction;
+      }
       state.actionHistory = actions;
       state.selectedAction = detail;
       state.selectedActionId = Number(detail.id);
+      if (state.pendingActionAutoSelectId && Number(state.pendingActionAutoSelectId) === Number(detail.id)) {
+        state.pendingActionAutoSelectId = null;
+      }
       if (runtimeInfo) {
         state.runtimeInfo = runtimeInfo;
+        updateLastRefreshAt(runtimeInfo);
       }
       renderRuntimeControl();
       renderNodeCards();
+      renderReleaseValidation();
       renderActionHistory();
       renderActionDetail();
       scheduleActionPolling();
       return detail;
     } catch (error) {
+      if (error?.payload?.detail === "Action not found") {
+        if (isLatestRequest("actionDetail", epoch)) {
+          state.selectedAction = null;
+          state.selectedActionId = null;
+          renderActionHistory();
+          renderActionDetail();
+          clearActionPolling();
+        }
+        return null;
+      }
       if (!silent) {
         showMessage(error.message || String(error), "error");
       }
@@ -1240,6 +1401,7 @@
       clearRunPolling();
       return null;
     }
+    const epoch = nextRequestEpoch("runDetail");
     const silent = Boolean(options.silent);
     try {
       const requests = [
@@ -1250,6 +1412,9 @@
         requests.unshift(fetchJson(`/api/v1/admin/runs?${buildRunsQuery().toString()}`));
       }
       const responses = await Promise.all(requests);
+      if (!isLatestRequest("runDetail", epoch)) {
+        return state.selectedRun;
+      }
       if (options.refreshRunsList !== false) {
         state.runs = responses[0];
         state.selectedRun = responses[1];
@@ -1259,10 +1424,23 @@
         state.selectedRunEvents = responses[1].items || [];
       }
       state.selectedRunId = String(runId);
+      if (state.pendingRunAutoSelectId && String(state.pendingRunAutoSelectId) === String(runId)) {
+        state.pendingRunAutoSelectId = null;
+      }
       renderRuns();
       scheduleRunPolling();
       return state.selectedRun;
     } catch (error) {
+      if (error?.payload?.detail === "Run not found") {
+        if (isLatestRequest("runDetail", epoch)) {
+          state.selectedRun = null;
+          state.selectedRunId = null;
+          state.selectedRunEvents = [];
+          renderRuns();
+          clearRunPolling();
+        }
+        return null;
+      }
       if (!silent) {
         showMessage(error.message || String(error), "error");
       }
@@ -1321,9 +1499,31 @@
     renderRunLauncherState();
     renderRuntimeControl();
     renderOperationsFocus();
+    renderReleaseValidation();
     renderActionHistory();
     renderActionDetail();
     renderFiltersSummary();
+  }
+
+  function clearReleaseValidationPolling() {
+    if (releaseValidationPollTimer) {
+      window.clearTimeout(releaseValidationPollTimer);
+      releaseValidationPollTimer = null;
+    }
+  }
+
+  function scheduleReleaseValidationPolling() {
+    clearReleaseValidationPolling();
+    if (!state.releaseValidation?.running) {
+      return;
+    }
+    releaseValidationPollTimer = window.setTimeout(async () => {
+      try {
+        await loadReleaseValidation({ silent: true });
+      } catch (error) {
+        return;
+      }
+    }, 1500);
   }
 
   function renderHeadlineAlerts() {
@@ -1717,6 +1917,171 @@
     `;
   }
 
+  async function loadReleaseValidation(options = {}) {
+    const epoch = nextRequestEpoch("releaseValidation");
+    const silent = Boolean(options.silent);
+    try {
+      const payload = await fetchJson("/api/v1/admin/release-validation");
+      if (!isLatestRequest("releaseValidation", epoch)) {
+        return state.releaseValidation;
+      }
+      state.releaseValidation = payload;
+      updateLastRefreshAt(payload);
+      renderReleaseValidation();
+      scheduleReleaseValidationPolling();
+      return payload;
+    } catch (error) {
+      if (!silent) {
+        showMessage(error.message || String(error), "error");
+      }
+      throw error;
+    }
+  }
+
+  async function runReleaseValidation() {
+    const epoch = nextRequestEpoch("releaseValidation");
+    try {
+      const payload = await fetchJson("/api/v1/admin/release-validation", { method: "POST" });
+      if (!isLatestRequest("releaseValidation", epoch)) {
+        return;
+      }
+      state.releaseValidation = payload;
+      updateLastRefreshAt(payload);
+      renderReleaseValidation();
+      scheduleReleaseValidationPolling();
+      showMessage(payload.running ? t("validationRunning") : t("validationLastChecked"), "ok");
+    } catch (error) {
+      showMessage(error.message || String(error), "error");
+    }
+  }
+
+  function renderReleaseValidation() {
+    const meta = document.getElementById("releaseValidationMeta");
+    const root = document.getElementById("releaseValidationBody");
+    if (!meta || !root) {
+      return;
+    }
+    const payload = state.releaseValidation;
+    if (!payload) {
+      meta.textContent = t("validationNotRun");
+      root.innerHTML = `<div class="empty">${escapeHtml(t("validationNotRun"))}</div>`;
+      clearReleaseValidationPolling();
+      return;
+    }
+    const summary = payload.summary || {};
+    const issues = payload.issues || [];
+    const nodes = payload.nodes || [];
+    const counts = [
+      `${t("validationSummary")}: ${summary.total || 0}`,
+      `pass ${summary.pass || 0}`,
+      `warn ${summary.warn || 0}`,
+      `fail ${summary.fail || 0}`,
+      `skip ${summary.skip || 0}`,
+    ];
+    if (payload.generated_at) {
+      counts.unshift(`${t("generatedAt")}: ${formatTimestamp(payload.generated_at)}`);
+    }
+    if (payload.checked_at) {
+      counts.unshift(`${t("validationLastChecked")}: ${formatTimestamp(payload.checked_at)}`);
+    }
+    if (payload.running) {
+      counts.unshift(t("validationRunning"));
+    }
+    meta.textContent = counts.join(" · ");
+    root.innerHTML = `
+      <div class="grid-four">
+        ${[
+          { label: "pass", value: summary.pass || 0 },
+          { label: "warn", value: summary.warn || 0 },
+          { label: "fail", value: summary.fail || 0 },
+          { label: "skip", value: summary.skip || 0 },
+        ].map((item) => `
+          <div class="card">
+            <div class="muted">${escapeHtml(statusLabel(item.label))}</div>
+            <div class="kpi-value">${escapeHtml(String(item.value))}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="management-grid" style="margin-top: 16px;">
+        <div class="card">
+          <h3>${escapeHtml(t("panelTarget"))}</h3>
+          ${renderReleaseValidationItem(payload.panel || null)}
+        </div>
+        <div class="card">
+          <h3>${escapeHtml(t("validationIssues"))}</h3>
+          ${issues.length ? issues.map((item) => renderReleaseValidationIssue(item)).join("") : `<div class="empty">${escapeHtml(t("validationNoIssues"))}</div>`}
+        </div>
+      </div>
+      <div class="list" style="margin-top: 16px;">
+        <h3>${escapeHtml(t("nodes"))}</h3>
+        ${nodes.length ? nodes.map((item) => renderReleaseValidationItem(item)).join("") : `<div class="empty">${escapeHtml(t("noData"))}</div>`}
+      </div>
+    `;
+  }
+
+  function renderReleaseValidationIssue(item) {
+    const buttons = [];
+    if (item?.suggested_action) {
+      buttons.push(renderSuggestedActionButton(item.suggested_action));
+    } else if (item?.target_kind === "node" && item?.target_id) {
+      buttons.push(`<button type="button" data-focus-node="${escapeHtml(String(item.target_id))}">${escapeHtml(t("openNode"))}</button>`);
+    } else if (item?.target_kind === "panel") {
+      buttons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
+    }
+    return `
+      <div class="card" style="margin-top: 12px;">
+        <div class="section-head">
+          <strong>${escapeHtml(item?.target_name || t("noData"))}</strong>
+          <span class="status-pill ${escapeHtml(item?.status || "skip")}">${escapeHtml(statusLabel(item?.status || "skip"))}</span>
+        </div>
+        <div class="muted">${escapeHtml(item?.summary || t("noData"))}</div>
+        ${item?.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
+        ${!item?.suggested_action && item?.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
+        ${buttons.length ? `<div class="node-actions" style="margin-top: 10px;">${buttons.join("")}</div>` : ""}
+      </div>
+    `;
+  }
+
+  function renderReleaseValidationItem(item) {
+    if (!item) {
+      return `<div class="empty">${escapeHtml(t("noData"))}</div>`;
+    }
+    const buttons = [];
+    if (item.suggested_action) {
+      buttons.push(renderSuggestedActionButton(item.suggested_action));
+    } else if (item.target_kind === "node" && item.target_id) {
+      buttons.push(`<button type="button" data-focus-node="${escapeHtml(String(item.target_id))}">${escapeHtml(t("openNode"))}</button>`);
+    } else if (item.target_kind === "panel") {
+      buttons.push(`<button type="button" data-focus-panel="panel">${escapeHtml(t("openPanel"))}</button>`);
+    }
+    const checks = Object.entries(item.checks || {});
+    return `
+      <div class="card" style="margin-top: 12px;">
+        <div class="section-head">
+          <strong>${escapeHtml(item.target_name || t("noData"))}</strong>
+          <span class="status-pill ${escapeHtml(item.status || "skip")}">${escapeHtml(statusLabel(item.status || "skip"))}</span>
+        </div>
+        ${item.role ? `<div class="muted">${escapeHtml(roleLabel(item.role))}</div>` : ""}
+        <div class="muted">${escapeHtml(item.summary || t("noData"))}</div>
+        ${item.build?.display_label ? `<div class="muted">Build: ${escapeHtml(item.build.display_label)}</div>` : ""}
+        ${item.code ? `<div class="muted">${escapeHtml(t("diagnosticCode"))}: ${escapeHtml(item.code)}</div>` : ""}
+        ${!item.suggested_action && item.recommended_step ? `<div class="muted">${escapeHtml(t("recommendedStep"))}: ${escapeHtml(item.recommended_step)}</div>` : ""}
+        ${checks.length ? `
+          <div style="margin-top: 10px;">
+            <strong>${escapeHtml(t("validationChecks"))}</strong>
+            ${checks.map(([name, check]) => `
+              <div class="muted">
+                <span class="status-pill ${escapeHtml(check.status || "skip")}">${escapeHtml(statusLabel(check.status || "skip"))}</span>
+                ${escapeHtml(name)}: ${escapeHtml(check.summary || t("noData"))}
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        ${buttons.length ? `<div class="node-actions" style="margin-top: 10px;">${buttons.join("")}</div>` : ""}
+      </div>
+    `;
+  }
+
   function renderActionHistory() {
     const body = document.getElementById("actionsTableBody");
     const items = state.actionHistory?.items || [];
@@ -1974,6 +2339,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ run_kind: "full", source: "admin-ui" }),
       });
+      state.pendingRunAutoSelectId = String(payload.run_id);
       state.selectedRunId = String(payload.run_id);
       showMessage(tWithValue("runFullOk", payload.run_id), "ok");
       setActiveTab("runs");
@@ -2077,6 +2443,7 @@
       }
       showMessage(t("actionQueuedOk"), "ok");
       if (response.action?.id) {
+        state.pendingActionAutoSelectId = Number(response.action.id);
         await loadActionDetail(Number(response.action.id), { refreshRuntime: true });
       } else {
         await delay(500);

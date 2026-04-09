@@ -43,6 +43,8 @@ from controller.panel_models import (
     PairCodeResponse,
     PanelSettings,
     PublicDashboardSnapshot,
+    ReleaseValidationItem,
+    ReleaseValidationSnapshot,
     BridgeActionResponse,
     RunEventEnvelope,
     SuggestedAction,
@@ -106,6 +108,8 @@ class PanelRuntime:
         self._last_loop_at: str | None = None
         self._last_loop_error: str | None = None
         self._last_runtime_sync_at = 0.0
+        self._release_validation_lock = threading.Lock()
+        self._release_validation_thread: threading.Thread | None = None
         self._panel_bridge_state: dict[str, Any] = {
             "runtime": {"state": "unknown", "checked_at": None, "last_error": None, "details": {}},
             "supervisor": {
@@ -119,6 +123,7 @@ class PanelRuntime:
                 "checked_at": None,
             },
         }
+        self._release_validation_snapshot = self._empty_release_validation_snapshot()
         if self._panel_bridge_url:
             self.control.ensure_panel_bridge_token()
 
@@ -270,11 +275,347 @@ class PanelRuntime:
         active_run = self.store.get_active_run()
         nodes = self._attach_run_attention(self.store.list_nodes(), active_run=active_run)
         return {
+            "generated_at": now_iso(),
             "panel": panel,
             "nodes": nodes,
             "active_run": active_run,
             "attention": self._build_attention_payload(panel=panel, nodes=nodes, active_run=active_run),
         }
+
+    def get_release_validation_snapshot(self) -> dict[str, Any]:
+        with self._release_validation_lock:
+            return json.loads(json.dumps(self._release_validation_snapshot))
+
+    def start_release_validation(self) -> dict[str, Any]:
+        with self._release_validation_lock:
+            if self._release_validation_thread is not None and self._release_validation_thread.is_alive():
+                return json.loads(json.dumps(self._release_validation_snapshot))
+            snapshot = json.loads(json.dumps(self._release_validation_snapshot))
+            snapshot["running"] = True
+            snapshot["generated_at"] = now_iso()
+            self._release_validation_snapshot = snapshot
+            self._release_validation_thread = threading.Thread(target=self._run_release_validation, daemon=True)
+            self._release_validation_thread.start()
+            return json.loads(json.dumps(snapshot))
+
+    def _run_release_validation(self) -> None:
+        try:
+            snapshot = self._collect_release_validation_snapshot()
+        except Exception as exc:  # pragma: no cover - defensive snapshot fallback
+            generated_at = now_iso()
+            panel = ReleaseValidationItem(
+                target_kind="panel",
+                target_name="panel",
+                status="fail",
+                code="release_validation_failed",
+                summary=str(exc),
+                recommended_step="Retry release validation after the panel runtime stabilizes.",
+            ).model_dump(exclude_none=True)
+            snapshot = ReleaseValidationSnapshot.model_validate(
+                {
+                    "build": self._build_info,
+                    "generated_at": generated_at,
+                    "running": False,
+                    "checked_at": generated_at,
+                    "summary": {"total": 1, "pass": 0, "warn": 0, "fail": 1, "skip": 0},
+                    "panel": panel,
+                    "nodes": [],
+                    "issues": [panel],
+                }
+            ).model_dump(by_alias=True)
+        with self._release_validation_lock:
+            self._release_validation_snapshot = snapshot
+            self._release_validation_thread = None
+
+    def _collect_release_validation_snapshot(self) -> dict[str, Any]:
+        generated_at = now_iso()
+        panel_item = self._validate_panel_release()
+        node_items = [self._validate_node_release(node) for node in self.store.list_nodes()]
+        items = [panel_item, *node_items]
+        issues = [item for item in items if item.get("status") in {"warn", "fail"}]
+        summary = {
+            "total": len(items),
+            "pass": sum(1 for item in items if item.get("status") == "pass"),
+            "warn": sum(1 for item in items if item.get("status") == "warn"),
+            "fail": sum(1 for item in items if item.get("status") == "fail"),
+            "skip": sum(1 for item in items if item.get("status") == "skip"),
+        }
+        return ReleaseValidationSnapshot.model_validate(
+            {
+                "build": self._build_info,
+                "generated_at": generated_at,
+                "running": False,
+                "checked_at": generated_at,
+                "summary": summary,
+                "panel": panel_item,
+                "nodes": node_items,
+                "issues": issues,
+            }
+        ).model_dump(by_alias=True)
+
+    def _empty_release_validation_snapshot(self) -> dict[str, Any]:
+        generated_at = now_iso()
+        panel = ReleaseValidationItem(
+            target_kind="panel",
+            target_name="panel",
+            status="skip",
+            code="not_run",
+            summary="Release validation has not been executed yet.",
+            recommended_step="Run a read-only validation after deploying new panel or agent builds.",
+            suggested_action=_suggested_action(kind="open_panel", target_kind="panel", label="Open panel"),
+        ).model_dump(exclude_none=True)
+        return ReleaseValidationSnapshot.model_validate(
+            {
+                "build": self._build_info,
+                "generated_at": generated_at,
+                "running": False,
+                "checked_at": None,
+                "summary": {"total": 0, "pass": 0, "warn": 0, "fail": 0, "skip": 0},
+                "panel": panel,
+                "nodes": [],
+                "issues": [],
+            }
+        ).model_dump(by_alias=True)
+
+    def _validate_panel_release(self) -> dict[str, Any]:
+        runtime_snapshot = self.runtime_snapshot()
+        runtime = dict(runtime_snapshot.get("runtime") or {})
+        supervisor = dict(runtime_snapshot.get("supervisor") or {})
+        details = dict(runtime.get("details") or {})
+        checks = {
+            "version": self._release_check(
+                status="pass",
+                summary=f"Panel reports {self._build_info['display_label']}.",
+            ),
+            "runtime": self._release_check(
+                status="warn" if runtime.get("last_error") else "pass",
+                code="panel_runtime_error" if runtime.get("last_error") else None,
+                summary=str(runtime.get("last_error") or "Panel runtime loop is healthy."),
+            ),
+            "scheduler": self._release_check(
+                status="pass",
+                summary="Scheduler is paused." if details.get("scheduler_paused") else "Scheduler is running.",
+            ),
+            "control_bridge": self._panel_release_bridge_check(details=details, supervisor=supervisor),
+        }
+        status = self._release_rollup_status(checks.values())
+        code = self._release_primary_code(checks.values())
+        summary = self._release_primary_summary(
+            status=status,
+            target_name="panel",
+            success_summary=f"Panel build {self._build_info['display_label']} passed validation.",
+            checks=checks,
+        )
+        return ReleaseValidationItem(
+            target_kind="panel",
+            target_name="panel",
+            status=status,  # type: ignore[arg-type]
+            code=code,
+            summary=summary,
+            recommended_step=details.get("operator_recommended_step"),
+            suggested_action=details.get("suggested_action"),
+            checks=checks,
+            build=self._build_info,
+            runtime=runtime_snapshot.get("runtime") or {},
+            supervisor=runtime_snapshot.get("supervisor") or {},
+        ).model_dump(exclude_none=True)
+
+    def _validate_node_release(self, node: dict[str, Any]) -> dict[str, Any]:
+        target_id = int(node["id"])
+        runtime = dict(node.get("runtime") or {})
+        runtime_details = dict(runtime.get("details") or {})
+        supervisor = dict(node.get("supervisor") or {})
+        connectivity = dict(node.get("connectivity") or {})
+        suggested_action = runtime_details.get("suggested_action") or _suggested_action(
+            kind="open_node",
+            target_kind="node",
+            target_id=target_id,
+            label="Open node",
+        )
+        if not node.get("enabled", True):
+            return ReleaseValidationItem(
+                target_kind="node",
+                target_id=target_id,
+                target_name=str(node.get("node_name") or target_id),
+                role=node.get("role"),
+                status="skip",
+                code="node_disabled",
+                summary="Node is disabled; release validation skipped.",
+                recommended_step="Enable the node before validating its deployed build and runtime contract.",
+                suggested_action=suggested_action,
+                checks={"lifecycle": self._release_check(status="skip", summary="Node is disabled.")},
+                connectivity=connectivity,
+                runtime=runtime,
+                supervisor=supervisor,
+            ).model_dump(exclude_none=True)
+        if not node.get("paired"):
+            return ReleaseValidationItem(
+                target_kind="node",
+                target_id=target_id,
+                target_name=str(node.get("node_name") or target_id),
+                role=node.get("role"),
+                status="skip",
+                code="node_unpaired",
+                summary="Node is not paired yet; release validation skipped.",
+                recommended_step="Pair the node before validating agent version, health, and control bridge reachability.",
+                suggested_action=suggested_action,
+                checks={"pairing": self._release_check(status="skip", summary="Node is not paired.")},
+                connectivity=connectivity,
+                runtime=runtime,
+                supervisor=supervisor,
+            ).model_dump(exclude_none=True)
+
+        checks: dict[str, dict[str, Any]] = {}
+        build_payload: dict[str, Any] | None = None
+        try:
+            version_payload = self.http.get_version(node)
+            build_payload = dict(version_payload.get("build") or {})
+            checks["version"] = self._release_check(
+                status="pass",
+                summary=f"Agent reports {build_payload.get('display_label') or 'a build label'}.",
+            )
+        except AgentHttpError as exc:
+            checks["version"] = self._release_check(
+                status="fail",
+                code=exc.code,
+                summary=str(exc),
+            )
+        try:
+            health_payload = self.http.check_health(node)
+            health_status = str(health_payload.get("status") or "")
+            checks["health"] = self._release_check(
+                status="pass" if health_status == "healthy" else "fail",
+                code=None if health_status == "healthy" else "agent_health_unhealthy",
+                summary=f"Agent health probe returned {health_status or 'unknown'}.",
+            )
+        except AgentHttpError as exc:
+            checks["health"] = self._release_check(status="fail", code=exc.code, summary=str(exc))
+        try:
+            self.http.check_status(node)
+            checks["status"] = self._release_check(status="pass", summary="Structured status contract is compatible.")
+        except AgentHttpError as exc:
+            checks["status"] = self._release_check(status="fail", code=exc.code, summary=str(exc))
+        try:
+            bridge_state = self.control.node_runtime(node)
+            checks["control_bridge"] = self._release_check(
+                status="pass",
+                summary=bridge_state.human_summary,
+            )
+            runtime = bridge_state.runtime.model_dump()
+            supervisor = bridge_state.supervisor.model_dump()
+        except ControlBridgeError as exc:
+            checks["control_bridge"] = self._release_check(status="fail", code=exc.code, summary=str(exc))
+        connectivity_status = str(node.get("status") or "offline")
+        checks["connectivity"] = self._release_check(
+            status=self._node_release_connectivity_state(connectivity_status, connectivity),
+            code=connectivity.get("diagnostic_code"),
+            summary=str(connectivity.get("summary") or f"Node is currently {connectivity_status}."),
+        )
+        if build_payload:
+            mismatch = (
+                str(build_payload.get("release_version") or "") != str(self._build_info.get("release_version") or "")
+                or str(build_payload.get("build_ref") or "") != str(self._build_info.get("build_ref") or "")
+            )
+            checks["build"] = self._release_check(
+                status="warn" if mismatch else "pass",
+                code="build_mismatch" if mismatch else None,
+                summary=(
+                    f"Agent build {build_payload.get('display_label')} differs from panel build {self._build_info['display_label']}."
+                    if mismatch
+                    else "Agent build matches the panel build label."
+                ),
+            )
+
+        status = self._release_rollup_status(checks.values())
+        code = self._release_primary_code(checks.values())
+        summary = self._release_primary_summary(
+            status=status,
+            target_name=str(node.get("node_name") or target_id),
+            success_summary=f"Node {node.get('node_name') or target_id} passed release validation.",
+            checks=checks,
+        )
+        return ReleaseValidationItem(
+            target_kind="node",
+            target_id=target_id,
+            target_name=str(node.get("node_name") or target_id),
+            role=node.get("role"),
+            status=status,  # type: ignore[arg-type]
+            code=code,
+            summary=summary,
+            recommended_step=runtime_details.get("operator_recommended_step") or connectivity.get("recommended_step"),
+            suggested_action=suggested_action,
+            checks=checks,
+            build=build_payload,
+            connectivity=connectivity,
+            runtime=runtime,
+            supervisor=supervisor,
+        ).model_dump(exclude_none=True)
+
+    def _panel_release_bridge_check(self, details: dict[str, Any], supervisor: dict[str, Any]) -> dict[str, Any]:
+        if not details.get("control_bridge_configured"):
+            return self._release_check(
+                status="skip",
+                code="panel_bridge_not_configured",
+                summary="Panel control bridge is not configured; native readonly validation only.",
+            )
+        if supervisor.get("control_available"):
+            return self._release_check(status="pass", summary="Panel control bridge is reachable.")
+        return self._release_check(
+            status="fail",
+            code=details.get("bridge_error_code") or "bridge_unreachable",
+            summary=str(supervisor.get("last_error") or "Panel control bridge is unreachable."),
+        )
+
+    def _node_release_connectivity_state(self, status: str, connectivity: dict[str, Any]) -> str:
+        diagnostic_code = str(connectivity.get("diagnostic_code") or "")
+        if status == "online":
+            return "pass"
+        if status in {"push-only", "pull-only"} or diagnostic_code == "endpoint_mismatch":
+            return "warn"
+        return "fail"
+
+    def _release_check(self, *, status: str, summary: str, code: str | None = None) -> dict[str, Any]:
+        payload = {"status": status, "summary": summary}
+        if code:
+            payload["code"] = code
+        return payload
+
+    def _release_rollup_status(self, checks: Any) -> str:
+        states = [str(check.get("status") or "skip") for check in checks]
+        if any(state == "fail" for state in states):
+            return "fail"
+        if any(state == "warn" for state in states):
+            return "warn"
+        if any(state == "pass" for state in states):
+            return "pass"
+        return "skip"
+
+    def _release_primary_code(self, checks: Any) -> str | None:
+        for desired in ("fail", "warn"):
+            for check in checks:
+                if str(check.get("status") or "") == desired and check.get("code"):
+                    return str(check.get("code"))
+        return None
+
+    def _release_primary_summary(
+        self,
+        *,
+        status: str,
+        target_name: str,
+        success_summary: str,
+        checks: dict[str, dict[str, Any]],
+    ) -> str:
+        if status == "pass":
+            return success_summary
+        if status == "skip":
+            for check in checks.values():
+                if str(check.get("status") or "") == "skip":
+                    return str(check.get("summary") or success_summary)
+        for desired in ("fail", "warn"):
+            for check in checks.values():
+                if str(check.get("status") or "") == desired:
+                    return str(check.get("summary") or f"{target_name} needs attention.")
+        return success_summary
 
     def control_action_target_snapshot(self, action: dict[str, Any]) -> dict[str, Any]:
         target_kind = str(action.get("target_kind") or "")
@@ -1077,6 +1418,12 @@ def create_app(
         enriched["build"] = build_payload()
         return enriched
 
+    def attach_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+        enriched = attach_build(payload)
+        if "generated_at" not in enriched:
+            enriched["generated_at"] = now_iso()
+        return enriched
+
     def render_template(path: Path, **context: Any) -> HTMLResponse:
         template = Template(path.read_text(encoding="utf-8"))
         return HTMLResponse(content=template.render(**context))
@@ -1097,7 +1444,7 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def public_dashboard_page():
         snapshot = runtime.store.build_public_dashboard_snapshot()
-        snapshot["build"] = build_payload()
+        snapshot = attach_snapshot(snapshot)
         return render_template(
             PUBLIC_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
@@ -1109,7 +1456,7 @@ def create_app(
         if not admin_auth.is_authenticated(request):
             return RedirectResponse(url=f"/login?next={quote('/admin', safe='/')}", status_code=303)
         snapshot = runtime.store.build_dashboard_snapshot()
-        snapshot["build"] = build_payload()
+        snapshot = attach_snapshot(snapshot)
         return render_template(
             ADMIN_TEMPLATE_PATH,
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
@@ -1148,14 +1495,14 @@ def create_app(
     @app.get("/api/v1/public-dashboard")
     def public_dashboard(time_range: str = "24h") -> PublicDashboardSnapshot:
         snapshot = runtime.store.build_public_dashboard_snapshot(time_range_hours=_parse_time_range(time_range))
-        snapshot["build"] = build_payload()
+        snapshot = attach_snapshot(snapshot)
         return PublicDashboardSnapshot.model_validate(snapshot)
 
     @app.get("/api/v1/dashboard")
     def dashboard(request: Request) -> DashboardSnapshot:
         require_admin_api(request)
         snapshot = runtime.store.build_dashboard_snapshot()
-        snapshot["build"] = build_payload()
+        snapshot = attach_snapshot(snapshot)
         return DashboardSnapshot.model_validate(snapshot)
 
     @app.get("/api/v1/version")
@@ -1195,7 +1542,17 @@ def create_app(
     def admin_runtime(request: Request) -> dict[str, Any]:
         require_admin_api(request)
         runtime.refresh_runtime_snapshots(force=True)
-        return attach_build(runtime.admin_runtime_payload())
+        return attach_snapshot(runtime.admin_runtime_payload())
+
+    @app.get("/api/v1/admin/release-validation")
+    def admin_release_validation(request: Request) -> ReleaseValidationSnapshot:
+        require_admin_api(request)
+        return ReleaseValidationSnapshot.model_validate(runtime.get_release_validation_snapshot())
+
+    @app.post("/api/v1/admin/release-validation")
+    def admin_release_validation_start(request: Request) -> ReleaseValidationSnapshot:
+        require_admin_api(request)
+        return ReleaseValidationSnapshot.model_validate(runtime.start_release_validation())
 
     @app.get("/api/v1/admin/actions")
     def admin_actions(request: Request, limit: int = 50) -> dict[str, Any]:

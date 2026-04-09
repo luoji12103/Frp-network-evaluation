@@ -76,6 +76,9 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+      max-width: 100%;
       padding: 8px 12px;
       border-radius: 999px;
       font-size: 12px;
@@ -88,6 +91,7 @@
       font-family: Consolas, "SFMono-Regular", monospace;
       font-size: 12px;
       color: var(--ink);
+      overflow-wrap: anywhere;
     }
     .status-pill.online { background: #dcefe3; color: var(--ok); }
     .status-pill.push-only, .status-pill.degraded { background: #fff0cc; color: var(--warn); }
@@ -142,6 +146,7 @@
       color: var(--muted);
       text-align: center;
     }
+    .muted, .status-meta, p, .list-item { overflow-wrap: anywhere; }
     .locale-wrap, .toolbar-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .status-meta {
       margin-top: 12px;

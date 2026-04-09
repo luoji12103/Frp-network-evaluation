@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        MC_NETPROBE_RELEASE_VERSION: "${MC_NETPROBE_RELEASE_VERSION:-1.0}"
+        MC_NETPROBE_RELEASE_VERSION: "${MC_NETPROBE_RELEASE_VERSION:-1.1.0}"
         MC_NETPROBE_BUILD_REF: "${MC_NETPROBE_BUILD_REF:-unknown}"
     container_name: mc-netprobe-panel
     restart: unless-stopped
@@ -41,7 +41,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        MC_NETPROBE_RELEASE_VERSION: "${MC_NETPROBE_RELEASE_VERSION:-1.0}"
+        MC_NETPROBE_RELEASE_VERSION: "${MC_NETPROBE_RELEASE_VERSION:-1.1.0}"
         MC_NETPROBE_BUILD_REF: "${MC_NETPROBE_BUILD_REF:-unknown}"
     container_name: mc-netprobe-panel-control-bridge
     restart: unless-stopped

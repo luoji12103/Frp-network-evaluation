@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from controller.agent_http_client import AgentHttpError
+from controller.control_bridge_client import ControlBridgeError
 from controller.panel_models import (
     AgentCapabilities,
     AgentEndpointReport,
     AgentIdentity,
     AgentRuntimeStatus,
+    BridgeActionResponse,
     NodeUpsertRequest,
 )
 from controller.webui import create_app
@@ -46,6 +50,68 @@ def pair_identity(node_name: str, role: str, runtime_mode: str, platform_name: s
         hostname=f"{node_name}-host",
         agent_version="test-agent",
     )
+
+
+def create_paired_node(
+    client: TestClient,
+    *,
+    node_name: str,
+    role: str,
+    runtime_mode: str,
+    platform_name: str,
+    configured_pull_url: str,
+    advertise_url: str | None = None,
+    enabled: bool = True,
+    heartbeat: bool = True,
+    pull_ok: bool | None = None,
+) -> dict[str, object]:
+    runtime = client.app.state.runtime
+    store = runtime.store
+    node = store.upsert_node(
+        NodeUpsertRequest(
+            node_name=node_name,
+            role=role,  # type: ignore[arg-type]
+            runtime_mode=runtime_mode,  # type: ignore[arg-type]
+            configured_pull_url=configured_pull_url,
+            enabled=enabled,
+        )
+    )
+    pair_code, _ = store.create_pair_code(node["id"])
+    effective_advertise = advertise_url or configured_pull_url
+    store.pair_agent(
+        identity=pair_identity(node_name=node_name, role=role, runtime_mode=runtime_mode, platform_name=platform_name),
+        pair_code=pair_code,
+        endpoint=AgentEndpointReport(listen_host="0.0.0.0", listen_port=9870, advertise_url=effective_advertise),
+        capabilities=AgentCapabilities(),
+    )
+    if heartbeat:
+        store.record_heartbeat(
+            node_id=node["id"],
+            endpoint=AgentEndpointReport(listen_host="0.0.0.0", listen_port=9870, advertise_url=effective_advertise),
+            runtime_status=AgentRuntimeStatus(
+                paired=True,
+                started_at=now_iso(),
+                last_heartbeat_at=now_iso(),
+                last_error=None,
+                environment={"platform_name": platform_name},
+            ),
+        )
+    if pull_ok is True:
+        store.update_pull_status(int(node["id"]), ok=True)
+    if pull_ok is False:
+        store.update_pull_status(int(node["id"]), ok=False, error="timed out", error_code="timeout")
+    return node
+
+
+def wait_for_release_validation(client: TestClient) -> dict[str, object]:
+    for _ in range(100):
+        response = client.get("/api/v1/admin/release-validation")
+        assert response.status_code == 200
+        payload = response.json()
+        if not payload["running"]:
+            return payload
+        time.sleep(0.02)
+    raise AssertionError("release validation did not finish in time")
 
 
 def seed_dashboard_data(client: TestClient) -> str:
@@ -222,6 +288,227 @@ def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> N
         assert details["panel_release_version"] == "9.9.9"
         assert details["panel_build_ref"] == "abc123def456"
         assert details["panel_version_label"] == "v9.9.9 · abc123def456"
+
+
+def test_snapshots_include_generated_at(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        public_dashboard = client.get("/api/v1/public-dashboard")
+        assert public_dashboard.status_code == 200
+        assert public_dashboard.json()["generated_at"]
+
+        login_admin(client)
+        dashboard = client.get("/api/v1/dashboard")
+        assert dashboard.status_code == 200
+        assert dashboard.json()["generated_at"]
+
+        runtime_payload = client.get("/api/v1/admin/runtime")
+        assert runtime_payload.status_code == 200
+        assert runtime_payload.json()["generated_at"]
+
+
+def test_release_validation_reports_pass_warn_and_skip(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+        build_payload = dict(runtime._build_info)
+
+        create_paired_node(
+            client,
+            node_name="client-1",
+            role="client",
+            runtime_mode="native-windows",
+            platform_name="windows",
+            configured_pull_url="http://client.example:9870",
+            pull_ok=True,
+        )
+        create_paired_node(
+            client,
+            node_name="relay-1",
+            role="relay",
+            runtime_mode="docker-linux",
+            platform_name="linux",
+            configured_pull_url="http://configured-relay.example:9870",
+            advertise_url="http://advertised-relay.example:9870",
+            pull_ok=False,
+        )
+        create_paired_node(
+            client,
+            node_name="server-1",
+            role="server",
+            runtime_mode="native-macos",
+            platform_name="macos",
+            configured_pull_url="http://server.example:39870",
+            enabled=False,
+            pull_ok=None,
+        )
+
+        def fake_get_version(node: dict[str, object]) -> dict[str, object]:
+            if node["node_name"] == "relay-1":
+                return {
+                    "service": "agent",
+                    "build": {
+                        "release_version": "1.1.0",
+                        "build_ref": "mismatch123456",
+                        "display_label": "v1.1.0 · mismatch123456",
+                        "header_label": "v1.1.0+mismatch123456",
+                    },
+                    "started_at": now_iso(),
+                    "protocol_version": "1",
+                }
+            return {
+                "service": "agent",
+                "build": build_payload,
+                "started_at": now_iso(),
+                "protocol_version": "1",
+            }
+
+        def fake_check_health(node: dict[str, object]) -> dict[str, object]:
+            return {"ok": True, "status": "healthy", "started_at": now_iso()}
+
+        def fake_check_status(node: dict[str, object]) -> dict[str, object]:
+            return {"ok": True}
+
+        def fake_node_runtime(node: dict[str, object]) -> BridgeActionResponse:
+            return BridgeActionResponse.model_validate(
+                {
+                    "accepted": True,
+                    "state": "running",
+                    "human_summary": f"{node['node_name']} runtime synchronized",
+                    "runtime": {"state": "running", "checked_at": now_iso(), "last_error": None, "details": {}},
+                    "supervisor": {
+                        "control_available": True,
+                        "bridge_url": f"http://{node['node_name']}.bridge:9871",
+                        "supervisor_state": "running",
+                        "process_state": "running",
+                        "pid_or_container_id": "123",
+                        "log_location": "/tmp/test.log",
+                        "last_error": None,
+                        "checked_at": now_iso(),
+                    },
+                }
+            )
+
+        runtime.http.get_version = fake_get_version  # type: ignore[method-assign]
+        runtime.http.check_health = fake_check_health  # type: ignore[method-assign]
+        runtime.http.check_status = fake_check_status  # type: ignore[method-assign]
+        runtime.control.node_runtime = fake_node_runtime  # type: ignore[method-assign]
+
+        started = client.post("/api/v1/admin/release-validation")
+        assert started.status_code == 200
+        assert started.json()["running"] is True
+
+        payload = wait_for_release_validation(client)
+        assert payload["generated_at"]
+        assert payload["checked_at"]
+        assert payload["build"]["display_label"] == runtime._build_info["display_label"]
+        assert payload["summary"]["pass"] >= 1
+        assert payload["summary"]["warn"] >= 1
+        assert payload["summary"]["skip"] >= 1
+        assert payload["panel"]["status"] == "pass"
+
+        node_statuses = {item["target_name"]: item["status"] for item in payload["nodes"]}
+        assert node_statuses["client-1"] == "pass"
+        assert node_statuses["relay-1"] == "warn"
+        assert node_statuses["server-1"] == "skip"
+
+        relay_item = next(item for item in payload["nodes"] if item["target_name"] == "relay-1")
+        assert relay_item["checks"]["connectivity"]["status"] == "warn"
+        assert relay_item["checks"]["build"]["status"] == "warn"
+        assert relay_item["code"] in {"endpoint_mismatch", "build_mismatch", "timeout"}
+
+
+def test_release_validation_reports_failures(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        login_admin(client)
+        runtime = client.app.state.runtime
+
+        create_paired_node(
+            client,
+            node_name="client-1",
+            role="client",
+            runtime_mode="native-windows",
+            platform_name="windows",
+            configured_pull_url="http://client.example:9870",
+            pull_ok=True,
+        )
+        create_paired_node(
+            client,
+            node_name="relay-1",
+            role="relay",
+            runtime_mode="docker-linux",
+            platform_name="linux",
+            configured_pull_url="http://relay.example:9870",
+            pull_ok=True,
+        )
+        server_node = create_paired_node(
+            client,
+            node_name="server-1",
+            role="server",
+            runtime_mode="native-macos",
+            platform_name="macos",
+            configured_pull_url="http://server.example:39870",
+            heartbeat=False,
+            pull_ok=False,
+        )
+        runtime.store.mark_push_error(int(server_node["id"]), error="Heartbeat timeout", error_code="heartbeat_timeout")
+
+        def fake_get_version(node: dict[str, object]) -> dict[str, object]:
+            return {
+                "service": "agent",
+                "build": runtime._build_info,
+                "started_at": now_iso(),
+                "protocol_version": "1",
+            }
+
+        def fake_check_health(node: dict[str, object]) -> dict[str, object]:
+            return {"ok": True, "status": "healthy", "started_at": now_iso()}
+
+        def fake_check_status(node: dict[str, object]) -> dict[str, object]:
+            if node["node_name"] == "client-1":
+                raise AgentHttpError("legacy_status_shape", "legacy /api/v1/status payload")
+            if node["node_name"] == "relay-1":
+                raise AgentHttpError("protocol_mismatch", "unsupported protocol_version")
+            return {"ok": True}
+
+        def fake_node_runtime(node: dict[str, object]) -> BridgeActionResponse:
+            if node["node_name"] == "server-1":
+                raise ControlBridgeError("bridge_unreachable", "control bridge unreachable")
+            return BridgeActionResponse.model_validate(
+                {
+                    "accepted": True,
+                    "state": "running",
+                    "human_summary": f"{node['node_name']} runtime synchronized",
+                    "runtime": {"state": "running", "checked_at": now_iso(), "last_error": None, "details": {}},
+                    "supervisor": {
+                        "control_available": True,
+                        "bridge_url": f"http://{node['node_name']}.bridge:9871",
+                        "supervisor_state": "running",
+                        "process_state": "running",
+                        "pid_or_container_id": "123",
+                        "log_location": "/tmp/test.log",
+                        "last_error": None,
+                        "checked_at": now_iso(),
+                    },
+                }
+            )
+
+        runtime.http.get_version = fake_get_version  # type: ignore[method-assign]
+        runtime.http.check_health = fake_check_health  # type: ignore[method-assign]
+        runtime.http.check_status = fake_check_status  # type: ignore[method-assign]
+        runtime.control.node_runtime = fake_node_runtime  # type: ignore[method-assign]
+
+        client.post("/api/v1/admin/release-validation")
+        payload = wait_for_release_validation(client)
+
+        assert payload["summary"]["fail"] >= 3
+        issues = {item["target_name"]: item for item in payload["issues"]}
+        assert issues["client-1"]["code"] == "legacy_status_shape"
+        assert issues["relay-1"]["code"] == "protocol_mismatch"
+        assert issues["server-1"]["code"] in {"bridge_unreachable", "timeout"}
+
+        server_item = next(item for item in payload["nodes"] if item["target_name"] == "server-1")
+        assert server_item["checks"]["control_bridge"]["status"] == "fail"
+        assert server_item["checks"]["connectivity"]["status"] == "fail"
 
 
 def test_admin_login_required_for_management_routes(tmp_path: Path) -> None:

@@ -77,6 +77,9 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+      max-width: 100%;
       padding: 8px 12px;
       border-radius: 999px;
       font-size: 12px;
@@ -89,12 +92,17 @@
       font-family: Consolas, "SFMono-Regular", monospace;
       font-size: 12px;
       color: var(--ink);
+      overflow-wrap: anywhere;
     }
     .status-pill.online { background: #dcefe3; color: var(--ok); }
     .status-pill.push-only, .status-pill.degraded, .status-pill.warning, .status-pill.acknowledged { background: #fff0cc; color: var(--warn); }
     .status-pill.pull-only, .status-pill.offline, .status-pill.critical, .status-pill.error, .status-pill.open { background: #f8ddd8; color: var(--danger); }
     .status-pill.resolved, .status-pill.info, .status-pill.completed { background: #dcefe3; color: var(--ok); }
     .status-pill.unpaired, .status-pill.running, .status-pill.queued, .status-pill.disabled, .status-pill.canceled { background: #e8e8e8; color: #555; }
+    .status-pill.pass { background: #dcefe3; color: var(--ok); }
+    .status-pill.warn { background: #fff0cc; color: var(--warn); }
+    .status-pill.fail { background: #f8ddd8; color: var(--danger); }
+    .status-pill.skip { background: #e8e8e8; color: #555; }
     button, .button, select, input, textarea {
       font: inherit;
     }
@@ -215,7 +223,7 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .muted { color: var(--muted); }
+    .muted { color: var(--muted); overflow-wrap: anywhere; }
     .detail-stack { display: grid; gap: 12px; }
     .empty {
       padding: 18px;
@@ -224,6 +232,7 @@
       color: var(--muted);
       text-align: center;
     }
+    td, th, p, .status-meta { overflow-wrap: anywhere; }
     .node-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .tab-section { display: grid; gap: 16px; }
     @media (max-width: 1280px) {
@@ -462,6 +471,16 @@
             <div id="actionDetail"></div>
           </div>
         </div>
+      </div>
+      <div class="panel">
+        <div class="section-head">
+          <h2 data-i18n="releaseValidation">发布验收</h2>
+          <div class="toolbar">
+            <button type="button" id="runReleaseValidationBtn" data-i18n="runValidation">执行只读验收</button>
+          </div>
+        </div>
+        <div id="releaseValidationMeta" class="status-meta"></div>
+        <div id="releaseValidationBody" style="margin-top: 16px;"></div>
       </div>
       <div class="management-grid">
         <div class="panel">

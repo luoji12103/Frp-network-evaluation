@@ -21,6 +21,7 @@ SuggestedTargetKind = Literal["node", "panel", "run", "action"]
 SuggestedActionKind = Literal["open_node", "open_panel", "open_run", "open_action", "control_action", "sync_runtime", "tail_log"]
 ControlActionName = Literal["status", "start", "stop", "restart", "tail_log", "sync_runtime", "pause_scheduler", "resume_scheduler"]
 ControlActionStatus = Literal["queued", "running", "completed", "failed", "canceled"]
+ValidationState = Literal["pass", "warn", "fail", "skip"]
 
 
 class PanelSettings(BaseModel):
@@ -329,6 +330,7 @@ class DashboardSnapshot(BaseModel):
 
     topology_id: int
     build: dict[str, Any] = Field(default_factory=dict)
+    generated_at: str | None = None
     settings: dict[str, Any]
     schedules: list[dict[str, Any]]
     nodes: list[dict[str, Any]]
@@ -343,12 +345,57 @@ class PublicDashboardSnapshot(BaseModel):
     topology_id: int
     topology_name: str
     build: dict[str, Any] = Field(default_factory=dict)
+    generated_at: str | None = None
     summary: dict[str, Any]
     nodes: list[dict[str, Any]]
     latest_runs: list[dict[str, Any]]
     alerts: list[dict[str, Any]]
     paths: list[dict[str, Any]] = Field(default_factory=list)
     history: dict[str, Any]
+
+
+class ReleaseValidationItem(BaseModel):
+    """Release-validation result for the panel or a single node."""
+
+    target_kind: Literal["panel", "node"]
+    target_id: int | None = None
+    target_name: str
+    role: NodeRole | None = None
+    status: ValidationState
+    code: str | None = None
+    summary: str
+    recommended_step: str | None = None
+    suggested_action: SuggestedAction | None = None
+    checks: dict[str, Any] = Field(default_factory=dict)
+    build: BuildInfoPayload | None = None
+    connectivity: dict[str, Any] | None = None
+    runtime: dict[str, Any] | None = None
+    supervisor: dict[str, Any] | None = None
+
+
+class ReleaseValidationSummary(BaseModel):
+    """Summary counters for a release-validation snapshot."""
+
+    total: int = 0
+    pass_count: int = Field(default=0, alias="pass", serialization_alias="pass")
+    warn: int = 0
+    fail: int = 0
+    skip: int = 0
+
+    model_config = {"populate_by_name": True}
+
+
+class ReleaseValidationSnapshot(BaseModel):
+    """Top-level release-validation snapshot kept in panel memory."""
+
+    build: BuildInfoPayload
+    generated_at: str
+    running: bool = False
+    checked_at: str | None = None
+    summary: ReleaseValidationSummary = Field(default_factory=ReleaseValidationSummary)
+    panel: ReleaseValidationItem
+    nodes: list[ReleaseValidationItem] = Field(default_factory=list)
+    issues: list[ReleaseValidationItem] = Field(default_factory=list)
 
 
 class HistoryResponse(BaseModel):

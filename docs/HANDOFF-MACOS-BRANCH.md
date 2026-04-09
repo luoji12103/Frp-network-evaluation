@@ -144,6 +144,8 @@ macOS 分支不要改以下 Panel 侧接口合同。
 当前新增的管理运维接口也视为冻结合同：
 
 - `GET /api/v1/admin/runtime`
+- `GET /api/v1/admin/release-validation`
+- `POST /api/v1/admin/release-validation`
 - `GET /api/v1/admin/actions`
 - `GET /api/v1/admin/actions/{action_id}`
 - `POST /api/v1/admin/nodes/{node_id}/actions`
@@ -229,13 +231,54 @@ macOS 分支不要改以下 Panel 侧接口合同。
 
 - `GET /api/v1/public-dashboard` 顶层包含 `build`
 - `GET /api/v1/dashboard` 顶层包含 `build`
+- `GET /api/v1/admin/runtime` 顶层包含 `build`
+- `GET /api/v1/admin/release-validation` 顶层包含 `build`
 - 主要 `GET /api/v1/admin/*` JSON 响应也会包含顶层 `build`
+- 以下快照型响应顶层还固定包含 `generated_at`：
+  - `GET /api/v1/public-dashboard`
+  - `GET /api/v1/dashboard`
+  - `GET /api/v1/admin/runtime`
+  - `GET /api/v1/admin/release-validation`
 - 所有 panel 响应都会附带：
   - `X-MC-Netprobe-Release-Version`
   - `X-MC-Netprobe-Build-Ref`
   - `X-MC-Netprobe-Build`
 
 其中 `build.display_label` 继续给 UI 展示使用，而 `X-MC-Netprobe-Build` 与 `build.header_label` 固定使用 ASCII 友好的 `v<release>+<commit>` 格式，方便 `curl -I` 和自动化脚本读取。
+
+发布验收中心的只读合同也已经冻结：
+
+- `GET /api/v1/admin/release-validation`
+- `POST /api/v1/admin/release-validation`
+- 顶层字段固定为：
+  - `build`
+  - `generated_at`
+  - `running`
+  - `checked_at`
+  - `summary`
+  - `panel`
+  - `nodes`
+  - `issues`
+- `summary` 的状态计数固定使用：
+  - `pass`
+  - `warn`
+  - `fail`
+  - `skip`
+- `panel` / `nodes[*]` / `issues[*]` 的验收项固定使用：
+  - `status`
+  - `summary`
+  - `recommended_step`
+  - 可选 `suggested_action`
+  - `checks`
+- 状态语义固定为：
+  - `pass`
+    - 当前项通过只读发布验收
+  - `warn`
+    - 当前项仍可工作，但存在 build drift、push-only、endpoint mismatch 一类需要运营处理的问题
+  - `fail`
+    - 当前项缺少 `/api/v1/version`、`/api/v1/health`、兼容的 `/api/v1/status`，或 control bridge 不可达
+  - `skip`
+    - 当前项被禁用、未配对，或当前部署模式不要求该检查
 
 其中 pull-mode 诊断码现在明确冻结以下语义：
 

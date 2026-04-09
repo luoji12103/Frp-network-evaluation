@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 
-DEFAULT_PANEL_RELEASE_VERSION = "1.0"
+DEFAULT_PANEL_RELEASE_VERSION = "1.1.0"
 _SAFE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
 

@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 mkdir -p "${REPO_ROOT}/data" "${REPO_ROOT}/config/agent" "${REPO_ROOT}/results" "${REPO_ROOT}/logs"
 
 export MC_NETPROBE_WEBUI_PORT="${MC_NETPROBE_WEBUI_PORT:-8765}"
-export MC_NETPROBE_RELEASE_VERSION="${MC_NETPROBE_RELEASE_VERSION:-1.0}"
+export MC_NETPROBE_RELEASE_VERSION="${MC_NETPROBE_RELEASE_VERSION:-1.1.0}"
 if [[ -z "${MC_NETPROBE_BUILD_REF:-}" ]]; then
   if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --short=12 HEAD >/dev/null 2>&1; then
     export MC_NETPROBE_BUILD_REF="$(git -C "${REPO_ROOT}" rev-parse --short=12 HEAD)"

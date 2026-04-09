@@ -7,8 +7,9 @@
     locale: loadLocale(),
     timeRange: loadTimeRange(),
     refreshSec: loadRefreshSec(),
-    lastRefreshAt: null,
+    lastRefreshAt: (window.__INITIAL_STATE__ || {}).generated_at || null,
     lastError: "",
+    requestEpoch: 0,
   };
 
   const charts = {};
@@ -269,16 +270,24 @@
   }
 
   async function refreshData() {
+    const epoch = ++state.requestEpoch;
     const response = await fetch(`/api/v1/public-dashboard?time_range=${encodeURIComponent(state.timeRange)}`, {
       credentials: "same-origin",
     });
     if (!response.ok) {
+      if (epoch !== state.requestEpoch) {
+        return;
+      }
       state.lastError = `${t("refreshStatusError")}: ${response.status}`;
       renderStatusMeta();
       return;
     }
-    state.data = await response.json();
-    state.lastRefreshAt = new Date().toISOString();
+    const payload = await response.json();
+    if (epoch !== state.requestEpoch) {
+      return;
+    }
+    state.data = payload;
+    state.lastRefreshAt = payload.generated_at || state.lastRefreshAt;
     state.lastError = "";
     render();
   }
@@ -295,7 +304,7 @@
 
   function render() {
     document.getElementById("topologyName").textContent = state.data.topology_name || "";
-    document.getElementById("lastUpdated").textContent = `${t("updatedAt")}: ${formatTimestamp(new Date().toISOString())}`;
+    document.getElementById("lastUpdated").textContent = `${t("updatedAt")}: ${formatTimestamp(state.data.generated_at || state.lastRefreshAt)}`;
     renderLatestReport();
     renderKpis();
     renderRoles();
@@ -309,8 +318,9 @@
   function renderStatusMeta() {
     const status = document.getElementById("boardStatusMeta");
     const refreshLabel = state.refreshSec > 0 ? `${state.refreshSec}s` : t("refreshOff");
-    const base = state.lastRefreshAt
-      ? `${t("refreshStatusOk")} · ${t("updatedAt")}: ${formatTimestamp(state.lastRefreshAt)}`
+    const effectiveTimestamp = state.data.generated_at || state.lastRefreshAt;
+    const base = effectiveTimestamp
+      ? `${t("refreshStatusOk")} · ${t("updatedAt")}: ${formatTimestamp(effectiveTimestamp)}`
       : t("refreshStatusReady");
     const suffix = `${t("timeRange")}: ${state.timeRange} · ${t("autoRefresh")}: ${refreshLabel}`;
     status.textContent = state.lastError ? `${state.lastError} · ${suffix}` : `${base} · ${suffix}`;

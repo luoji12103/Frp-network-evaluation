@@ -59,6 +59,12 @@ class AgentHttpClient:
             )
         return status.model_dump()
 
+    def check_health(self, node: dict[str, Any]) -> dict[str, Any]:
+        return self._request_public(node=node, method="GET", path="/api/v1/health")
+
+    def get_version(self, node: dict[str, Any]) -> dict[str, Any]:
+        return self._request_public(node=node, method="GET", path="/api/v1/version")
+
     def run_job(self, node: dict[str, Any], job_id: int | None, run_id: str, task: str, payload: dict[str, Any]) -> dict[str, Any]:
         request = AgentTaskDispatch(job_id=job_id, run_id=run_id, task=task, payload=payload)
         response = self._request(
@@ -84,12 +90,50 @@ class AgentHttpClient:
         base_url = self._agent_base_url(node)
         token = self.store.build_node_token(int(node["id"]))
         timeout = timeout_sec or self.timeout_sec
+        return self._request_with_headers(
+            base_url=base_url,
+            method=method,
+            path=path,
+            headers={"X-Node-Token": token},
+            json_body=json_body,
+            timeout_sec=timeout,
+        )
+
+    def _request_public(
+        self,
+        node: dict[str, Any],
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+        timeout_sec: float | None = None,
+    ) -> dict[str, Any]:
+        base_url = self._agent_base_url(node)
+        timeout = timeout_sec or self.timeout_sec
+        return self._request_with_headers(
+            base_url=base_url,
+            method=method,
+            path=path,
+            headers={},
+            json_body=json_body,
+            timeout_sec=timeout,
+        )
+
+    def _request_with_headers(
+        self,
+        base_url: str,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        json_body: dict[str, Any] | None = None,
+        timeout_sec: float | None = None,
+    ) -> dict[str, Any]:
+        timeout = timeout_sec or self.timeout_sec
         with httpx.Client(timeout=timeout) as client:
             try:
                 response = client.request(
                     method,
                     f"{base_url.rstrip('/')}{path}",
-                    headers={"X-Node-Token": token},
+                    headers=headers,
                     json=json_body,
                 )
                 response.raise_for_status()

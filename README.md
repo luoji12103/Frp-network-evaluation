@@ -121,7 +121,7 @@ The Docker stack also starts `panel-control-bridge`, which is the only component
 
 The admin, public, and login pages now display the deployed panel build label. The Docker helper exports:
 
-- `MC_NETPROBE_RELEASE_VERSION` defaulting to `1.0`
+- `MC_NETPROBE_RELEASE_VERSION` defaulting to `1.1.0`
 - `MC_NETPROBE_BUILD_REF` defaulting to `git rev-parse --short=12 HEAD`
 
 So after `bash bin/start_webui_docker.sh` or
@@ -153,10 +153,16 @@ The panel now exposes:
 - top-level `build` objects on:
   - `GET /api/v1/public-dashboard`
   - `GET /api/v1/dashboard`
+  - `GET /api/v1/admin/runtime`
+  - `GET /api/v1/admin/release-validation`
   - core admin JSON responses such as:
-    - `GET /api/v1/admin/runtime`
     - `GET /api/v1/admin/actions`
     - `GET /api/v1/admin/runs`
+- snapshot-oriented responses now also expose top-level `generated_at`:
+  - `GET /api/v1/public-dashboard`
+  - `GET /api/v1/dashboard`
+  - `GET /api/v1/admin/runtime`
+  - `GET /api/v1/admin/release-validation`
 
 ## Admin Authentication
 
@@ -229,12 +235,15 @@ The admin UI now has a dedicated runtime-control surface.
 - `GET /api/v1/admin/actions` now also returns target-side summary / CTA fields: `target_status`, `target_runtime_state`, `target_attention_level`, `target_operator_summary`, `target_operator_recommended_step`, and `target_suggested_action`.
 - `GET /api/v1/admin/actions/{action_id}` now returns `target_snapshot`, including current runtime, supervisor, connectivity, endpoints, and any active CTA for that target.
 - `GET /api/v1/admin/runtime` now also returns the current `active_run` and an `attention` summary list; the admin UI uses that payload to disable duplicate full-run launches and jump to the already-running run.
+- `GET /api/v1/admin/release-validation` and `POST /api/v1/admin/release-validation` now power a read-only release validation center inside the management view. The snapshot stays in memory only and exposes `build`, `generated_at`, `running`, `checked_at`, `summary`, `panel`, `nodes`, and `issues`.
+- Release validation items use stable statuses `pass | warn | fail | skip`. Build drift between panel and agent is a `warn`; missing `/api/v1/version`, `/api/v1/health`, incompatible `/api/v1/status`, or unreachable control bridges are `fail`.
 - `attention.items[*]` may now include `suggested_action`, so the UI can render one explicit CTA instead of inferring next steps from text.
 - Active runs now expose structured queue diagnostics through `progress.latest_queue_job`, so queued dispatches, leases, timeouts, completions, and ignored late completions are visible without reading raw job rows.
 - Active runs also expose `progress.current_blocker` and `progress.headline`, so the backend can distinguish the current blocking step from older failures and the UI can reuse one canonical summary in the run list, run detail, and operations focus.
 - `progress.current_blocker`, `progress.latest_queue_job`, and `progress.latest_probe` now carry `node_id` when the backend can resolve the affected node, and `progress.current_blocker` may include `suggested_action`.
 - Node runtime cards can surface `run_attention` when the active run is currently blocked on that node, and the same signal is mirrored into `runtime.details.active_run_*` for backend-driven UI decisions.
 - Run event timeline items now carry backend-generated `summary`, `severity`, `code`, and `node_id`, which keeps queue and probe event explanations consistent between the API and WebUI and lets the UI jump straight to the affected node.
+- The management UI now keeps a dedicated release-validation card in the existing management area. It is read-only, reuses `suggested_action` CTAs, and uses server-side `generated_at` plus stale-response guards so old refreshes cannot overwrite newer runtime or detail views.
 - Native panel log tailing checks these locations in order:
   - `MC_NETPROBE_PANEL_LOG_FILE`
   - `logs/panel-native.log`
