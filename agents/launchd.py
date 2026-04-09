@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import plistlib
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 
 DEFAULT_LABEL = "com.mc-netprobe.server.agent"
 DEFAULT_CONFIG_PATH = Path("config/agent/server.yaml")
-DEFAULT_LOG_PATH = Path("logs/server-agent.launchd.log")
+DEFAULT_LOG_NAME = "server-agent.launchd.log"
 DEFAULT_LISTEN_HOST = "0.0.0.0"
 DEFAULT_LISTEN_PORT = 9870
 DEFAULT_CONTROL_PORT = DEFAULT_LISTEN_PORT + 1
@@ -49,11 +50,12 @@ def build_launchd_paths(
     """Build the resolved filesystem paths used by the installer."""
     root = Path(repo_root).expanduser().resolve()
     user_home = Path(home_dir).expanduser().resolve() if home_dir is not None else Path.home().resolve()
+    log_path = (user_home / "Library" / "Logs" / "mc-netprobe" / DEFAULT_LOG_NAME).resolve()
     return LaunchdInstallPaths(
         repo_root=root,
         home_dir=user_home,
         config_path=resolve_repo_path(root, config_path),
-        log_path=(root / DEFAULT_LOG_PATH).resolve(),
+        log_path=log_path,
         plist_path=(user_home / "Library" / "LaunchAgents" / f"{label}.plist").resolve(),
     )
 
@@ -73,32 +75,42 @@ def build_launchd_plist(
     label: str = DEFAULT_LABEL,
 ) -> dict[str, object]:
     """Construct the plist payload for the launch agent."""
-    return {
-        "Label": label,
-        "ProgramArguments": [
-            python_bin,
+    command = " ".join(
+        [
+            f"cd {shlex.quote(str(paths.repo_root))}",
+            "&&",
+            "exec",
+            shlex.quote(python_bin),
             "-m",
             "agents.service",
             "--config",
-            str(paths.config_path),
+            shlex.quote(str(paths.config_path)),
             "--panel-url",
-            panel_url,
+            shlex.quote(panel_url),
             "--pair-code",
-            pair_code,
+            shlex.quote(pair_code),
             "--node-name",
-            node_name,
+            shlex.quote(node_name),
             "--role",
-            role,
+            shlex.quote(role),
             "--runtime-mode",
-            runtime_mode,
+            shlex.quote(runtime_mode),
             "--listen-host",
-            listen_host,
+            shlex.quote(listen_host),
             "--listen-port",
-            str(listen_port),
+            shlex.quote(str(listen_port)),
             "--control-port",
-            str(control_port if control_port is not None else listen_port + 1),
+            shlex.quote(str(control_port if control_port is not None else listen_port + 1)),
+        ]
+    )
+    return {
+        "Label": label,
+        "ProgramArguments": [
+            "/bin/zsh",
+            "-c",
+            command,
         ],
-        "WorkingDirectory": str(paths.repo_root),
+        "WorkingDirectory": str(paths.home_dir),
         "RunAtLoad": True,
         "KeepAlive": True,
         "StandardOutPath": str(paths.log_path),

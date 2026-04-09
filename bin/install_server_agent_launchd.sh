@@ -46,8 +46,9 @@ PLIST_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
 BRIDGE_PLIST_PATH="${PLIST_DIR}/${BRIDGE_LABEL}.plist"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_PATH="${REPO_ROOT}/logs/server-agent.launchd.log"
-BRIDGE_LOG_PATH="${REPO_ROOT}/logs/server-control-bridge.launchd.log"
+LOG_DIR="${HOME}/Library/Logs/mc-netprobe"
+LOG_PATH="${LOG_DIR}/server-agent.launchd.log"
+BRIDGE_LOG_PATH="${LOG_DIR}/server-control-bridge.launchd.log"
 DOMAIN_TARGET="gui/$(id -u)"
 SERVICE_TARGET="${DOMAIN_TARGET}/${LABEL}"
 BRIDGE_SERVICE_TARGET="${DOMAIN_TARGET}/${BRIDGE_LABEL}"
@@ -75,9 +76,9 @@ PY
 
 LISTEN_HOST="$(resolve_listen_host "${REPO_ROOT}/${CONFIG_PATH}")"
 
-mkdir -p "${PLIST_DIR}" "${REPO_ROOT}/logs"
+mkdir -p "${PLIST_DIR}" "${LOG_DIR}"
 
-"${PYTHON_BIN}" "${REPO_ROOT}/agents/launchd.py" \
+"${PYTHON_BIN}" -m agents.launchd \
   --repo-root "${REPO_ROOT}" \
   --home-dir "${HOME}" \
   --python-bin "${PYTHON_BIN}" \
@@ -92,7 +93,7 @@ mkdir -p "${PLIST_DIR}" "${REPO_ROOT}/logs"
   --config "${CONFIG_PATH}" \
   --label "${LABEL}"
 
-"${PYTHON_BIN}" "${REPO_ROOT}/agents/launchd_control_bridge.py" \
+"${PYTHON_BIN}" -m agents.launchd_control_bridge \
   --repo-root "${REPO_ROOT}" \
   --home-dir "${HOME}" \
   --python-bin "${PYTHON_BIN}" \

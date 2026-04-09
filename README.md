@@ -262,8 +262,8 @@ The installer now:
 - validates `launchctl`, `plutil`, and the configured `PYTHON_BIN`
 - writes `~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist`
 - writes `~/Library/LaunchAgents/com.mc-netprobe.server.control-bridge.plist`
-- writes agent logs to `logs/server-agent.launchd.log`
-- writes control bridge logs to `logs/server-control-bridge.launchd.log`
+- writes agent logs to `~/Library/Logs/mc-netprobe/server-agent.launchd.log`
+- writes control bridge logs to `~/Library/Logs/mc-netprobe/server-control-bridge.launchd.log`
 - prefers `bootout/bootstrap/kickstart` and falls back to `unload/load`
 
 Recommended post-install checks:
@@ -273,8 +273,8 @@ plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
 plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.control-bridge.plist
 launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
 launchctl print gui/$(id -u)/com.mc-netprobe.server.control-bridge
-tail -n 50 logs/server-agent.launchd.log
-tail -n 50 logs/server-control-bridge.launchd.log
+tail -n 50 ~/Library/Logs/mc-netprobe/server-agent.launchd.log
+tail -n 50 ~/Library/Logs/mc-netprobe/server-control-bridge.launchd.log
 curl http://127.0.0.1:9870/api/v1/health
 ```
 

@@ -404,9 +404,15 @@ plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.agent.plist
 plutil -lint ~/Library/LaunchAgents/com.mc-netprobe.server.control-bridge.plist
 launchctl print gui/$(id -u)/com.mc-netprobe.server.agent
 launchctl print gui/$(id -u)/com.mc-netprobe.server.control-bridge
-tail -n 50 logs/server-agent.launchd.log
-tail -n 50 logs/server-control-bridge.launchd.log
+tail -n 50 ~/Library/Logs/mc-netprobe/server-agent.launchd.log
+tail -n 50 ~/Library/Logs/mc-netprobe/server-control-bridge.launchd.log
 curl http://127.0.0.1:9870/api/v1/health
+
+补充说明：
+
+- macOS `launchd` 的 `WorkingDirectory` 现在固定放在用户目录，真正执行前会 `cd` 回仓库根目录
+- `launchd` 的 stdout / stderr 日志固定写到 `~/Library/Logs/mc-netprobe/`
+- 如果 agent 监听在 tailnet / 局域网地址而不是 `127.0.0.1`，本地 healthcheck 请改成绑定地址，例如 `curl http://100.100.0.8:39870/api/v1/health`
 ```
 
 如果本地为了调试需要扩展信息：
