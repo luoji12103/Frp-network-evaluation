@@ -2,6 +2,9 @@
 
 `mc-netprobe` is a persistent monitoring toolkit for Minecraft + FRP network paths.
 
+For a beginner-friendly end-to-end launch walkthrough, see
+[`docs/INITIAL-LAUNCH-BLOG.md`](docs/INITIAL-LAUNCH-BLOG.md).
+
 The repository now uses a `Panel + Agent` architecture:
 
 - `panel`: central FastAPI dashboard, scheduler, history store, and report exporter
