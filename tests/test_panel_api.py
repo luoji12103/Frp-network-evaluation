@@ -224,6 +224,8 @@ def test_public_dashboard_bootstraps_defaults(tmp_path: Path) -> None:
         payload = response.json()
         assert payload["topology_name"] == "mc-netprobe-monitor"
         assert payload["summary"]["total_nodes"] == 0
+        assert payload["time_range"] == "24h"
+        assert payload["privacy_mode"] == "role-and-path-only"
         assert payload["build"]["display_label"]
         assert response.headers["X-MC-Netprobe-Build"]
 
@@ -237,8 +239,23 @@ def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None
         assert 'id="localeSelect"' in body
         assert 'id="autoRefreshSelect"' in body
         assert "管理员登录" in body
-        assert "公开网络质量大盘" in body
+        assert "公开网络质量" in body
         assert "/assets/public-dashboard.js" in body
+
+
+def test_public_detail_pages_bootstrap_without_login(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        seed_dashboard_data(client)
+
+        path_page = client.get("/public/path/client_to_relay")
+        assert path_page.status_code == 200
+        assert "window.__PUBLIC_PAGE__" in path_page.text
+        assert "client_to_relay" in path_page.text
+
+        role_page = client.get("/public/role/client")
+        assert role_page.status_code == 200
+        assert "window.__PUBLIC_PAGE__" in role_page.text
+        assert "role" in role_page.text
 
 
 def test_pages_and_runtime_include_build_label(tmp_path: Path, monkeypatch) -> None:
@@ -1307,7 +1324,53 @@ def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) 
         assert payload["paths"]
         assert payload["summary"]["active_alerts"] >= 1
         assert "endpoints" not in payload["nodes"][0]
+        assert "node_name" not in payload["nodes"][0]
+        assert payload["time_range"] == "7d"
+        assert payload["privacy_mode"] == "role-and-path-only"
         assert payload["nodes"][0]["connectivity"]["push"]["state"] in {"ok", "unknown", "error"}
+        assert payload["alerts"][0]["path_id"] in {"client_to_relay", "relay_to_server", "client_to_mc_public", "client_to_iperf_public", None}
+
+
+def test_public_path_health_and_timeseries_are_anonymous_and_sanitized(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        seed_dashboard_data(client)
+
+        path_health = client.get("/api/v1/public/path-health?time_range=30d&path_id=client_to_relay")
+        assert path_health.status_code == 200
+        path_payload = path_health.json()
+        assert path_payload["time_range"] == "30d"
+        assert path_payload["privacy_mode"] == "role-and-path-only"
+        assert path_payload["path"]["path_id"] == "client_to_relay"
+        assert "node_name" not in path_payload["path"]
+        assert "control_bridge_url" not in path_payload["path"]
+
+        timeseries = client.get("/api/v1/public/timeseries?scope_kind=path&scope_id=client_to_relay&metric_group=latency&time_range=24h")
+        assert timeseries.status_code == 200
+        series_payload = timeseries.json()
+        assert series_payload["scope_kind"] == "path"
+        assert series_payload["scope_id"] == "client_to_relay"
+        assert series_payload["metric_group"] == "latency"
+        assert series_payload["privacy_mode"] == "role-and-path-only"
+        assert series_payload["series"]
+        first_series = series_payload["series"][0]
+        assert "runtime" not in first_series
+        assert "supervisor" not in first_series
+        assert "node_name" not in first_series
+
+
+def test_public_role_timeseries_filters_allowed_scope(tmp_path: Path) -> None:
+    with build_client(tmp_path) as client:
+        seed_dashboard_data(client)
+        response = client.get("/api/v1/public/timeseries?scope_kind=role&scope_id=client&metric_group=system&time_range=24h")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["scope_kind"] == "role"
+        assert payload["scope_id"] == "client"
+        assert payload["metric_group"] == "system"
+        assert payload["series"]
+
+        invalid = client.get("/api/v1/public/timeseries?scope_kind=role&scope_id=client&metric_group=secret&time_range=24h")
+        assert invalid.status_code == 400
 
 
 def test_admin_analytics_routes_require_login(tmp_path: Path) -> None:

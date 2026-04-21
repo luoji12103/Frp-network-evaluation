@@ -78,6 +78,43 @@ PATH_CATEGORY_METRICS = {
     "system": ("cpu_usage_pct", "memory_usage_pct"),
 }
 
+PUBLIC_PRIVACY_MODE = "role-and-path-only"
+PUBLIC_TIME_RANGE_HOURS = {
+    "24h": 24,
+    "7d": 24 * 7,
+    "30d": 24 * 30,
+}
+PUBLIC_PATH_IDS = (
+    "client_to_relay",
+    "relay_to_server",
+    "client_to_mc_public",
+    "client_to_iperf_public",
+)
+PUBLIC_ROLE_IDS = ("client", "relay", "server")
+PUBLIC_ROLE_PATHS = {
+    "client": ("client_to_relay", "client_to_mc_public", "client_to_iperf_public"),
+    "relay": ("client_to_relay", "relay_to_server"),
+    "server": ("relay_to_server",),
+}
+PUBLIC_PATH_ROLES = {
+    "client_to_relay": ("client", "relay"),
+    "relay_to_server": ("relay", "server"),
+    "client_to_mc_public": ("client",),
+    "client_to_iperf_public": ("client",),
+    "client_to_mc_public_load": ("client",),
+    "client_system": ("client",),
+    "relay_system": ("relay",),
+    "server_system": ("server",),
+}
+PUBLIC_METRIC_GROUPS = {
+    "latency": ("rtt_avg_ms", "rtt_p95_ms", "connect_avg_ms"),
+    "loss": ("packet_loss_pct", "connect_timeout_or_error_pct"),
+    "jitter": ("jitter_ms",),
+    "throughput": ("throughput_up_mbps", "throughput_down_mbps"),
+    "load": ("load_rtt_inflation_ms",),
+    "system": ("cpu_usage_pct", "memory_usage_pct"),
+}
+
 
 def _suggested_action(
     *,
@@ -98,6 +135,18 @@ def _suggested_action(
         label=label,
         dangerous=dangerous,
     ).model_dump(exclude_none=True)
+
+
+def _normalize_public_time_range_hours(hours: int) -> int:
+    return hours if hours in set(PUBLIC_TIME_RANGE_HOURS.values()) else PUBLIC_TIME_RANGE_HOURS["24h"]
+
+
+def _public_time_range_label(hours: int) -> str:
+    normalized = _normalize_public_time_range_hours(hours)
+    for label, value in PUBLIC_TIME_RANGE_HOURS.items():
+        if value == normalized:
+            return label
+    return "24h"
 
 
 class PanelStore:
@@ -1548,10 +1597,12 @@ class PanelStore:
         }
 
     def build_public_dashboard_snapshot(self, time_range_hours: int = 24) -> dict[str, Any]:
+        normalized_hours = _normalize_public_time_range_hours(time_range_hours)
         settings = self.get_settings().model_dump()
         nodes = [self._public_node(node) for node in self.list_nodes()]
-        runs = [self._public_run(run) for run in self.list_recent_runs(limit=12)]
-        alerts = [self._public_alert(alert) for alert in self.list_recent_alerts(limit=12)]
+        runs = self._build_public_runs(self.list_recent_runs(limit=12))
+        alerts = self._build_public_alerts(self.list_recent_alerts(limit=12))
+        paths = self._build_public_path_summaries(time_range_hours=normalized_hours)
         degraded_statuses = {"push-only", "pull-only"}
         offline_statuses = {"offline", "unpaired", "disabled"}
         online_nodes = sum(1 for node in nodes if node["status"] == "online")
@@ -1560,6 +1611,8 @@ class PanelStore:
         return {
             "topology_id": self.get_topology_id(),
             "topology_name": settings["topology_name"],
+            "time_range": _public_time_range_label(normalized_hours),
+            "privacy_mode": PUBLIC_PRIVACY_MODE,
             "summary": {
                 "total_nodes": len(nodes),
                 "online_nodes": online_nodes,
@@ -1574,16 +1627,153 @@ class PanelStore:
             "nodes": nodes,
             "latest_runs": runs,
             "alerts": alerts[:8],
-            "paths": self._build_path_summaries(
-                time_range_hours=time_range_hours,
+            "paths": paths,
+            "history": {
+                "time_range_hours": normalized_hours,
+                "trend_groups": self._build_trend_groups(time_range_hours=normalized_hours, public_mode=True),
+            },
+        }
+
+    def build_public_path_health(self, time_range_hours: int = 24, path_id: str | None = None) -> dict[str, Any]:
+        normalized_hours = _normalize_public_time_range_hours(time_range_hours)
+        payload = {
+            "topology_id": self.get_topology_id(),
+            "topology_name": self.get_settings().topology_name,
+            "time_range": _public_time_range_label(normalized_hours),
+            "privacy_mode": PUBLIC_PRIVACY_MODE,
+            "paths": self._build_public_path_summaries(time_range_hours=normalized_hours),
+        }
+        if path_id is not None:
+            payload["path"] = self.build_public_path_detail(path_id=path_id, time_range_hours=normalized_hours)
+        return payload
+
+    def build_public_timeseries(
+        self,
+        *,
+        scope_kind: str,
+        scope_id: str,
+        metric_group: str,
+        time_range_hours: int = 24,
+    ) -> dict[str, Any]:
+        normalized_hours = _normalize_public_time_range_hours(time_range_hours)
+        if metric_group not in PUBLIC_METRIC_GROUPS:
+            raise ValueError(f"Unsupported public metric group: {metric_group}")
+        if scope_kind == "path":
+            path_id = self._require_public_path_id(scope_id)
+            path_labels = [path_id]
+        elif scope_kind == "role":
+            role = self._require_public_role(scope_id)
+            if metric_group == "system":
+                path_labels = [f"{role}_system"]
+            else:
+                path_labels = [path for path in PUBLIC_ROLE_PATHS.get(role, ()) if path in PUBLIC_PATH_IDS]
+        else:
+            raise ValueError(f"Unsupported public scope kind: {scope_kind}")
+
+        series_payload: list[dict[str, Any]] = []
+        for metric_name in PUBLIC_METRIC_GROUPS[metric_group]:
+            result = self.query_metric_series(
+                time_range_hours=normalized_hours,
                 roles=None,
                 nodes=None,
-                path_labels=["client_to_relay", "relay_to_server", "client_to_mc_public", "client_to_iperf_public"],
-            ),
-            "history": {
-                "time_range_hours": time_range_hours,
-                "trend_groups": self._build_trend_groups(time_range_hours=time_range_hours, public_mode=True),
+                path_labels=path_labels,
+                probe_names=None,
+                metric_name=metric_name,
+                bucket="auto",
+                limit=1200,
+            )
+            for series in result["series"]:
+                series_payload.append(self._public_timeseries_series_item(series))
+
+        return {
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "metric_group": metric_group,
+            "time_range": _public_time_range_label(normalized_hours),
+            "privacy_mode": PUBLIC_PRIVACY_MODE,
+            "series": series_payload,
+        }
+
+    def build_public_path_detail(self, path_id: str, time_range_hours: int = 24) -> dict[str, Any]:
+        normalized_hours = _normalize_public_time_range_hours(time_range_hours)
+        public_path_id = self._require_public_path_id(path_id)
+        summaries = self._build_public_path_summaries(time_range_hours=normalized_hours, path_ids=[public_path_id])
+        summary = summaries[0] if summaries else {
+            "path_id": public_path_id,
+            "path_label": public_path_id,
+            "status": "unknown",
+            "roles": list(PUBLIC_PATH_ROLES.get(public_path_id, ())),
+            "latest": {},
+            "averages": {},
+            "open_alerts": 0,
+            "open_anomalies": 0,
+            "last_captured_at": None,
+        }
+        alerts = [
+            alert
+            for alert in self._build_public_alerts(self.list_recent_alerts(limit=40))
+            if alert.get("path_id") == public_path_id
+        ][:8]
+        runs = [
+            run
+            for run in self._build_public_runs(self.list_recent_runs(limit=20))
+            if public_path_id in set(run.get("path_ids") or [])
+        ][:8]
+        return {
+            **summary,
+            "time_range": _public_time_range_label(normalized_hours),
+            "privacy_mode": PUBLIC_PRIVACY_MODE,
+            "alerts": alerts,
+            "latest_runs": runs,
+            "metric_groups": [
+                group
+                for group in ("latency", "loss", "jitter", "throughput", "load")
+                if any(item["metric_name"] in PUBLIC_METRIC_GROUPS[group] for item in self._path_metric_catalog(public_path_id))
+            ],
+        }
+
+    def build_public_role_detail(self, role: str, time_range_hours: int = 24) -> dict[str, Any]:
+        normalized_hours = _normalize_public_time_range_hours(time_range_hours)
+        public_role = self._require_public_role(role)
+        node = next((item for item in self.list_nodes() if item["role"] == public_role), None)
+        public_node = self._public_node(node) if node else {
+            "role": public_role,
+            "status": "offline",
+            "enabled": False,
+            "paired": False,
+            "last_seen_at": None,
+            "summary": None,
+            "recommended_step": None,
+            "attention_level": "warning",
+            "connectivity": {
+                "push": {"state": "unknown", "checked_at": None, "code": None, "error": None},
+                "pull": {"state": "unknown", "checked_at": None, "code": None, "error": None},
             },
+        }
+        paths = [
+            path
+            for path in self._build_public_path_summaries(time_range_hours=normalized_hours)
+            if public_role in set(path.get("roles") or [])
+        ]
+        alerts = [
+            alert
+            for alert in self._build_public_alerts(self.list_recent_alerts(limit=40))
+            if public_role in set(alert.get("roles") or [])
+        ][:8]
+        runs = [
+            run
+            for run in self._build_public_runs(self.list_recent_runs(limit=20))
+            if public_role in set(run.get("roles") or [])
+        ][:8]
+        return {
+            **public_node,
+            "time_range": _public_time_range_label(normalized_hours),
+            "privacy_mode": PUBLIC_PRIVACY_MODE,
+            "path_ids": list(PUBLIC_ROLE_PATHS.get(public_role, ())),
+            "paths": paths,
+            "alerts": alerts,
+            "latest_runs": runs,
+            "metric_groups": ["latency", "loss", "jitter", "throughput", "load", "system"],
         }
 
     def _select_metric_rows(
@@ -1747,7 +1937,9 @@ class PanelStore:
             specs = {
                 "latency": [
                     ("client_to_relay", "rtt_avg_ms"),
+                    ("client_to_relay", "rtt_p95_ms"),
                     ("relay_to_server", "rtt_avg_ms"),
+                    ("relay_to_server", "rtt_p95_ms"),
                     ("client_to_mc_public", "connect_avg_ms"),
                 ],
                 "jitter": [
@@ -1763,6 +1955,15 @@ class PanelStore:
                     ("client_to_iperf_public", "throughput_down_mbps"),
                     ("client_to_iperf_public", "throughput_up_mbps"),
                     ("relay_to_server", "throughput_down_mbps"),
+                    ("relay_to_server", "throughput_up_mbps"),
+                ],
+                "load": [
+                    ("client_to_mc_public_load", "load_rtt_inflation_ms"),
+                ],
+                "system": [
+                    ("client_system", "cpu_usage_pct"),
+                    ("relay_system", "cpu_usage_pct"),
+                    ("server_system", "cpu_usage_pct"),
                 ],
             }
         else:
@@ -2045,21 +2246,31 @@ class PanelStore:
         )
 
     def _public_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        connectivity = node.get("connectivity", {})
         return {
             "id": int(node["id"]),
             "role": str(node["role"]),
-            "node_name": str(node["node_name"]),
             "status": str(node["status"]),
             "enabled": bool(node["enabled"]),
             "paired": bool(node["paired"]),
             "last_seen_at": node.get("last_seen_at"),
+            "summary": connectivity.get("summary"),
+            "recommended_step": connectivity.get("recommended_step"),
+            "attention_level": connectivity.get("attention_level"),
+            "path_ids": list(PUBLIC_ROLE_PATHS.get(str(node["role"]), ())),
             "connectivity": {
                 "push": dict(node.get("connectivity", {}).get("push", {})),
                 "pull": dict(node.get("connectivity", {}).get("pull", {})),
             },
         }
 
-    def _public_run(self, run: dict[str, Any]) -> dict[str, Any]:
+    def _build_public_runs(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        run_context = self._public_run_context([str(run.get("run_id") or run.get("id") or "") for run in runs])
+        return [self._public_run(run, run_context.get(str(run.get("run_id") or ""), {})) for run in runs]
+
+    def _public_run(self, run: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+        context = context or {}
+        conclusion = [str(item) for item in list(run.get("conclusion") or []) if str(item).strip()]
         return {
             "run_id": str(run["run_id"]),
             "run_kind": str(run["run_kind"]),
@@ -2067,24 +2278,232 @@ class PanelStore:
             "started_at": run.get("started_at"),
             "finished_at": run.get("finished_at"),
             "findings_count": int(run.get("findings_count") or 0),
-            "conclusion": list(run.get("conclusion") or []),
+            "conclusion": conclusion[:3],
+            "summary": conclusion[0] if conclusion else None,
             "error": run.get("error"),
             "html_path": run.get("html_path"),
+            "path_ids": list(context.get("path_ids") or []),
+            "roles": list(context.get("roles") or []),
         }
 
+    def _build_public_alerts(self, alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [self._public_alert(alert) for alert in alerts]
+
     def _public_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        path_id = str(alert.get("path_label") or "") if str(alert.get("path_label") or "") in PUBLIC_PATH_IDS else None
+        roles = self._public_roles_for_alert(alert)
         return {
             "id": int(alert["id"]),
             "kind": str(alert["kind"]),
             "severity": str(alert["severity"]),
             "status": str(alert["status"]),
-            "message": str(alert["message"]),
+            "summary": self._public_alert_summary(alert),
             "created_at": alert.get("created_at"),
+            "path_id": path_id,
             "path_label": alert.get("path_label"),
             "metric_name": alert.get("metric_name"),
             "actual_value": alert.get("actual_value"),
             "threshold_value": alert.get("threshold_value"),
+            "roles": roles,
         }
+
+    def _public_run_context(self, run_ids: list[str]) -> dict[str, dict[str, Any]]:
+        run_ids = [run_id for run_id in run_ids if run_id]
+        if not run_ids:
+            return {}
+        params: list[Any] = []
+        clause = _sql_in_clause("pr.run_id", run_ids, params)
+        sql = f"""
+            SELECT pr.run_id, pr.path_label, n.role
+            FROM probe_result pr
+            LEFT JOIN node n ON n.id = pr.node_id
+            WHERE {clause}
+            ORDER BY pr.run_id ASC, pr.id ASC
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        grouped: dict[str, dict[str, set[str]]] = defaultdict(lambda: {"path_ids": set(), "roles": set()})
+        for row in rows:
+            run_id = str(row["run_id"])
+            path_label = str(row["path_label"] or "")
+            role = str(row["role"] or "")
+            if path_label in PUBLIC_PATH_IDS:
+                grouped[run_id]["path_ids"].add(path_label)
+                grouped[run_id]["roles"].update(self._public_roles_for_path(path_label))
+            elif path_label in PUBLIC_PATH_ROLES:
+                grouped[run_id]["roles"].update(self._public_roles_for_path(path_label))
+            if role in PUBLIC_ROLE_IDS:
+                grouped[run_id]["roles"].add(role)
+        return {
+            run_id: {
+                "path_ids": sorted(values["path_ids"], key=lambda item: DEFAULT_PATH_ORDER.index(item) if item in DEFAULT_PATH_ORDER else 999),
+                "roles": sorted(values["roles"], key=lambda item: PUBLIC_ROLE_IDS.index(item) if item in PUBLIC_ROLE_IDS else 999),
+            }
+            for run_id, values in grouped.items()
+        }
+
+    def _build_public_path_summaries(
+        self,
+        *,
+        time_range_hours: int,
+        path_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        target_paths = path_ids[:] if path_ids else list(PUBLIC_PATH_IDS)
+        summaries = self._build_path_summaries(
+            time_range_hours=time_range_hours,
+            roles=None,
+            nodes=None,
+            path_labels=target_paths,
+        )
+        indexed = {str(item["path_label"]): item for item in summaries}
+        payload = []
+        for path_id in target_paths:
+            source = indexed.get(path_id, {})
+            payload.append(
+                {
+                    "path_id": path_id,
+                    "path_label": path_id,
+                    "roles": list(self._public_roles_for_path(path_id)),
+                    "status": source.get("status", "unknown"),
+                    "latest": dict(source.get("latest") or {}),
+                    "averages": dict(source.get("averages") or {}),
+                    "open_alerts": int(source.get("open_alerts") or 0),
+                    "open_anomalies": int(source.get("open_anomalies") or 0),
+                    "last_captured_at": source.get("last_captured_at"),
+                }
+            )
+        return payload
+
+    def _public_timeseries_series_item(self, series: dict[str, Any]) -> dict[str, Any]:
+        points = list(series.get("points") or [])
+        anomalies = [
+            {
+                "id": item.get("id"),
+                "timestamp": item.get("timestamp"),
+                "value": item.get("value"),
+                "severity": item.get("severity"),
+            }
+            for item in list(series.get("anomalies") or [])
+        ]
+        stats = self._public_series_stats(points, anomalies)
+        path_id = str(series.get("path_label") or "") or None
+        return {
+            "name": str(series.get("name") or ""),
+            "path_id": path_id,
+            "path_label": path_id,
+            "roles": list(self._public_roles_for_path(path_id or "")),
+            "metric_name": str(series.get("metric_name") or ""),
+            "probe_name": series.get("probe_name"),
+            "unit": self._metric_unit(series.get("metric_name")),
+            "direction": self._metric_direction(series.get("metric_name")),
+            "points": points,
+            "anomalies": anomalies,
+            "summary": dict(series.get("summary") or {}),
+            "stats": stats,
+        }
+
+    def _public_series_stats(self, points: list[dict[str, Any]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
+        values = [
+            float(item["value"])
+            for item in points
+            if isinstance(item, dict) and item.get("value") is not None
+        ]
+        if not values:
+            return {
+                "latest": None,
+                "average": None,
+                "peak": None,
+                "p95": None,
+                "anomaly_count": len(anomalies),
+                "compare": {"vs_average": None, "vs_peak": None},
+            }
+        latest = values[-1]
+        average = round(sum(values) / len(values), 3)
+        peak = round(max(values), 3)
+        p95 = round(self._percentile(values, 0.95), 3)
+        compare = {
+            "vs_average": round(latest - average, 3),
+            "vs_peak": round(latest - peak, 3),
+        }
+        return {
+            "latest": round(latest, 3),
+            "average": average,
+            "peak": peak,
+            "p95": p95,
+            "anomaly_count": len(anomalies),
+            "compare": compare,
+        }
+
+    def _path_metric_catalog(self, path_id: str) -> list[dict[str, Any]]:
+        return self._select_metric_rows(
+            time_range_hours=PUBLIC_TIME_RANGE_HOURS["30d"],
+            roles=None,
+            nodes=None,
+            path_labels=[path_id],
+            probe_names=None,
+            metric_names=list({metric for metrics in PUBLIC_METRIC_GROUPS.values() for metric in metrics}),
+            limit=400,
+        )
+
+    def _public_roles_for_path(self, path_label: str) -> tuple[str, ...]:
+        return PUBLIC_PATH_ROLES.get(path_label, ())
+
+    def _public_roles_for_alert(self, alert: dict[str, Any]) -> list[str]:
+        path_label = str(alert.get("path_label") or "")
+        if path_label in PUBLIC_PATH_ROLES:
+            return list(self._public_roles_for_path(path_label))
+        role = str(alert.get("role") or "")
+        if role in PUBLIC_ROLE_IDS:
+            return [role]
+        node_id = alert.get("node_id")
+        if node_id is None:
+            return []
+        node = self.get_node(int(node_id))
+        if node and str(node.get("role") or "") in PUBLIC_ROLE_IDS:
+            return [str(node["role"])]
+        return []
+
+    def _public_alert_summary(self, alert: dict[str, Any]) -> str:
+        path_label = str(alert.get("path_label") or "")
+        metric_name = str(alert.get("metric_name") or "")
+        if path_label in PUBLIC_PATH_IDS and metric_name:
+            actual = alert.get("actual_value")
+            threshold = alert.get("threshold_value")
+            if actual is not None and threshold is not None:
+                return f"{path_label} {metric_name}: {actual} / {threshold}"
+            if actual is not None:
+                return f"{path_label} {metric_name}: {actual}"
+            return f"{path_label} {metric_name}"
+        role = str(alert.get("role") or "")
+        if role in PUBLIC_ROLE_IDS:
+            return f"{role} {alert.get('kind') or 'alert'} {alert.get('status') or ''}".strip()
+        return f"{alert.get('kind') or 'alert'} {alert.get('severity') or ''}".strip()
+
+    def _require_public_path_id(self, path_id: str) -> str:
+        normalized = str(path_id or "").strip()
+        if normalized not in PUBLIC_PATH_IDS:
+            raise ValueError(f"Unknown public path id: {path_id}")
+        return normalized
+
+    def _require_public_role(self, role: str) -> str:
+        normalized = str(role or "").strip()
+        if normalized not in PUBLIC_ROLE_IDS:
+            raise ValueError(f"Unknown public role: {role}")
+        return normalized
+
+    def _percentile(self, values: list[float], ratio: float) -> float:
+        ordered = sorted(values)
+        if not ordered:
+            return 0.0
+        if len(ordered) == 1:
+            return ordered[0]
+        rank = max(0.0, min(1.0, ratio)) * (len(ordered) - 1)
+        lower = math.floor(rank)
+        upper = math.ceil(rank)
+        if lower == upper:
+            return ordered[lower]
+        weight = rank - lower
+        return ordered[lower] + ((ordered[upper] - ordered[lower]) * weight)
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as conn:

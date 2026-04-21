@@ -346,6 +346,8 @@ class PublicDashboardSnapshot(BaseModel):
     topology_name: str
     build: dict[str, Any] = Field(default_factory=dict)
     generated_at: str | None = None
+    time_range: str | None = None
+    privacy_mode: str | None = None
     summary: dict[str, Any]
     nodes: list[dict[str, Any]]
     latest_runs: list[dict[str, Any]]

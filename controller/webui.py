@@ -1437,6 +1437,20 @@ def create_app(
         )
         return HTMLResponse(content=body, status_code=status_code)
 
+    def render_public_page(*, page_kind: str, scope_id: str | None, initial_state: dict[str, Any]) -> HTMLResponse:
+        return render_template(
+            PUBLIC_TEMPLATE_PATH,
+            initial_state_json=json.dumps(initial_state, ensure_ascii=False),
+            public_page_json=json.dumps(
+                {
+                    "kind": page_kind,
+                    "scope_id": scope_id,
+                },
+                ensure_ascii=False,
+            ),
+            panel_build_label=build_info["display_label"],
+        )
+
     def require_admin_api(request: Request) -> None:
         if not admin_auth.is_authenticated(request):
             raise HTTPException(status_code=401, detail="Admin login required")
@@ -1445,11 +1459,25 @@ def create_app(
     def public_dashboard_page():
         snapshot = runtime.store.build_public_dashboard_snapshot()
         snapshot = attach_snapshot(snapshot)
-        return render_template(
-            PUBLIC_TEMPLATE_PATH,
-            initial_state_json=json.dumps(snapshot, ensure_ascii=False),
-            panel_build_label=build_info["display_label"],
-        )
+        return render_public_page(page_kind="overview", scope_id=None, initial_state=snapshot)
+
+    @app.get("/public/path/{path_id}", response_class=HTMLResponse)
+    def public_path_page(path_id: str):
+        try:
+            snapshot = runtime.store.build_public_path_detail(path_id=path_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        snapshot = attach_snapshot(snapshot)
+        return render_public_page(page_kind="path", scope_id=path_id, initial_state=snapshot)
+
+    @app.get("/public/role/{role}", response_class=HTMLResponse)
+    def public_role_page(role: str):
+        try:
+            snapshot = runtime.store.build_public_role_detail(role=role)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        snapshot = attach_snapshot(snapshot)
+        return render_public_page(page_kind="role", scope_id=role, initial_state=snapshot)
 
     @app.get("/admin", response_class=HTMLResponse)
     def dashboard_page(request: Request):
@@ -1497,6 +1525,35 @@ def create_app(
         snapshot = runtime.store.build_public_dashboard_snapshot(time_range_hours=_parse_time_range(time_range))
         snapshot = attach_snapshot(snapshot)
         return PublicDashboardSnapshot.model_validate(snapshot)
+
+    @app.get("/api/v1/public/path-health")
+    def public_path_health(time_range: str = "24h", path_id: str | None = None) -> dict[str, Any]:
+        try:
+            payload = runtime.store.build_public_path_health(
+                time_range_hours=_parse_time_range(time_range),
+                path_id=path_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return attach_snapshot(payload)
+
+    @app.get("/api/v1/public/timeseries")
+    def public_timeseries(
+        scope_kind: str,
+        scope_id: str,
+        metric_group: str,
+        time_range: str = "24h",
+    ) -> dict[str, Any]:
+        try:
+            payload = runtime.store.build_public_timeseries(
+                scope_kind=scope_kind,
+                scope_id=scope_id,
+                metric_group=metric_group,
+                time_range_hours=_parse_time_range(time_range),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return attach_snapshot(payload)
 
     @app.get("/api/v1/dashboard")
     def dashboard(request: Request) -> DashboardSnapshot:
