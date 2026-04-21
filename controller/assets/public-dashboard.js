@@ -207,14 +207,15 @@
   };
 
   const PATH_LABELS = {
-    client_to_relay: { "zh-CN": "客户端 -> 中继", "en-US": "Client -> Relay" },
-    relay_to_server: { "zh-CN": "中继 -> 服务端", "en-US": "Relay -> Server" },
+    client_to_relay_public: { "zh-CN": "客户端 -> 中继公网", "en-US": "Client -> Relay Public" },
     client_to_mc_public: { "zh-CN": "客户端 -> MC 公网", "en-US": "Client -> MC Public" },
     client_to_iperf_public: { "zh-CN": "客户端 -> iperf 公网", "en-US": "Client -> iperf Public" },
     client_to_mc_public_load: { "zh-CN": "客户端 -> MC 公网负载", "en-US": "Client -> MC Public Load" },
     client_system: { "zh-CN": "客户端系统", "en-US": "Client System" },
     relay_system: { "zh-CN": "中继系统", "en-US": "Relay System" },
     server_system: { "zh-CN": "服务端系统", "en-US": "Server System" },
+    client_to_relay: { "zh-CN": "客户端 -> 中继公网", "en-US": "Client -> Relay Public" },
+    relay_to_server: { "zh-CN": "中继 -> 服务端后端", "en-US": "Relay -> Server Backend" },
   };
 
   const METRIC_LABELS = {

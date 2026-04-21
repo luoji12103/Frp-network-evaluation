@@ -430,9 +430,9 @@ class ManualRunRequest(BaseModel):
 def build_default_services() -> ServicesConfig:
     """Build the single-topology default service endpoints."""
     return ServicesConfig(
-        relay_probe=ServiceConfig(host="", port=22),
+        relay_public_probe=ServiceConfig(host="", port=22),
         mc_public=ServiceConfig(host="", port=25565),
         iperf_public=ServiceConfig(host="", port=5201),
-        mc_local=ServiceConfig(host="127.0.0.1", port=25565),
-        iperf_local=ServiceConfig(host="0.0.0.0", port=5201),
+        server_backend_mc=ServiceConfig(host="", port=25565),
+        server_backend_iperf=ServiceConfig(host="", port=5201),
     )

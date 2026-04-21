@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 NodeOS = Literal["windows", "macos", "linux"]
@@ -36,11 +36,25 @@ class NodesConfig(BaseModel):
 
 
 class ServicesConfig(BaseModel):
-    relay_probe: ServiceConfig | None = None
+    relay_public_probe: ServiceConfig | None = None
     mc_public: ServiceConfig
     iperf_public: ServiceConfig
-    mc_local: ServiceConfig
-    iperf_local: ServiceConfig
+    server_backend_mc: ServiceConfig
+    server_backend_iperf: ServiceConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_service_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if "relay_public_probe" not in payload and payload.get("relay_probe") is not None:
+            payload["relay_public_probe"] = payload.get("relay_probe")
+        if "server_backend_mc" not in payload and payload.get("mc_local") is not None:
+            payload["server_backend_mc"] = payload.get("mc_local")
+        if "server_backend_iperf" not in payload and payload.get("iperf_local") is not None:
+            payload["server_backend_iperf"] = payload.get("iperf_local")
+        return payload
 
 
 class TopologyConfig(BaseModel):

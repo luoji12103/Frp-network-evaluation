@@ -10,11 +10,11 @@ def test_build_node_setup_snippet() -> None:
         ssh_port=22,
         project_root="/Users/me/mc-netprobe",
         python_bin="/usr/bin/python3",
-        services={"mc_local": {"host": "127.0.0.1", "port": 25565}},
+        services={"server_backend_mc": {"host": "127.0.0.1", "port": 25565}},
         notes={"sshd_running": True},
     )
     assert snippet["role"] == "server"
-    assert snippet["services"]["mc_local"]["port"] == 25565
+    assert snippet["services"]["server_backend_mc"]["port"] == 25565
 
 
 def test_build_client_topology() -> None:
@@ -26,7 +26,7 @@ def test_build_client_topology() -> None:
         relay_ssh_port=22,
         relay_project_root="/opt/mc-netprobe",
         relay_python_bin="python3",
-        relay_probe_port=22,
+        relay_public_probe_port=22,
         server_host="192.168.1.20",
         server_ssh_user="macuser",
         server_ssh_port=22,
@@ -36,8 +36,8 @@ def test_build_client_topology() -> None:
         mc_public_port=25565,
         iperf_public_host="play.example.com",
         iperf_public_port=5201,
-        mc_local_port=25565,
-        iperf_local_port=5201,
+        server_backend_mc_port=25565,
+        server_backend_iperf_port=5201,
     )
     assert topology["nodes"]["client"]["os"] == "windows"
     assert topology["nodes"]["relay"]["local"] is False

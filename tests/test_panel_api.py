@@ -166,7 +166,7 @@ def seed_dashboard_data(client: TestClient) -> str:
                 target="relay",
                 success=True,
                 metrics={"packet_loss_pct": 0.0, "rtt_avg_ms": 10.0, "rtt_p95_ms": 12.0, "jitter_ms": 1.0},
-                metadata={"path_label": "client_to_relay", "source_node": "client"},
+                metadata={"path_label": "client_to_relay_public", "source_node": "client"},
             ),
             ProbeResult(
                 name="ping",
@@ -174,7 +174,7 @@ def seed_dashboard_data(client: TestClient) -> str:
                 target="server",
                 success=True,
                 metrics={"packet_loss_pct": 0.2, "rtt_avg_ms": 22.0, "rtt_p95_ms": 30.0, "jitter_ms": 4.0},
-                metadata={"path_label": "relay_to_server", "source_node": "relay"},
+                metadata={"path_label": "relay_to_server_backend_mc", "source_node": "relay"},
             ),
             ProbeResult(
                 name="tcp_handshake",
@@ -247,10 +247,10 @@ def test_public_detail_pages_bootstrap_without_login(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         seed_dashboard_data(client)
 
-        path_page = client.get("/public/path/client_to_relay")
+        path_page = client.get("/public/path/client_to_relay_public")
         assert path_page.status_code == 200
         assert "window.__PUBLIC_PAGE__" in path_page.text
-        assert "client_to_relay" in path_page.text
+        assert "client_to_relay_public" in path_page.text
 
         role_page = client.get("/public/role/client")
         assert role_page.status_code == 200
@@ -1010,7 +1010,7 @@ def test_active_run_attention_ignores_stale_queue_failure_after_newer_success(tm
             {
                 "task": "ping",
                 "node_name": "relay-1",
-                "path_label": "client_to_relay",
+                "path_label": "client_to_relay_public",
                 "transport": "pull",
                 "success": True,
                 "error": None,
@@ -1052,7 +1052,7 @@ def test_run_detail_progress_surfaces_failure_code_and_hint(tmp_path: Path) -> N
             {
                 "task": "ping",
                 "node_name": "relay-1",
-                "path_label": "client_to_relay",
+                "path_label": "client_to_relay_public",
                 "transport": "pull-error",
                 "success": False,
                 "error": "timeout: request to http://relay.example/api/v1/jobs/run timed out",
@@ -1196,7 +1196,7 @@ def test_heartbeat_leases_jobs_and_accepts_completed_results(tmp_path: Path) -> 
                             "error": None,
                             "started_at": None,
                             "duration_ms": 2.0,
-                            "metadata": {"path_label": "client_to_relay"},
+                            "metadata": {"path_label": "client_to_relay_public"},
                         },
                     }
                 ],
@@ -1293,7 +1293,7 @@ def test_late_queue_completion_is_recorded_as_ignored(tmp_path: Path) -> None:
                             "error": None,
                             "started_at": None,
                             "duration_ms": 2.0,
-                            "metadata": {"path_label": "client_to_relay"},
+                            "metadata": {"path_label": "client_to_relay_public"},
                         },
                     }
                 ],
@@ -1328,27 +1328,27 @@ def test_public_dashboard_returns_paths_without_internal_fields(tmp_path: Path) 
         assert payload["time_range"] == "7d"
         assert payload["privacy_mode"] == "role-and-path-only"
         assert payload["nodes"][0]["connectivity"]["push"]["state"] in {"ok", "unknown", "error"}
-        assert payload["alerts"][0]["path_id"] in {"client_to_relay", "relay_to_server", "client_to_mc_public", "client_to_iperf_public", None}
+        assert payload["alerts"][0]["path_id"] in {"client_to_relay_public", "client_to_mc_public", "client_to_iperf_public", None}
 
 
 def test_public_path_health_and_timeseries_are_anonymous_and_sanitized(tmp_path: Path) -> None:
     with build_client(tmp_path) as client:
         seed_dashboard_data(client)
 
-        path_health = client.get("/api/v1/public/path-health?time_range=30d&path_id=client_to_relay")
+        path_health = client.get("/api/v1/public/path-health?time_range=30d&path_id=client_to_relay_public")
         assert path_health.status_code == 200
         path_payload = path_health.json()
         assert path_payload["time_range"] == "30d"
         assert path_payload["privacy_mode"] == "role-and-path-only"
-        assert path_payload["path"]["path_id"] == "client_to_relay"
+        assert path_payload["path"]["path_id"] == "client_to_relay_public"
         assert "node_name" not in path_payload["path"]
         assert "control_bridge_url" not in path_payload["path"]
 
-        timeseries = client.get("/api/v1/public/timeseries?scope_kind=path&scope_id=client_to_relay&metric_group=latency&time_range=24h")
+        timeseries = client.get("/api/v1/public/timeseries?scope_kind=path&scope_id=client_to_relay_public&metric_group=latency&time_range=24h")
         assert timeseries.status_code == 200
         series_payload = timeseries.json()
         assert series_payload["scope_kind"] == "path"
-        assert series_payload["scope_id"] == "client_to_relay"
+        assert series_payload["scope_id"] == "client_to_relay_public"
         assert series_payload["metric_group"] == "latency"
         assert series_payload["privacy_mode"] == "role-and-path-only"
         assert series_payload["series"]
@@ -1397,7 +1397,7 @@ def test_admin_analytics_endpoints_and_alert_actions(tmp_path: Path) -> None:
 
         filters = client.get("/api/v1/admin/filters")
         assert filters.status_code == 200
-        assert "client_to_relay" in filters.json()["paths"]
+        assert "client_to_relay_public" in filters.json()["paths"]
 
         overview = client.get("/api/v1/admin/overview?time_range=24h")
         assert overview.status_code == 200

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agents import execute_task
+from controller.path_registry import get_path_spec, path_family
 from controller.scenario import ScenariosConfig, ThresholdsConfig, TopologyConfig
 from controller.ssh_exec import SSHExecutor
 from probes.common import ProbeResult, RunResult, ThresholdFinding, current_environment, detect_platform_name, make_error_probe, now_iso
@@ -61,23 +62,23 @@ class Orchestrator:
                 await self._execute_on_node(
                     "client",
                     "ping",
-                    {"host": self.topology.nodes.relay.host, "count": self.scenarios.ping.count, "timeout_sec": self.scenarios.ping.timeout_sec},
-                    path_label="client_to_relay",
+                    {"host": self.topology.services.relay_public_probe.host, "count": self.scenarios.ping.count, "timeout_sec": self.scenarios.ping.timeout_sec},
+                    path_label="client_to_relay_public",
                 ),
             )
             await self._record(
                 probes,
                 findings,
                 await self._execute_on_node(
-                    "relay",
+                    "server",
                     "ping",
-                    {"host": self.topology.nodes.server.host, "count": self.scenarios.ping.count, "timeout_sec": self.scenarios.ping.timeout_sec},
-                    path_label="relay_to_server",
+                    {"host": self.topology.services.relay_public_probe.host, "count": self.scenarios.ping.count, "timeout_sec": self.scenarios.ping.timeout_sec},
+                    path_label="server_to_relay_public",
                 ),
             )
 
         if self.scenarios.tcp.enabled:
-            relay_probe = self.topology.services.relay_probe
+            relay_probe = self.topology.services.relay_public_probe
             if relay_probe is not None:
                 await self._record(
                     probes,
@@ -93,7 +94,7 @@ class Orchestrator:
                             "timeout_ms": self.scenarios.tcp.timeout_ms,
                             "concurrency": self.scenarios.tcp.concurrency,
                         },
-                        path_label="client_to_relay",
+                        path_label="client_to_relay_public",
                     ),
                 )
 
@@ -104,14 +105,14 @@ class Orchestrator:
                     "relay",
                     "tcp_probe",
                     {
-                        "host": self.topology.nodes.server.host,
-                        "port": self.topology.services.mc_local.port,
+                        "host": self.topology.services.server_backend_mc.host,
+                        "port": self.topology.services.server_backend_mc.port,
                         "attempts": self.scenarios.tcp.attempts,
                         "interval_ms": self.scenarios.tcp.interval_ms,
                         "timeout_ms": self.scenarios.tcp.timeout_ms,
                         "concurrency": self.scenarios.tcp.concurrency,
                     },
-                    path_label="relay_to_server",
+                    path_label="relay_to_server_backend_mc",
                 ),
             )
 
@@ -130,53 +131,53 @@ class Orchestrator:
             )
             await self._record(probes, findings, mc_public_probe)
 
-            server_local_probe = await self._execute_on_node(
+            server_public_probe = await self._execute_on_node(
                 "server",
-                "mc_tcp_probe",
+                "tcp_probe",
                 {
-                    "host": self.topology.services.mc_local.host,
-                    "port": self.topology.services.mc_local.port,
+                    "host": self.topology.services.relay_public_probe.host,
+                    "port": self.topology.services.relay_public_probe.port,
                     "attempts": self.scenarios.tcp.attempts,
                     "interval_ms": self.scenarios.tcp.interval_ms,
                     "timeout_ms": self.scenarios.tcp.timeout_ms,
                     "concurrency": self.scenarios.tcp.concurrency,
                 },
-                path_label="server_to_local_mc",
+                path_label="server_to_relay_public",
             )
-            await self._record(probes, findings, server_local_probe)
+            await self._record(probes, findings, server_public_probe)
 
     async def _run_throughput(self, probes: list[ProbeResult], findings: list[ThresholdFinding]) -> None:
         if not self.scenarios.throughput.enabled:
             return
 
-        await self._start_server_iperf(probes, findings, path_label="server_iperf_direct")
+        await self._start_server_iperf(probes, findings, path_label="relay_to_server_backend_iperf")
         relay_forward = await self._execute_on_node(
             "relay",
             "throughput",
             {
-                "host": self.topology.nodes.server.host,
-                "port": self.topology.services.iperf_local.port,
+                "host": self.topology.services.server_backend_iperf.host,
+                "port": self.topology.services.server_backend_iperf.port,
                 "duration_sec": self.scenarios.throughput.duration_sec,
                 "parallel_streams": self.scenarios.throughput.parallel_streams,
                 "timeout_sec": self.scenarios.throughput.timeout_sec,
             },
-            path_label="relay_to_server",
+            path_label="relay_to_server_backend_iperf",
         )
         await self._record(probes, findings, relay_forward)
 
-        await self._start_server_iperf(probes, findings, path_label="server_iperf_direct")
+        await self._start_server_iperf(probes, findings, path_label="relay_to_server_backend_iperf")
         relay_reverse = await self._execute_on_node(
             "relay",
             "throughput",
             {
-                "host": self.topology.nodes.server.host,
-                "port": self.topology.services.iperf_local.port,
+                "host": self.topology.services.server_backend_iperf.host,
+                "port": self.topology.services.server_backend_iperf.port,
                 "duration_sec": self.scenarios.throughput.duration_sec,
                 "parallel_streams": self.scenarios.throughput.parallel_streams,
                 "timeout_sec": self.scenarios.throughput.timeout_sec,
                 "reverse": True,
             },
-            path_label="relay_to_server",
+            path_label="relay_to_server_backend_iperf",
         )
         await self._record(probes, findings, relay_reverse)
 
@@ -307,8 +308,8 @@ class Orchestrator:
             "server",
             "start_iperf_server",
             {
-                "port": self.topology.services.iperf_local.port,
-                "bind_host": self.topology.services.iperf_local.host,
+                "port": self.topology.services.server_backend_iperf.port,
+                "bind_host": self.topology.services.server_backend_iperf.host,
                 "one_off": True,
             },
             path_label=path_label,
@@ -330,6 +331,11 @@ class Orchestrator:
             result = await self.ssh.run_remote_agent(node=node, task=task, payload=merged_payload)
 
         result.metadata.setdefault("path_label", path_label)
+        result.metadata.setdefault("path_id", path_label)
+        result.metadata.setdefault("path_family", path_family(path_label))
+        spec = get_path_spec(path_label)
+        result.metadata.setdefault("target_ref", spec.target_ref if spec is not None else None)
+        result.metadata.setdefault("target_scope", "public" if path_family(path_label) == "public" else "backend")
         result.metadata.setdefault("source_node", node_name)
         result.metadata.setdefault("node_os", platform_name)
         if node.local and node.os != platform_name:

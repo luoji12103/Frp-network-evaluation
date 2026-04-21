@@ -57,9 +57,9 @@ def run_server_mac_quickstart() -> int:
         "ssh_port": 22,
         "project_root": str(Path.cwd()),
         "python_bin": sys.executable,
-        "mc_local_port": 25565,
-        "iperf_local_host": "0.0.0.0",
-        "iperf_local_port": 5201,
+        "server_backend_mc_port": 25565,
+        "server_backend_iperf_host": "0.0.0.0",
+        "server_backend_iperf_port": 5201,
     }
 
     host = prompt_text("Mac 这台机器给 Windows 客户端/relay 用的地址或主机名", defaults["host"])
@@ -67,9 +67,9 @@ def run_server_mac_quickstart() -> int:
     ssh_port = prompt_int("SSH 端口", defaults["ssh_port"])
     project_root = prompt_text("项目在 Mac 上的绝对路径", defaults["project_root"])
     python_bin = prompt_text("Mac 上运行项目用的 Python", defaults["python_bin"])
-    mc_local_port = prompt_int("Minecraft 本机监听端口", defaults["mc_local_port"])
-    iperf_local_host = prompt_text("iperf3 server 绑定地址", defaults["iperf_local_host"])
-    iperf_local_port = prompt_int("iperf3 监听端口", defaults["iperf_local_port"])
+    server_backend_mc_port = prompt_int("Minecraft backend 监听端口", defaults["server_backend_mc_port"])
+    server_backend_iperf_host = prompt_text("iperf3 backend 绑定地址", defaults["server_backend_iperf_host"])
+    server_backend_iperf_port = prompt_int("iperf3 backend 监听端口", defaults["server_backend_iperf_port"])
 
     print()
     print("预检查:")
@@ -81,13 +81,13 @@ def run_server_mac_quickstart() -> int:
     if not sshd_running:
         print("  建议先开启 macOS Remote Login: sudo systemsetup -setremotelogin on")
 
-    mc_listening = is_local_port_open(mc_local_port)
-    print(f"- Minecraft 端口 {mc_local_port}: {'已监听' if mc_listening else '未监听'}")
+    mc_listening = is_local_port_open(server_backend_mc_port)
+    print(f"- Minecraft backend 端口 {server_backend_mc_port}: {'已监听' if mc_listening else '未监听'}")
     if not mc_listening:
         maybe_start_background_service(
             prompt="如果你的 MC 服务还没启动，可输入启动命令后台运行；直接回车则跳过",
             log_name="mac-mc-server.log",
-            success_port=mc_local_port,
+            success_port=server_backend_mc_port,
         )
 
     snippet = build_node_setup_snippet(
@@ -99,8 +99,8 @@ def run_server_mac_quickstart() -> int:
         project_root=project_root,
         python_bin=python_bin,
         services={
-            "mc_local": {"host": "127.0.0.1", "port": mc_local_port},
-            "iperf_local": {"host": iperf_local_host, "port": iperf_local_port},
+            "server_backend_mc": {"host": host, "port": server_backend_mc_port},
+            "server_backend_iperf": {"host": host, "port": server_backend_iperf_port},
         },
         notes={
             "sshd_running": sshd_running,
@@ -117,8 +117,8 @@ def run_server_mac_quickstart() -> int:
     print(f"- server ssh_port: {ssh_port}")
     print(f"- server project_root: {project_root}")
     print(f"- server python_bin: {python_bin}")
-    print(f"- mc_local port: {mc_local_port}")
-    print(f"- iperf_local port: {iperf_local_port}")
+    print(f"- server_backend_mc port: {server_backend_mc_port}")
+    print(f"- server_backend_iperf port: {server_backend_iperf_port}")
     return 0
 
 
@@ -134,7 +134,7 @@ def run_relay_linux_quickstart() -> int:
         "ssh_port": 22,
         "project_root": str(Path.cwd()),
         "python_bin": sys.executable,
-        "relay_probe_port": 22,
+        "relay_public_probe_port": 22,
         "mc_public_port": 25565,
         "iperf_public_port": 5201,
     }
@@ -144,7 +144,7 @@ def run_relay_linux_quickstart() -> int:
     ssh_port = prompt_int("relay 的 SSH 端口", defaults["ssh_port"])
     project_root = prompt_text("项目在 relay 上的绝对路径", defaults["project_root"])
     python_bin = prompt_text("relay 上运行项目用的 Python", defaults["python_bin"])
-    relay_probe_port = prompt_int("客户端探测 relay 用的 TCP 端口", defaults["relay_probe_port"])
+    relay_public_probe_port = prompt_int("客户端探测 relay 用的 TCP 端口", defaults["relay_public_probe_port"])
     mc_public_port = prompt_int("FRP 暴露给玩家的 Minecraft 端口", defaults["mc_public_port"])
     iperf_public_port = prompt_int("FRP 暴露给测速的 iperf3 端口", defaults["iperf_public_port"])
 
@@ -180,7 +180,7 @@ def run_relay_linux_quickstart() -> int:
         project_root=project_root,
         python_bin=python_bin,
         services={
-            "relay_probe": {"host": host, "port": relay_probe_port},
+            "relay_public_probe": {"host": host, "port": relay_public_probe_port},
             "mc_public": {"host": host, "port": mc_public_port},
             "iperf_public": {"host": host, "port": iperf_public_port},
         },
@@ -200,7 +200,7 @@ def run_relay_linux_quickstart() -> int:
     print(f"- relay ssh_port: {ssh_port}")
     print(f"- relay project_root: {project_root}")
     print(f"- relay python_bin: {python_bin}")
-    print(f"- relay_probe port: {relay_probe_port}")
+    print(f"- relay_public_probe port: {relay_public_probe_port}")
     print(f"- mc_public: {host}:{mc_public_port}")
     print(f"- iperf_public: {host}:{iperf_public_port}")
     return 0
@@ -225,7 +225,7 @@ def run_client_windows_quickstart() -> int:
     relay_ssh_port = prompt_int("relay SSH 端口", int(relay_defaults.get("ssh_port", 22)))
     relay_project_root = prompt_text("relay 上的项目绝对路径", relay_defaults.get("project_root", ""))
     relay_python_bin = prompt_text("relay 上的 Python", relay_defaults.get("python_bin", "python3"))
-    relay_probe_port = prompt_int("relay_probe TCP 端口", int(relay_defaults.get("services", {}).get("relay_probe", {}).get("port", 22)))
+    relay_public_probe_port = prompt_int("relay_public_probe TCP 端口", int(relay_defaults.get("services", {}).get("relay_public_probe", {}).get("port", 22)))
 
     print()
     print("[mac server 配置]")
@@ -234,8 +234,8 @@ def run_client_windows_quickstart() -> int:
     server_ssh_port = prompt_int("mac server SSH 端口", int(server_defaults.get("ssh_port", 22)))
     server_project_root = prompt_text("mac server 上的项目绝对路径", server_defaults.get("project_root", ""))
     server_python_bin = prompt_text("mac server 上的 Python", server_defaults.get("python_bin", "python3"))
-    mc_local_port = prompt_int("mac server 本地 Minecraft 端口", int(server_defaults.get("services", {}).get("mc_local", {}).get("port", 25565)))
-    iperf_local_port = prompt_int("mac server 本地 iperf3 端口", int(server_defaults.get("services", {}).get("iperf_local", {}).get("port", 5201)))
+    server_backend_mc_port = prompt_int("mac server backend Minecraft 端口", int(server_defaults.get("services", {}).get("server_backend_mc", {}).get("port", 25565)))
+    server_backend_iperf_port = prompt_int("mac server backend iperf3 端口", int(server_defaults.get("services", {}).get("server_backend_iperf", {}).get("port", 5201)))
 
     print()
     print("[公网映射配置]")
@@ -252,7 +252,7 @@ def run_client_windows_quickstart() -> int:
         relay_ssh_port=relay_ssh_port,
         relay_project_root=relay_project_root,
         relay_python_bin=relay_python_bin,
-        relay_probe_port=relay_probe_port,
+        relay_public_probe_port=relay_public_probe_port,
         server_host=server_host,
         server_ssh_user=server_ssh_user,
         server_ssh_port=server_ssh_port,
@@ -262,8 +262,8 @@ def run_client_windows_quickstart() -> int:
         mc_public_port=mc_public_port,
         iperf_public_host=iperf_public_host,
         iperf_public_port=iperf_public_port,
-        mc_local_port=mc_local_port,
-        iperf_local_port=iperf_local_port,
+        server_backend_mc_port=server_backend_mc_port,
+        server_backend_iperf_port=server_backend_iperf_port,
     )
     write_yaml(CLIENT_TOPOLOGY_PATH, topology)
 
@@ -325,7 +325,7 @@ def build_client_topology(
     relay_ssh_port: int,
     relay_project_root: str,
     relay_python_bin: str,
-    relay_probe_port: int,
+    relay_public_probe_port: int,
     server_host: str,
     server_ssh_user: str,
     server_ssh_port: int,
@@ -335,8 +335,8 @@ def build_client_topology(
     mc_public_port: int,
     iperf_public_host: str,
     iperf_public_port: int,
-    mc_local_port: int,
-    iperf_local_port: int,
+    server_backend_mc_port: int,
+    server_backend_iperf_port: int,
 ) -> dict[str, Any]:
     """Build the Windows client topology file."""
     return {
@@ -371,11 +371,11 @@ def build_client_topology(
             },
         },
         "services": {
-            "relay_probe": {"host": relay_host, "port": relay_probe_port},
+            "relay_public_probe": {"host": relay_host, "port": relay_public_probe_port},
             "mc_public": {"host": mc_public_host, "port": mc_public_port},
             "iperf_public": {"host": iperf_public_host, "port": iperf_public_port},
-            "mc_local": {"host": "127.0.0.1", "port": mc_local_port},
-            "iperf_local": {"host": "0.0.0.0", "port": iperf_local_port},
+            "server_backend_mc": {"host": server_host, "port": server_backend_mc_port},
+            "server_backend_iperf": {"host": server_host, "port": server_backend_iperf_port},
         },
     }
 

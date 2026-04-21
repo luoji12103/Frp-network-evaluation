@@ -20,12 +20,12 @@ def test_exporters_smoke(tmp_path: Path) -> None:
                 target="127.0.0.1",
                 success=True,
                 metrics={"rtt_avg_ms": 1.0},
-                metadata={"path_label": "client_to_relay"},
+                metadata={"path_label": "client_to_relay_public"},
             )
         ],
         threshold_findings=[
             ThresholdFinding(
-                path_label="client_to_relay",
+                path_label="client_to_relay_public",
                 probe_name="ping",
                 metric="rtt_avg_ms",
                 threshold=0.5,

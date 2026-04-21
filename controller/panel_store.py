@@ -28,6 +28,18 @@ from controller.panel_models import (
     SuggestedAction,
     SupervisorSummary,
 )
+from controller.path_registry import (
+    DEFAULT_PATH_ORDER,
+    PUBLIC_PATH_IDS,
+    PUBLIC_PATH_ROLES,
+    PUBLIC_ROLE_IDS,
+    PUBLIC_ROLE_PATHS,
+    canonical_path_id,
+    expand_path_candidates,
+    get_path_spec,
+    path_family,
+    path_visibility,
+)
 from probes.common import ProbeResult, RunResult, ThresholdFinding, now_iso
 
 
@@ -35,20 +47,6 @@ DEFAULT_SCHEDULES = (
     ("system", 30),
     ("baseline", 60),
     ("capacity", 300),
-)
-
-DEFAULT_PATH_ORDER = (
-    "client_to_relay",
-    "relay_to_server",
-    "client_to_mc_public",
-    "client_to_iperf_public",
-    "client_to_mc_public_load",
-    "client_system",
-    "relay_system",
-    "server_system",
-    "server_to_local_mc",
-    "server_iperf_direct",
-    "server_iperf_public",
 )
 
 ANOMALY_HIGH_METRICS = {
@@ -83,28 +81,6 @@ PUBLIC_TIME_RANGE_HOURS = {
     "24h": 24,
     "7d": 24 * 7,
     "30d": 24 * 30,
-}
-PUBLIC_PATH_IDS = (
-    "client_to_relay",
-    "relay_to_server",
-    "client_to_mc_public",
-    "client_to_iperf_public",
-)
-PUBLIC_ROLE_IDS = ("client", "relay", "server")
-PUBLIC_ROLE_PATHS = {
-    "client": ("client_to_relay", "client_to_mc_public", "client_to_iperf_public"),
-    "relay": ("client_to_relay", "relay_to_server"),
-    "server": ("relay_to_server",),
-}
-PUBLIC_PATH_ROLES = {
-    "client_to_relay": ("client", "relay"),
-    "relay_to_server": ("relay", "server"),
-    "client_to_mc_public": ("client",),
-    "client_to_iperf_public": ("client",),
-    "client_to_mc_public_load": ("client",),
-    "client_system": ("client",),
-    "relay_system": ("relay",),
-    "server_system": ("server",),
 }
 PUBLIC_METRIC_GROUPS = {
     "latency": ("rtt_avg_ms", "rtt_p95_ms", "connect_avg_ms"),
@@ -147,6 +123,14 @@ def _public_time_range_label(hours: int) -> str:
         if value == normalized:
             return label
     return "24h"
+
+
+def _canonicalize_path_value(path_label: Any, probe_name: Any = None, metric_name: Any = None) -> str | None:
+    return canonical_path_id(
+        str(path_label) if path_label is not None else None,
+        str(probe_name) if probe_name is not None else None,
+        str(metric_name) if metric_name is not None else None,
+    )
 
 
 class PanelStore:
@@ -1165,7 +1149,11 @@ class PanelStore:
             severity_rows = conn.execute("SELECT DISTINCT severity FROM alert_event ORDER BY severity").fetchall()
             status_rows = conn.execute("SELECT DISTINCT status FROM alert_event ORDER BY status").fetchall()
 
-        paths = [row["path_label"] for row in path_rows if row["path_label"]]
+        paths: list[str] = []
+        for row in path_rows:
+            canonical = _canonicalize_path_value(row["path_label"])
+            if canonical and canonical not in paths:
+                paths.append(canonical)
         ordered_paths = [path for path in DEFAULT_PATH_ORDER if path in paths]
         ordered_paths.extend(path for path in paths if path not in ordered_paths)
         return {
@@ -1407,6 +1395,7 @@ class PanelStore:
         has_findings: bool | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        expanded_path_labels = expand_path_candidates(path_labels)
         params: list[Any] = [self._cutoff_iso(time_range_hours)]
         clauses = ["r.started_at >= ?"]
         if run_kinds:
@@ -1417,11 +1406,11 @@ class PanelStore:
             clauses.append("r.findings_count > 0")
         if has_findings is False:
             clauses.append("r.findings_count = 0")
-        if path_labels:
+        if expanded_path_labels:
             clauses.append(
                 f"""EXISTS (
                         SELECT 1 FROM probe_result pr
-                        WHERE pr.run_id = r.id AND { _sql_in_clause('pr.path_label', path_labels, params) }
+                        WHERE pr.run_id = r.id AND { _sql_in_clause('pr.path_label', expanded_path_labels, params) }
                     )"""
             )
         params.append(limit)
@@ -1786,14 +1775,16 @@ class PanelStore:
         metric_names: list[str] | None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        requested_path_labels = list(path_labels) if path_labels else None
+        expanded_path_labels = expand_path_candidates(requested_path_labels)
         params: list[Any] = [self._cutoff_iso(time_range_hours)]
         clauses = ["ms.captured_at >= ?"]
         if roles:
             clauses.append(_sql_in_clause("n.role", roles, params))
         if nodes:
             clauses.append(_sql_in_clause("n.node_name", nodes, params))
-        if path_labels:
-            clauses.append(_sql_in_clause("ms.path_label", path_labels, params))
+        if expanded_path_labels:
+            clauses.append(_sql_in_clause("ms.path_label", expanded_path_labels, params))
         if probe_names:
             clauses.append(_sql_in_clause("ms.probe_name", probe_names, params))
         if metric_names:
@@ -1809,7 +1800,14 @@ class PanelStore:
         """
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["path_label"] = _canonicalize_path_value(item.get("path_label"), item.get("probe_name"), item.get("metric_name"))
+            if requested_path_labels and item["path_label"] not in requested_path_labels:
+                continue
+            payload.append(item)
+        return payload
 
     def _select_alert_rows(
         self,
@@ -1824,6 +1822,8 @@ class PanelStore:
         fingerprint: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        requested_path_labels = list(path_labels) if path_labels else None
+        expanded_path_labels = expand_path_candidates(requested_path_labels)
         params: list[Any] = [self._cutoff_iso(time_range_hours)]
         clauses = ["ae.created_at >= ?"]
         if severities:
@@ -1834,8 +1834,8 @@ class PanelStore:
             clauses.append(_sql_in_clause("ae.kind", kinds, params))
         if anomaly_only:
             clauses.append("ae.kind = 'anomaly'")
-        if path_labels:
-            clauses.append(_sql_in_clause("ae.path_label", path_labels, params))
+        if expanded_path_labels:
+            clauses.append(_sql_in_clause("ae.path_label", expanded_path_labels, params))
         if metric_names:
             clauses.append(_sql_in_clause("ae.metric_name", metric_names, params))
         if fingerprint:
@@ -1856,7 +1856,14 @@ class PanelStore:
         """
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["path_label"] = _canonicalize_path_value(item.get("path_label"), item.get("probe_name"), item.get("metric_name"))
+            if requested_path_labels and item["path_label"] not in requested_path_labels:
+                continue
+            payload.append(item)
+        return payload
 
     def _build_path_summaries(
         self,
@@ -1936,26 +1943,20 @@ class PanelStore:
         if public_mode:
             specs = {
                 "latency": [
-                    ("client_to_relay", "rtt_avg_ms"),
-                    ("client_to_relay", "rtt_p95_ms"),
-                    ("relay_to_server", "rtt_avg_ms"),
-                    ("relay_to_server", "rtt_p95_ms"),
+                    ("client_to_relay_public", "rtt_avg_ms"),
+                    ("client_to_relay_public", "rtt_p95_ms"),
                     ("client_to_mc_public", "connect_avg_ms"),
                 ],
                 "jitter": [
-                    ("client_to_relay", "jitter_ms"),
-                    ("relay_to_server", "jitter_ms"),
+                    ("client_to_relay_public", "jitter_ms"),
                 ],
                 "loss": [
-                    ("client_to_relay", "packet_loss_pct"),
-                    ("relay_to_server", "packet_loss_pct"),
+                    ("client_to_relay_public", "packet_loss_pct"),
                     ("client_to_mc_public", "connect_timeout_or_error_pct"),
                 ],
                 "throughput": [
                     ("client_to_iperf_public", "throughput_down_mbps"),
                     ("client_to_iperf_public", "throughput_up_mbps"),
-                    ("relay_to_server", "throughput_down_mbps"),
-                    ("relay_to_server", "throughput_up_mbps"),
                 ],
                 "load": [
                     ("client_to_mc_public_load", "load_rtt_inflation_ms"),
@@ -1969,20 +1970,22 @@ class PanelStore:
         else:
             specs = {
                 "latency": [
-                    ("client_to_relay", "rtt_avg_ms"),
-                    ("relay_to_server", "rtt_avg_ms"),
+                    ("client_to_relay_public", "rtt_avg_ms"),
+                    ("relay_to_server_backend_mc", "connect_avg_ms"),
+                    ("server_to_relay_public", "rtt_avg_ms"),
                     ("client_to_mc_public", "connect_avg_ms"),
                 ],
                 "loss": [
-                    ("client_to_relay", "packet_loss_pct"),
-                    ("relay_to_server", "packet_loss_pct"),
+                    ("client_to_relay_public", "packet_loss_pct"),
+                    ("relay_to_server_backend_mc", "connect_timeout_or_error_pct"),
+                    ("server_to_relay_public", "packet_loss_pct"),
                     ("client_to_mc_public", "connect_timeout_or_error_pct"),
                 ],
                 "throughput": [
                     ("client_to_iperf_public", "throughput_down_mbps"),
                     ("client_to_iperf_public", "throughput_up_mbps"),
-                    ("relay_to_server", "throughput_down_mbps"),
-                    ("relay_to_server", "throughput_up_mbps"),
+                    ("relay_to_server_backend_iperf", "throughput_down_mbps"),
+                    ("relay_to_server_backend_iperf", "throughput_up_mbps"),
                 ],
                 "system": [
                     ("client_system", "cpu_usage_pct"),
@@ -2290,7 +2293,8 @@ class PanelStore:
         return [self._public_alert(alert) for alert in alerts]
 
     def _public_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
-        path_id = str(alert.get("path_label") or "") if str(alert.get("path_label") or "") in PUBLIC_PATH_IDS else None
+        canonical_path = _canonicalize_path_value(alert.get("path_label"), alert.get("probe_name"), alert.get("metric_name"))
+        path_id = canonical_path if canonical_path in PUBLIC_PATH_IDS else None
         roles = self._public_roles_for_alert(alert)
         return {
             "id": int(alert["id"]),
@@ -2300,7 +2304,7 @@ class PanelStore:
             "summary": self._public_alert_summary(alert),
             "created_at": alert.get("created_at"),
             "path_id": path_id,
-            "path_label": alert.get("path_label"),
+            "path_label": path_id,
             "metric_name": alert.get("metric_name"),
             "actual_value": alert.get("actual_value"),
             "threshold_value": alert.get("threshold_value"),
@@ -2325,12 +2329,14 @@ class PanelStore:
         grouped: dict[str, dict[str, set[str]]] = defaultdict(lambda: {"path_ids": set(), "roles": set()})
         for row in rows:
             run_id = str(row["run_id"])
-            path_label = str(row["path_label"] or "")
+            path_label = _canonicalize_path_value(row["path_label"])
+            if not path_label:
+                continue
             role = str(row["role"] or "")
             if path_label in PUBLIC_PATH_IDS:
                 grouped[run_id]["path_ids"].add(path_label)
                 grouped[run_id]["roles"].update(self._public_roles_for_path(path_label))
-            elif path_label in PUBLIC_PATH_ROLES:
+            elif get_path_spec(path_label) is not None:
                 grouped[run_id]["roles"].update(self._public_roles_for_path(path_label))
             if role in PUBLIC_ROLE_IDS:
                 grouped[run_id]["roles"].add(role)
@@ -2359,11 +2365,13 @@ class PanelStore:
         payload = []
         for path_id in target_paths:
             source = indexed.get(path_id, {})
+            spec = get_path_spec(path_id)
             payload.append(
                 {
                     "path_id": path_id,
                     "path_label": path_id,
                     "roles": list(self._public_roles_for_path(path_id)),
+                    "family": spec.family if spec is not None else "public",
                     "status": source.get("status", "unknown"),
                     "latest": dict(source.get("latest") or {}),
                     "averages": dict(source.get("averages") or {}),
@@ -2446,10 +2454,11 @@ class PanelStore:
         )
 
     def _public_roles_for_path(self, path_label: str) -> tuple[str, ...]:
-        return PUBLIC_PATH_ROLES.get(path_label, ())
+        canonical = _canonicalize_path_value(path_label)
+        return PUBLIC_PATH_ROLES.get(canonical or path_label, ())
 
     def _public_roles_for_alert(self, alert: dict[str, Any]) -> list[str]:
-        path_label = str(alert.get("path_label") or "")
+        path_label = _canonicalize_path_value(alert.get("path_label"), alert.get("probe_name"), alert.get("metric_name"))
         if path_label in PUBLIC_PATH_ROLES:
             return list(self._public_roles_for_path(path_label))
         role = str(alert.get("role") or "")
@@ -2464,7 +2473,7 @@ class PanelStore:
         return []
 
     def _public_alert_summary(self, alert: dict[str, Any]) -> str:
-        path_label = str(alert.get("path_label") or "")
+        path_label = _canonicalize_path_value(alert.get("path_label"), alert.get("probe_name"), alert.get("metric_name")) or ""
         metric_name = str(alert.get("metric_name") or "")
         if path_label in PUBLIC_PATH_IDS and metric_name:
             actual = alert.get("actual_value")
@@ -2962,9 +2971,26 @@ class PanelStore:
         probe_result["metrics"] = _loads(probe_result.get("metrics_json") or "{}")
         probe_result["metadata"] = _loads(probe_result.get("metadata_json") or "{}")
         probe_result["samples"] = _loads(probe_result.get("samples_json") or "[]")
+        canonical = _canonicalize_path_value(
+            probe_result.get("path_label"),
+            probe_result.get("probe_name"),
+        )
+        if canonical:
+            probe_result["path_label"] = canonical
+            if isinstance(probe_result["metadata"], dict):
+                probe_result["metadata"]["path_label"] = canonical
+                probe_result["metadata"].setdefault("path_id", canonical)
+                probe_result["metadata"].setdefault("path_family", path_family(canonical))
         return probe_result
 
     def _decorate_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        canonical = _canonicalize_path_value(
+            alert.get("path_label"),
+            alert.get("probe_name"),
+            alert.get("metric_name"),
+        )
+        if canonical:
+            alert["path_label"] = canonical
         alert["actual_value"] = float(alert["actual_value"]) if alert.get("actual_value") is not None else None
         alert["threshold_value"] = float(alert["threshold_value"]) if alert.get("threshold_value") is not None else None
         alert["acknowledged"] = alert.get("acknowledged_at") is not None
@@ -3056,6 +3082,11 @@ class PanelStore:
         event["payload"] = _loads(event.get("payload_json") or "{}")
         payload = event.get("payload") or {}
         if isinstance(payload, dict):
+            canonical = _canonicalize_path_value(payload.get("path_label"))
+            if canonical:
+                payload["path_label"] = canonical
+                payload.setdefault("path_id", canonical)
+                payload.setdefault("path_family", path_family(canonical))
             event["node_id"] = self._node_id_from_name(payload.get("node_name"))
         else:
             event["node_id"] = None
@@ -3279,15 +3310,20 @@ class PanelStore:
         return int(row["id"]) if row is not None else None
 
     def _node_id_from_path(self, path_label: str) -> int | None:
-        label = path_label.lower()
+        canonical = _canonicalize_path_value(path_label) or path_label
+        spec = get_path_spec(canonical)
+        if spec is not None:
+            node = self.get_node_by_role(spec.source_role)
+            return int(node["id"]) if node else None
+        label = canonical.lower()
         if "client" in label:
             node = self.get_node_by_role("client")
             return int(node["id"]) if node else None
-        if "relay" in label:
-            node = self.get_node_by_role("relay")
-            return int(node["id"]) if node else None
         if "server" in label:
             node = self.get_node_by_role("server")
+            return int(node["id"]) if node else None
+        if "relay" in label:
+            node = self.get_node_by_role("relay")
             return int(node["id"]) if node else None
         return None
 

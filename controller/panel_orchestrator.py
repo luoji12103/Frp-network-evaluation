@@ -15,6 +15,7 @@ from controller.orchestrator import (
     build_load_inflation_result,
     evaluate_probe_thresholds,
 )
+from controller.path_registry import path_family
 from controller.panel_store import PanelStore
 from exporters.csv_exporter import export_csv
 from exporters.html_report import export_html
@@ -121,13 +122,14 @@ class PanelOrchestrator:
         client = self._require_node(nodes, "client")
         relay = self._require_node(nodes, "relay")
         server = self._require_node(nodes, "server")
-        relay_host = str(services["relay_probe"]["host"] or self._agent_host(relay))
-        server_host = self._agent_host(server)
+        relay_target = self._resolve_probe_target(services, "relay_public_probe")
+        server_backend_mc = self._resolve_probe_target(services, "server_backend_mc")
+        mc_public = self._resolve_probe_target(services, "mc_public")
 
         if settings.scenarios.ping.enabled:
             for role, host, label in (
-                ("client", relay_host, "client_to_relay"),
-                ("relay", server_host, "relay_to_server"),
+                ("client", relay_target["host"], "client_to_relay_public"),
+                ("server", relay_target["host"], "server_to_relay_public"),
             ):
                 node = self._require_node(nodes, role)
                 probe = self._dispatch_probe(
@@ -141,67 +143,71 @@ class PanelOrchestrator:
                         "timeout_sec": settings.scenarios.ping.timeout_sec,
                     },
                     path_label=label,
+                    target_ref="relay_public_probe",
                 )
                 probes.append(probe)
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
 
         if settings.scenarios.tcp.enabled:
-            relay_probe = services["relay_probe"]
             tcp_jobs = (
                 (
                     client,
                     "tcp_probe",
                     {
-                        "host": relay_probe["host"] or self._agent_host(relay),
-                        "port": int(relay_probe["port"]),
+                        "host": relay_target["host"],
+                        "port": relay_target["port"],
                         "attempts": settings.scenarios.tcp.attempts,
                         "interval_ms": settings.scenarios.tcp.interval_ms,
                         "timeout_ms": settings.scenarios.tcp.timeout_ms,
                         "concurrency": settings.scenarios.tcp.concurrency,
                     },
-                    "client_to_relay",
+                    "client_to_relay_public",
+                    "relay_public_probe",
                 ),
                 (
                     relay,
                     "tcp_probe",
                     {
-                        "host": server_host,
-                        "port": int(services["mc_local"]["port"]),
+                        "host": server_backend_mc["host"],
+                        "port": server_backend_mc["port"],
                         "attempts": settings.scenarios.tcp.attempts,
                         "interval_ms": settings.scenarios.tcp.interval_ms,
                         "timeout_ms": settings.scenarios.tcp.timeout_ms,
                         "concurrency": settings.scenarios.tcp.concurrency,
                     },
-                    "relay_to_server",
+                    "relay_to_server_backend_mc",
+                    "server_backend_mc",
                 ),
                 (
                     client,
                     "mc_tcp_probe",
                     {
-                        "host": services["mc_public"]["host"],
-                        "port": int(services["mc_public"]["port"]),
+                        "host": mc_public["host"],
+                        "port": mc_public["port"],
                         "attempts": settings.scenarios.tcp.attempts,
                         "interval_ms": settings.scenarios.tcp.interval_ms,
                         "timeout_ms": settings.scenarios.tcp.timeout_ms,
                         "concurrency": settings.scenarios.tcp.concurrency,
                     },
                     "client_to_mc_public",
+                    "mc_public",
                 ),
                 (
                     server,
-                    "mc_tcp_probe",
+                    "tcp_probe",
                     {
-                        "host": services["mc_local"]["host"],
-                        "port": int(services["mc_local"]["port"]),
+                        "host": relay_target["host"],
+                        "port": relay_target["port"],
                         "attempts": settings.scenarios.tcp.attempts,
                         "interval_ms": settings.scenarios.tcp.interval_ms,
                         "timeout_ms": settings.scenarios.tcp.timeout_ms,
                         "concurrency": settings.scenarios.tcp.concurrency,
                     },
-                    "server_to_local_mc",
+                    "server_to_relay_public",
+                    "relay_public_probe",
                 ),
             )
-            for node, task, payload, label in tcp_jobs:
+            for node, task, payload, label, target_ref in tcp_jobs:
                 probe = self._dispatch_probe(
                     node=node,
                     run_id=f"{task}-{int(time.time() * 1000)}",
@@ -209,6 +215,7 @@ class PanelOrchestrator:
                     task=task,
                     payload=payload,
                     path_label=label,
+                    target_ref=target_ref,
                 )
                 probes.append(probe)
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
@@ -228,45 +235,67 @@ class PanelOrchestrator:
         client = self._require_node(nodes, "client")
         relay = self._require_node(nodes, "relay")
         server = self._require_node(nodes, "server")
-        server_host = self._agent_host(server)
+        server_backend_iperf = self._resolve_probe_target(services, "server_backend_iperf")
+        iperf_public = self._resolve_probe_target(services, "iperf_public")
+        mc_public = self._resolve_probe_target(services, "mc_public")
 
         if settings.scenarios.throughput.enabled:
             for reverse in (False, True):
-                self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_direct", settings)
+                self._start_iperf_server(
+                    run_id,
+                    server,
+                    services,
+                    probes,
+                    findings,
+                    "relay_to_server_backend_iperf",
+                    settings,
+                    target_ref="server_backend_iperf",
+                )
                 probe = self._dispatch_probe(
                     node=relay,
                     run_id=f"relay-throughput-{int(time.time() * 1000)}",
                     event_run_id=run_id,
                     task="throughput",
                     payload={
-                        "host": server_host,
-                        "port": int(services["iperf_local"]["port"]),
+                        "host": server_backend_iperf["host"],
+                        "port": server_backend_iperf["port"],
                         "duration_sec": settings.scenarios.throughput.duration_sec,
                         "parallel_streams": settings.scenarios.throughput.parallel_streams,
                         "timeout_sec": settings.scenarios.throughput.timeout_sec,
                         "reverse": reverse,
                     },
-                    path_label="relay_to_server",
+                    path_label="relay_to_server_backend_iperf",
+                    target_ref="server_backend_iperf",
                 )
                 probes.append(probe)
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
 
             for reverse in (False, True):
-                self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_public", settings)
+                self._start_iperf_server(
+                    run_id,
+                    server,
+                    services,
+                    probes,
+                    findings,
+                    "client_to_iperf_public",
+                    settings,
+                    target_ref="iperf_public",
+                )
                 probe = self._dispatch_probe(
                     node=client,
                     run_id=f"client-throughput-{int(time.time() * 1000)}",
                     event_run_id=run_id,
                     task="throughput",
                     payload={
-                        "host": services["iperf_public"]["host"],
-                        "port": int(services["iperf_public"]["port"]),
+                        "host": iperf_public["host"],
+                        "port": iperf_public["port"],
                         "duration_sec": settings.scenarios.throughput.duration_sec,
                         "parallel_streams": settings.scenarios.throughput.parallel_streams,
                         "timeout_sec": settings.scenarios.throughput.timeout_sec,
                         "reverse": reverse,
                     },
                     path_label="client_to_iperf_public",
+                    target_ref="iperf_public",
                 )
                 probes.append(probe)
                 findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
@@ -278,33 +307,44 @@ class PanelOrchestrator:
                 event_run_id=run_id,
                 task="mc_tcp_probe",
                 payload={
-                    "host": services["mc_public"]["host"],
-                    "port": int(services["mc_public"]["port"]),
+                    "host": mc_public["host"],
+                    "port": mc_public["port"],
                     "attempts": settings.scenarios.load_inflation.baseline_attempts,
                     "interval_ms": settings.scenarios.load_inflation.probe_interval_ms,
                     "timeout_ms": settings.scenarios.load_inflation.timeout_ms,
                     "concurrency": 1,
                 },
                 path_label="client_to_mc_public_load_idle",
+                target_ref="mc_public",
             )
             idle_probe.name = "mc_tcp_connect_idle"
             probes.append(idle_probe)
             findings.extend(evaluate_probe_thresholds(idle_probe, settings.thresholds))
 
-            self._start_iperf_server(run_id, server, services, probes, findings, "server_iperf_public_load", settings)
+            self._start_iperf_server(
+                run_id,
+                server,
+                services,
+                probes,
+                findings,
+                "client_to_iperf_public_load",
+                settings,
+                target_ref="iperf_public",
+            )
             throughput_probe = self._dispatch_probe(
                 node=client,
                 run_id=f"load-throughput-{int(time.time() * 1000)}",
                 event_run_id=run_id,
                 task="throughput",
                 payload={
-                    "host": services["iperf_public"]["host"],
-                    "port": int(services["iperf_public"]["port"]),
+                    "host": iperf_public["host"],
+                    "port": iperf_public["port"],
                     "duration_sec": settings.scenarios.load_inflation.duration_sec,
                     "parallel_streams": settings.scenarios.throughput.parallel_streams,
                     "timeout_sec": settings.scenarios.throughput.timeout_sec,
                 },
                 path_label="client_to_iperf_public_load",
+                target_ref="iperf_public",
             )
             loaded_attempts = max(
                 1,
@@ -319,14 +359,15 @@ class PanelOrchestrator:
                 event_run_id=run_id,
                 task="mc_tcp_probe",
                 payload={
-                    "host": services["mc_public"]["host"],
-                    "port": int(services["mc_public"]["port"]),
+                    "host": mc_public["host"],
+                    "port": mc_public["port"],
                     "attempts": loaded_attempts,
                     "interval_ms": settings.scenarios.load_inflation.probe_interval_ms,
                     "timeout_ms": settings.scenarios.load_inflation.timeout_ms,
                     "concurrency": 1,
                 },
                 path_label="client_to_mc_public_load_loaded",
+                target_ref="mc_public",
             )
             loaded_probe.name = "mc_tcp_connect_loaded"
             probes.append(throughput_probe)
@@ -349,18 +390,21 @@ class PanelOrchestrator:
         findings: list[Any],
         path_label: str,
         settings: Any,
+        target_ref: str,
     ) -> None:
+        target = self._resolve_probe_target(services, target_ref)
         probe = self._dispatch_probe(
             node=server,
             run_id=f"iperf-server-{int(time.time() * 1000)}",
             event_run_id=run_id,
             task="start_iperf_server",
             payload={
-                "port": int(services["iperf_local"]["port"]),
-                "bind_host": services["iperf_local"]["host"],
+                "port": target["port"],
+                "bind_host": target["host"],
                 "one_off": True,
             },
             path_label=path_label,
+            target_ref=target_ref,
         )
         probes.append(probe)
         findings.extend(evaluate_probe_thresholds(probe, settings.thresholds))
@@ -374,6 +418,7 @@ class PanelOrchestrator:
         payload: dict[str, Any],
         path_label: str,
         event_run_id: str | None = None,
+        target_ref: str | None = None,
     ) -> ProbeResult:
         action_run_id = event_run_id or run_id
         timeout_sec = self._timeout_for_task(task, payload)
@@ -421,6 +466,7 @@ class PanelOrchestrator:
                         timeout_sec=timeout_sec,
                         event_run_id=action_run_id,
                         path_label=path_label,
+                        target_ref=target_ref,
                     )
                     result.metadata.setdefault("fallback_from_transport", "pull")
                     result.metadata.setdefault("fallback_from_code", error_code)
@@ -444,6 +490,7 @@ class PanelOrchestrator:
                 timeout_sec=timeout_sec,
                 event_run_id=action_run_id,
                 path_label=path_label,
+                target_ref=target_ref,
             )
             transport = "queue"
         else:
@@ -458,6 +505,11 @@ class PanelOrchestrator:
             transport = "unavailable"
 
         result.metadata.setdefault("path_label", path_label)
+        result.metadata.setdefault("path_id", path_label)
+        result.metadata.setdefault("path_family", path_family(path_label))
+        if target_ref:
+            result.metadata.setdefault("target_ref", target_ref)
+            result.metadata.setdefault("target_scope", "public" if path_family(path_label) == "public" else "backend")
         result.metadata.setdefault("source_node", node["role"])
         result.metadata.setdefault("node_runtime_mode", node["runtime_mode"])
         result.metadata.setdefault("transport", transport)
@@ -469,6 +521,7 @@ class PanelOrchestrator:
                 "task": task,
                 "node_name": node["node_name"],
                 "path_label": path_label,
+                "path_family": result.metadata.get("path_family"),
                 "transport": transport,
                 "success": result.success,
                 "error": result.error,
@@ -487,6 +540,7 @@ class PanelOrchestrator:
         timeout_sec: float,
         event_run_id: str | None = None,
         path_label: str | None = None,
+        target_ref: str | None = None,
     ) -> ProbeResult:
         action_run_id = event_run_id or run_id
         if not self._node_can_queue(node):
@@ -569,6 +623,14 @@ class PanelOrchestrator:
             )
         result = ProbeResult.from_dict(json.loads(job["result_json"]))
         result.metadata.setdefault("transport", "queue")
+        result.metadata.setdefault("job_id", job_id)
+        if path_label:
+            result.metadata.setdefault("path_label", path_label)
+            result.metadata.setdefault("path_id", path_label)
+            result.metadata.setdefault("path_family", path_family(path_label))
+        if target_ref:
+            result.metadata.setdefault("target_ref", target_ref)
+            result.metadata.setdefault("target_scope", "public" if path_family(path_label) == "public" else "backend")
         return result
 
     def _require_node(self, nodes: dict[str, dict[str, Any] | None], role: str) -> dict[str, Any]:
@@ -580,6 +642,13 @@ class PanelOrchestrator:
         if not node["paired"]:
             raise ValueError(f"Node {node['node_name']} is not paired yet")
         return node
+
+    def _resolve_probe_target(self, services: dict[str, Any], target_ref: str) -> dict[str, Any]:
+        target = services.get(target_ref) or {}
+        host = str(target.get("host") or "").strip()
+        if not host:
+            raise ValueError(f"Service target '{target_ref}' is not configured")
+        return {"host": host, "port": int(target["port"])}
 
     def _agent_host(self, node: dict[str, Any]) -> str:
         effective_pull_url = node.get("endpoints", {}).get("effective_pull_url")

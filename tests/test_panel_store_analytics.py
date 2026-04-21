@@ -338,7 +338,7 @@ def test_high_side_anomaly_detection_creates_alert(tmp_path: Path) -> None:
             probe_name="ping",
             metric_name="rtt_avg_ms",
             metric_value=10.0 + (index % 2),
-            path_label="client_to_relay",
+            path_label="client_to_relay_public",
         )
 
     persist_metric_run(
@@ -347,13 +347,13 @@ def test_high_side_anomaly_detection_creates_alert(tmp_path: Path) -> None:
         probe_name="ping",
         metric_name="rtt_avg_ms",
         metric_value=220.0,
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
     )
 
     payload = store.query_alert_events(time_range_hours=24, kinds=["anomaly"], anomaly_only=True)
     assert payload["items"]
     assert payload["items"][0]["metric_name"] == "rtt_avg_ms"
-    assert payload["items"][0]["path_label"] == "client_to_relay"
+    assert payload["items"][0]["path_label"] == "client_to_relay_public"
 
 
 def test_low_side_anomaly_detection_creates_alert(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_anomaly_requires_minimum_history(tmp_path: Path) -> None:
             probe_name="ping",
             metric_name="rtt_avg_ms",
             metric_value=10.0,
-            path_label="client_to_relay",
+            path_label="client_to_relay_public",
         )
 
     persist_metric_run(
@@ -401,7 +401,7 @@ def test_anomaly_requires_minimum_history(tmp_path: Path) -> None:
         probe_name="ping",
         metric_name="rtt_avg_ms",
         metric_value=220.0,
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
     )
 
     payload = store.query_alert_events(time_range_hours=24, kinds=["anomaly"], anomaly_only=True)
@@ -417,7 +417,7 @@ def test_silenced_alert_prevents_repeated_anomaly(tmp_path: Path) -> None:
             probe_name="ping",
             metric_name="rtt_avg_ms",
             metric_value=10.0,
-            path_label="client_to_relay",
+            path_label="client_to_relay_public",
         )
 
     persist_metric_run(
@@ -426,7 +426,7 @@ def test_silenced_alert_prevents_repeated_anomaly(tmp_path: Path) -> None:
         probe_name="ping",
         metric_name="rtt_avg_ms",
         metric_value=180.0,
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
     )
     alerts = store.query_alert_events(time_range_hours=24, kinds=["anomaly"], anomaly_only=True)["items"]
     assert len(alerts) == 1
@@ -443,7 +443,7 @@ def test_silenced_alert_prevents_repeated_anomaly(tmp_path: Path) -> None:
         probe_name="ping",
         metric_name="rtt_avg_ms",
         metric_value=200.0,
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
     )
     alerts = store.query_alert_events(time_range_hours=24, kinds=["anomaly"], anomaly_only=True)["items"]
     assert len(alerts) == 1

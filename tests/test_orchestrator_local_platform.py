@@ -15,11 +15,11 @@ def test_local_nodes_use_host_platform_for_execution(monkeypatch) -> None:
                 "server": {"role": "server", "host": "127.0.0.1", "os": "macos", "local": True},
             },
             "services": {
-                "relay_probe": {"host": "127.0.0.1", "port": 22},
+                "relay_public_probe": {"host": "127.0.0.1", "port": 22},
                 "mc_public": {"host": "127.0.0.1", "port": 25565},
                 "iperf_public": {"host": "127.0.0.1", "port": 5201},
-                "mc_local": {"host": "127.0.0.1", "port": 25565},
-                "iperf_local": {"host": "127.0.0.1", "port": 5201},
+                "server_backend_mc": {"host": "127.0.0.1", "port": 25565},
+                "server_backend_iperf": {"host": "127.0.0.1", "port": 5201},
             },
         }
     )
@@ -49,7 +49,7 @@ def test_local_nodes_use_host_platform_for_execution(monkeypatch) -> None:
             "client",
             "ping",
             {"host": "127.0.0.1"},
-            path_label="client_to_relay",
+            path_label="client_to_relay_public",
         )
     )
 

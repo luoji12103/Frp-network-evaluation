@@ -63,6 +63,19 @@ def test_full_run_is_persisted_with_probe_history(monkeypatch, tmp_path: Path) -
         )
         store.update_pull_status(node["id"], ok=True)
 
+    settings = store.get_settings()
+    settings.services.relay_public_probe.host = "relay-public.example"
+    settings.services.relay_public_probe.port = 23680
+    settings.services.mc_public.host = "mc-public.example"
+    settings.services.mc_public.port = 25565
+    settings.services.iperf_public.host = "iperf-public.example"
+    settings.services.iperf_public.port = 5201
+    settings.services.server_backend_mc.host = "server-backend.example"
+    settings.services.server_backend_mc.port = 25565
+    settings.services.server_backend_iperf.host = "server-backend.example"
+    settings.services.server_backend_iperf.port = 5201
+    store.update_settings(settings)
+
     def fake_run_job(node, job_id, run_id, task, payload):
         name = "system_snapshot" if task == "system_snapshot" else task
         metrics = {}
@@ -170,7 +183,7 @@ def test_dispatch_probe_records_pull_error_code_and_queue_fallback(monkeypatch, 
     def fake_run_job(node, job_id, run_id, task, payload):
         raise AgentHttpError("timeout", "request to http://relay.example/api/v1/jobs/run timed out")
 
-    def fake_dispatch_via_queue(node, run_id, task, payload, timeout_sec, event_run_id=None, path_label=None):
+    def fake_dispatch_via_queue(node, run_id, task, payload, timeout_sec, event_run_id=None, path_label=None, target_ref=None):
         return ProbeResult(
             name=task,
             source=node["role"],
@@ -192,8 +205,9 @@ def test_dispatch_probe_records_pull_error_code_and_queue_fallback(monkeypatch, 
         run_id="probe-run-1",
         task="ping",
         payload={"host": "relay.example", "timeout_sec": 1.0},
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
         event_run_id=run_id,
+        target_ref="relay_public_probe",
     )
 
     assert result.success is True
@@ -269,7 +283,8 @@ def test_dispatch_via_queue_classifies_pending_timeout(tmp_path: Path) -> None:
         payload={"host": "relay.example", "timeout_sec": 0.0},
         timeout_sec=0.0,
         event_run_id=run_id,
-        path_label="client_to_relay",
+        path_label="client_to_relay_public",
+        target_ref="relay_public_probe",
     )
 
     assert result.success is False

@@ -11,14 +11,18 @@
     server: "native-macos",
   };
   const PATH_LABELS = {
-    client_to_relay: { "zh-CN": "客户端 -> 中继", "en-US": "Client -> Relay" },
-    relay_to_server: { "zh-CN": "中继 -> 服务端", "en-US": "Relay -> Server" },
+    client_to_relay_public: { "zh-CN": "客户端 -> 中继公网", "en-US": "Client -> Relay Public" },
+    relay_to_server_backend_mc: { "zh-CN": "中继 -> 服务端后端 MC", "en-US": "Relay -> Server Backend MC" },
+    relay_to_server_backend_iperf: { "zh-CN": "中继 -> 服务端后端 iperf", "en-US": "Relay -> Server Backend iperf" },
+    server_to_relay_public: { "zh-CN": "服务端 -> 中继公网", "en-US": "Server -> Relay Public" },
     client_to_mc_public: { "zh-CN": "客户端 -> MC 公网", "en-US": "Client -> MC Public" },
     client_to_iperf_public: { "zh-CN": "客户端 -> iperf 公网", "en-US": "Client -> iperf Public" },
     client_to_mc_public_load: { "zh-CN": "客户端 -> MC 公网负载", "en-US": "Client -> MC Public Load" },
     client_system: { "zh-CN": "客户端系统", "en-US": "Client System" },
     relay_system: { "zh-CN": "中继系统", "en-US": "Relay System" },
     server_system: { "zh-CN": "服务端系统", "en-US": "Server System" },
+    client_to_relay: { "zh-CN": "客户端 -> 中继公网", "en-US": "Client -> Relay Public" },
+    relay_to_server: { "zh-CN": "中继 -> 服务端后端 MC", "en-US": "Relay -> Server Backend MC" },
     server_to_local_mc: { "zh-CN": "服务端 -> 本地 MC", "en-US": "Server -> Local MC" },
     server_iperf_direct: { "zh-CN": "服务端 iperf 直连", "en-US": "Server iperf direct" },
     server_iperf_public: { "zh-CN": "服务端 iperf 公网", "en-US": "Server iperf public" },
@@ -251,16 +255,16 @@
       minimum: "最小",
       maximum: "最大",
       field: {
-        relayProbeHost: "relay_probe 主机",
-        relayProbePort: "relay_probe 端口",
+        relayPublicProbeHost: "relay_public_probe 主机",
+        relayPublicProbePort: "relay_public_probe 端口",
         mcPublicHost: "mc_public 主机",
         mcPublicPort: "mc_public 端口",
         iperfPublicHost: "iperf_public 主机",
         iperfPublicPort: "iperf_public 端口",
-        mcLocalHost: "mc_local 主机",
-        mcLocalPort: "mc_local 端口",
-        iperfLocalHost: "iperf_local 主机",
-        iperfLocalPort: "iperf_local 端口",
+        serverBackendMcHost: "server_backend_mc 主机",
+        serverBackendMcPort: "server_backend_mc 端口",
+        serverBackendIperfHost: "server_backend_iperf 主机",
+        serverBackendIperfPort: "server_backend_iperf 端口",
         pingAvgMax: "Ping 平均延迟上限 ms",
         pingJitterMax: "Ping 抖动上限 ms",
         tcpAvgMax: "TCP 平均连接上限 ms",
@@ -535,16 +539,16 @@
       minimum: "Min",
       maximum: "Max",
       field: {
-        relayProbeHost: "relay_probe host",
-        relayProbePort: "relay_probe port",
+        relayPublicProbeHost: "relay_public_probe host",
+        relayPublicProbePort: "relay_public_probe port",
         mcPublicHost: "mc_public host",
         mcPublicPort: "mc_public port",
         iperfPublicHost: "iperf_public host",
         iperfPublicPort: "iperf_public port",
-        mcLocalHost: "mc_local host",
-        mcLocalPort: "mc_local port",
-        iperfLocalHost: "iperf_local host",
-        iperfLocalPort: "iperf_local port",
+        serverBackendMcHost: "server_backend_mc host",
+        serverBackendMcPort: "server_backend_mc port",
+        serverBackendIperfHost: "server_backend_iperf host",
+        serverBackendIperfPort: "server_backend_iperf port",
         pingAvgMax: "Ping avg max ms",
         pingJitterMax: "Ping jitter max ms",
         tcpAvgMax: "TCP avg max ms",
@@ -2205,16 +2209,16 @@
     const services = settings.services || {};
     const thresholds = settings.thresholds || {};
     const scenarios = settings.scenarios || {};
-    setValue("relay_probe_host", services.relay_probe?.host || "");
-    setValue("relay_probe_port", services.relay_probe?.port ?? 22);
+    setValue("relay_public_probe_host", services.relay_public_probe?.host || "");
+    setValue("relay_public_probe_port", services.relay_public_probe?.port ?? 22);
     setValue("mc_public_host", services.mc_public?.host || "");
     setValue("mc_public_port", services.mc_public?.port ?? 25565);
     setValue("iperf_public_host", services.iperf_public?.host || "");
     setValue("iperf_public_port", services.iperf_public?.port ?? 5201);
-    setValue("mc_local_host", services.mc_local?.host || "");
-    setValue("mc_local_port", services.mc_local?.port ?? 25565);
-    setValue("iperf_local_host", services.iperf_local?.host || "");
-    setValue("iperf_local_port", services.iperf_local?.port ?? 5201);
+    setValue("server_backend_mc_host", services.server_backend_mc?.host || "");
+    setValue("server_backend_mc_port", services.server_backend_mc?.port ?? 25565);
+    setValue("server_backend_iperf_host", services.server_backend_iperf?.host || "");
+    setValue("server_backend_iperf_port", services.server_backend_iperf?.port ?? 5201);
     setValue("ping_rtt_avg_max", thresholds.ping?.rtt_avg_ms_max ?? 120);
     setValue("ping_jitter_max", thresholds.ping?.jitter_ms_max ?? 20);
     setValue("tcp_connect_avg_max", thresholds.tcp?.connect_avg_ms_max ?? 150);
@@ -2605,11 +2609,11 @@
     current.services = current.services || {};
     current.thresholds = current.thresholds || {};
     current.scenarios = current.scenarios || {};
-    current.services.relay_probe = { host: valueOf("relay_probe_host"), port: numberOf("relay_probe_port") };
+    current.services.relay_public_probe = { host: valueOf("relay_public_probe_host"), port: numberOf("relay_public_probe_port") };
     current.services.mc_public = { host: valueOf("mc_public_host"), port: numberOf("mc_public_port") };
     current.services.iperf_public = { host: valueOf("iperf_public_host"), port: numberOf("iperf_public_port") };
-    current.services.mc_local = { host: valueOf("mc_local_host"), port: numberOf("mc_local_port") };
-    current.services.iperf_local = { host: valueOf("iperf_local_host"), port: numberOf("iperf_local_port") };
+    current.services.server_backend_mc = { host: valueOf("server_backend_mc_host"), port: numberOf("server_backend_mc_port") };
+    current.services.server_backend_iperf = { host: valueOf("server_backend_iperf_host"), port: numberOf("server_backend_iperf_port") };
     current.thresholds.ping = { ...(current.thresholds.ping || {}), rtt_avg_ms_max: numberOf("ping_rtt_avg_max"), jitter_ms_max: numberOf("ping_jitter_max") };
     current.thresholds.tcp = { ...(current.thresholds.tcp || {}), connect_avg_ms_max: numberOf("tcp_connect_avg_max"), timeout_or_error_pct_max: numberOf("tcp_timeout_error_max") };
     current.thresholds.throughput = { ...(current.thresholds.throughput || {}), throughput_up_mbps_min: numberOf("throughput_up_min"), throughput_down_mbps_min: numberOf("throughput_down_min") };
