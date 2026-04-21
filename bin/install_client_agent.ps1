@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [Parameter(Mandatory = $true)][string]$PanelUrl,
   [Parameter(Mandatory = $true)][string]$PairCode,
@@ -9,6 +7,8 @@ param(
   [string]$ConfigPath = "config/agent/client.yaml",
   [string]$PythonBin = "python"
 )
+
+$ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $fullConfig = Join-Path $repoRoot $ConfigPath
@@ -20,7 +20,7 @@ $controlPort = $ListenPort + 1
 $agentLog = Join-Path $logDir "client-agent.log"
 $bridgeLog = Join-Path $logDir "client-control-bridge.log"
 $argument = "-m agents.service --config `"$fullConfig`" --panel-url `"$PanelUrl`" --pair-code `"$PairCode`" --node-name `"$NodeName`" --role `"$Role`" --runtime-mode native-windows --listen-host 0.0.0.0 --listen-port $ListenPort --control-port $controlPort"
-$bridgeArgument = "-m controller.control_bridge --mode node --adapter windows-task --host 0.0.0.0 --port $controlPort --agent-config `"$fullConfig`" --task-name `"mc-netprobe-client-agent`" --log-path `"$agentLog`""
+$bridgeArgument = "-m controller.control_bridge --mode node --adapter windows-task --host 0.0.0.0 --port $controlPort --agent-config `"$fullConfig`" --task-name `"mc-netprobe-client-agent`" --log-path `"$bridgeLog`""
 $taskName = "mc-netprobe-client-agent"
 $bridgeTaskName = "mc-netprobe-client-control-bridge"
 
