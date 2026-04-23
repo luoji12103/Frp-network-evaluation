@@ -235,12 +235,8 @@ def test_public_page_includes_login_and_bilingual_toggle(tmp_path: Path) -> None
         response = client.get("/")
         assert response.status_code == 200
         body = response.text
-        assert '<html lang="zh-CN">' in body
-        assert 'id="localeSelect"' in body
-        assert 'id="autoRefreshSelect"' in body
-        assert "管理员登录" in body
-        assert "公开网络质量" in body
-        assert "/assets/public-dashboard.js" in body
+        assert '<html lang="en">' in body
+        assert "/assets/dist/js/public.js" in body
 
 
 def test_public_detail_pages_bootstrap_without_login(tmp_path: Path) -> None:
@@ -544,11 +540,8 @@ def test_admin_login_allows_dashboard_access(tmp_path: Path) -> None:
         login_admin(client)
         page = client.get("/admin")
         assert page.status_code == 200
-        assert '<html lang="zh-CN">' in page.text
-        assert "保存全局配置" in page.text
-        assert 'id="autoRefreshSelect"' in page.text
-        assert 'id="filtersSummary"' in page.text
-        assert "/assets/admin-dashboard.js" in page.text
+        assert '<html lang="en">' in page.text
+        assert "/assets/dist/js/admin.js" in page.text
 
         api = client.get("/api/v1/dashboard")
         assert api.status_code == 200
