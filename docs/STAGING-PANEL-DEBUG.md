@@ -30,6 +30,9 @@ The staging stack is intentionally isolated from production:
    - `relay-sim`
    - `server-sim`
 6. Waits until the simulated agents pair and start reporting healthy push connectivity.
+7. Pauses the scheduler through the existing admin panel action API so manual-run E2E stays deterministic.
+
+By default the helper also resets the staging runtime root before each boot, so repeated debug sessions do not accumulate old `monitor.db`, run history, or leftover agent pairing state.
 
 ## Common Server Commands
 
@@ -48,3 +51,12 @@ STAGING_INCLUDE_ACTIVE_BLOCKER=1 bash bin/start_staging_panel_debug.sh
 ```
 
 That mode is useful for blocker CTA verification, but it will intentionally keep an active fixture run in the database and can interfere with manual-run E2E checks.
+
+Optional bootstrap toggles:
+
+```bash
+STAGING_RESET_RUNTIME=0 bash bin/start_staging_panel_debug.sh
+STAGING_PAUSE_SCHEDULER=0 bash bin/start_staging_panel_debug.sh
+```
+
+Use those only when you intentionally want to preserve the previous staging runtime state or observe scheduled background runs.
