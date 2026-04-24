@@ -219,6 +219,10 @@ print(json.dumps(ready, ensure_ascii=False, indent=2))
 raise SystemExit("Timed out waiting for staging sim agents to pair and report healthy push connectivity")
 PY
 
+if [[ "${PAUSE_SCHEDULER}" == "1" ]]; then
+  pause_scheduler_via_admin_api
+fi
+
 compose ps
 
 cat <<EOF
