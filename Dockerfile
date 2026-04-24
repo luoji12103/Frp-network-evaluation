@@ -34,7 +34,7 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
 COPY . .
-COPY --from=frontend-build /build/dist /app/controller/assets/dist
+COPY --from=frontend-build /controller/assets/dist /app/controller/assets/dist
 
 RUN mkdir -p /app/config/agent /app/results /app/logs /app/data \
     && chown -R app:app /app
