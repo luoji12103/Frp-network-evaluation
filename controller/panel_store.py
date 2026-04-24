@@ -276,7 +276,7 @@ class PanelStore:
         node_id = payload.id
         with self._lock, self._connect() as conn:
             if node_id is None:
-                existing = conn.execute("SELECT id FROM node WHERE role = ?", (payload.role,)).fetchone()
+                existing = conn.execute("SELECT id FROM node WHERE node_name = ?", (payload.node_name,)).fetchone()
                 if existing is not None:
                     node_id = int(existing["id"])
 
@@ -2537,7 +2537,7 @@ class PanelStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topology_id INTEGER NOT NULL,
                     node_name TEXT NOT NULL UNIQUE,
-                    role TEXT NOT NULL UNIQUE,
+                    role TEXT NOT NULL,
                     runtime_mode TEXT NOT NULL,
                     agent_url TEXT,
                     configured_pull_url TEXT,
@@ -2563,9 +2563,11 @@ class PanelStore:
                     supervisor_summary_json TEXT DEFAULT '{}',
                     push_state TEXT NOT NULL DEFAULT 'unknown',
                     push_checked_at TEXT,
+                    push_error_code TEXT,
                     push_error TEXT,
                     pull_state TEXT NOT NULL DEFAULT 'unknown',
                     pull_checked_at TEXT,
+                    pull_error_code TEXT,
                     pull_error TEXT
                 );
                 CREATE TABLE IF NOT EXISTS node_secret (
@@ -2692,6 +2694,7 @@ class PanelStore:
                 );
                 """
             )
+            self._migrate_node_table_role_uniqueness(conn)
             self._ensure_column(conn, "node", "configured_pull_url", "TEXT")
             self._ensure_column(conn, "node", "advertised_pull_url", "TEXT")
             self._ensure_column(conn, "node", "endpoint_report_json", "TEXT DEFAULT '{}'")
@@ -3334,6 +3337,86 @@ class PanelStore:
 
     def _table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _table_sql(self, conn: sqlite3.Connection, table: str) -> str:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return str(row["sql"] or "") if row is not None else ""
+
+    def _migrate_node_table_role_uniqueness(self, conn: sqlite3.Connection) -> None:
+        table_sql = self._table_sql(conn, "node")
+        if "role TEXT NOT NULL UNIQUE" not in table_sql:
+            return
+        conn.execute("ALTER TABLE node RENAME TO node_legacy_role_unique")
+        conn.executescript(
+            """
+            CREATE TABLE node (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topology_id INTEGER NOT NULL,
+                node_name TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL,
+                runtime_mode TEXT NOT NULL,
+                agent_url TEXT,
+                configured_pull_url TEXT,
+                advertised_pull_url TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                paired INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                last_heartbeat_at TEXT,
+                last_pull_checked_at TEXT,
+                last_status TEXT,
+                last_push_ok INTEGER NOT NULL DEFAULT 0,
+                last_pull_ok INTEGER NOT NULL DEFAULT 0,
+                last_push_error TEXT,
+                last_pull_error TEXT,
+                status_payload_json TEXT DEFAULT '{}',
+                endpoint_report_json TEXT DEFAULT '{}',
+                identity_json TEXT DEFAULT '{}',
+                capabilities_json TEXT DEFAULT '{}',
+                runtime_status_json TEXT DEFAULT '{}',
+                runtime_summary_json TEXT DEFAULT '{}',
+                supervisor_summary_json TEXT DEFAULT '{}',
+                push_state TEXT NOT NULL DEFAULT 'unknown',
+                push_checked_at TEXT,
+                push_error_code TEXT,
+                push_error TEXT,
+                pull_state TEXT NOT NULL DEFAULT 'unknown',
+                pull_checked_at TEXT,
+                pull_error_code TEXT,
+                pull_error TEXT
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO node (
+                id, topology_id, node_name, role, runtime_mode, agent_url,
+                configured_pull_url, advertised_pull_url, enabled, paired, created_at, updated_at,
+                last_seen_at, last_heartbeat_at, last_pull_checked_at, last_status,
+                last_push_ok, last_pull_ok, last_push_error, last_pull_error,
+                status_payload_json, endpoint_report_json, identity_json, capabilities_json,
+                runtime_status_json, runtime_summary_json, supervisor_summary_json,
+                push_state, push_checked_at, push_error_code, push_error,
+                pull_state, pull_checked_at, pull_error_code, pull_error
+            )
+            SELECT
+                id, topology_id, node_name, role, runtime_mode, agent_url,
+                configured_pull_url, advertised_pull_url, enabled, paired, created_at, updated_at,
+                last_seen_at, last_heartbeat_at, last_pull_checked_at, last_status,
+                last_push_ok, last_pull_ok, last_push_error, last_pull_error,
+                status_payload_json, endpoint_report_json, identity_json, capabilities_json,
+                runtime_status_json, runtime_summary_json, supervisor_summary_json,
+                push_state, push_checked_at, push_error_code, push_error,
+                pull_state, pull_checked_at, pull_error_code, pull_error
+            FROM node_legacy_role_unique
+            """
+        )
+        conn.execute("DROP TABLE node_legacy_role_unique")
+        conn.commit()
 
     def _channel_is_ok(self, state: Any) -> bool:
         return str(state or "unknown") == "ok"

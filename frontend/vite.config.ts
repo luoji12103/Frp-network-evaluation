@@ -5,6 +5,7 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [react()],
   build: {
+    manifest: true,
     outDir: '../controller/assets/dist',
     emptyOutDir: true,
     rollupOptions: {
@@ -15,8 +16,8 @@ export default defineConfig({
       },
       output: {
         entryFileNames: 'js/[name].js',
-        chunkFileNames: 'js/chunk-[name].js',
-        assetFileNames: 'assets/[name].[ext]'
+        chunkFileNames: 'js/chunk-[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]'
       }
     }
   }

@@ -6,7 +6,7 @@ import '../../index.css';
 declare global {
   interface Window {
     next_path?: string;
-    login_error_key_json?: string;
+    login_error_key_json?: string | null;
     panel_build_label?: string;
   }
 }
@@ -44,8 +44,9 @@ function LoginApp() {
         <form method="POST" action="/login" className="space-y-4">
           <input type="hidden" name="next" value={nextPath} />
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 leading-none">Username</label>
+            <label htmlFor="username" className="text-sm font-medium text-slate-700 leading-none">Username</label>
             <input
+              id="username"
               type="text"
               name="username"
               required
@@ -56,8 +57,9 @@ function LoginApp() {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700 leading-none">Password</label>
+            <label htmlFor="password" className="text-sm font-medium text-slate-700 leading-none">Password</label>
             <input
+              id="password"
               type="password"
               name="password"
               required

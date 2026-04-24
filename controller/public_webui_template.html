@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Public Dashboard</title>
-    <link rel="stylesheet" href="/assets/dist/assets/src.css" />
+    {% for href in css_files %}
+    <link rel="stylesheet" href="{{ href }}" />
+    {% endfor %}
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 border-none">
     <script>
@@ -13,8 +15,6 @@
         window.panel_build_label = "{{ panel_build_label }}";
     </script>
     <div id="root"></div>
-    <script type="module" src="/assets/dist/js/chunk-src.js"></script>
-    <script type="module" src="/assets/dist/js/chunk-react.js"></script>
-    <script type="module" src="/assets/dist/js/public.js"></script>
+    <script type="module" src="{{ entry_js }}"></script>
 </body>
 </html>

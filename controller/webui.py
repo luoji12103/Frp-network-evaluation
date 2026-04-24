@@ -61,6 +61,8 @@ ADMIN_TEMPLATE_PATH = Path(__file__).with_name("webui_template.html")
 PUBLIC_TEMPLATE_PATH = Path(__file__).with_name("public_webui_template.html")
 LOGIN_TEMPLATE_PATH = Path(__file__).with_name("login_template.html")
 ASSETS_DIR = Path(__file__).with_name("assets")
+ASSETS_DIST_DIR = ASSETS_DIR / "dist"
+ASSET_MANIFEST_PATH = ASSETS_DIST_DIR / ".vite" / "manifest.json"
 ADMIN_COOKIE_NAME = "mc_netprobe_admin"
 
 
@@ -83,6 +85,90 @@ def _suggested_action(
         label=label,
         dangerous=dangerous,
     ).model_dump(exclude_none=True)
+
+
+def _asset_url(relative_path: str) -> str:
+    normalized = relative_path.lstrip("/").replace("\\", "/")
+    return f"/assets/dist/{normalized}"
+
+
+def _entry_markers(entry_name: str) -> tuple[str, ...]:
+    return (
+        entry_name,
+        f"src/entries/{entry_name}/index.tsx",
+        f"frontend/src/entries/{entry_name}/index.tsx",
+        f"entries/{entry_name}/index.tsx",
+    )
+
+
+def _manifest_entry_matches(entry_name: str, key: str, item: dict[str, Any]) -> bool:
+    markers = _entry_markers(entry_name)
+    name = str(item.get("name") or "")
+    src = str(item.get("src") or "")
+    file = str(item.get("file") or "")
+    return (
+        key in markers
+        or name == entry_name
+        or any(marker in key for marker in markers[1:])
+        or any(marker in src for marker in markers[1:])
+        or file.endswith(f"/{entry_name}.js")
+        or file == f"js/{entry_name}.js"
+    )
+
+
+def _load_asset_manifest() -> dict[str, Any] | None:
+    if not ASSET_MANIFEST_PATH.exists():
+        return None
+    try:
+        loaded = json.loads(ASSET_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _resolve_webui_assets(entry_name: str) -> dict[str, Any]:
+    manifest = _load_asset_manifest()
+    if manifest:
+        entry_key = next(
+            (
+                key
+                for key, item in manifest.items()
+                if isinstance(item, dict) and item.get("isEntry") and _manifest_entry_matches(entry_name, key, item)
+            ),
+            None,
+        )
+        if entry_key is not None:
+            entry = manifest[entry_key]
+            css_urls: list[str] = []
+            seen_css: set[str] = set()
+
+            def visit_css(chunk_key: str) -> None:
+                chunk = manifest.get(chunk_key)
+                if not isinstance(chunk, dict):
+                    return
+                for css_file in chunk.get("css", []):
+                    css_url = _asset_url(str(css_file))
+                    if css_url not in seen_css:
+                        seen_css.add(css_url)
+                        css_urls.append(css_url)
+                for imported in chunk.get("imports", []):
+                    visit_css(str(imported))
+
+            visit_css(str(entry_key))
+            return {
+                "entry_js": _asset_url(str(entry["file"])),
+                "css_files": css_urls,
+            }
+
+    css_files: list[str] = []
+    assets_dir = ASSETS_DIST_DIR / "assets"
+    if assets_dir.exists():
+        for css_path in sorted(assets_dir.glob("*.css")):
+            css_files.append(_asset_url(str(css_path.relative_to(ASSETS_DIST_DIR))))
+    return {
+        "entry_js": _asset_url(f"js/{entry_name}.js"),
+        "css_files": css_files,
+    }
 
 
 class PanelRuntime:
@@ -1424,22 +1510,26 @@ def create_app(
             enriched["generated_at"] = now_iso()
         return enriched
 
-    def render_template(path: Path, **context: Any) -> HTMLResponse:
+    def render_template(path: Path, *, entry_name: str, **context: Any) -> HTMLResponse:
         template = Template(path.read_text(encoding="utf-8"))
-        return HTMLResponse(content=template.render(**context))
+        assets = _resolve_webui_assets(entry_name)
+        return HTMLResponse(content=template.render(**context, **assets))
 
     def render_login_page(next_path: str, error_key: str = "", status_code: int = 200) -> HTMLResponse:
+        assets = _resolve_webui_assets("login")
         template = Template(LOGIN_TEMPLATE_PATH.read_text(encoding="utf-8"))
         body = template.render(
             next_path=next_path,
             login_error_key_json=json.dumps(error_key, ensure_ascii=False),
             panel_build_label=build_info["display_label"],
+            **assets,
         )
         return HTMLResponse(content=body, status_code=status_code)
 
     def render_public_page(*, page_kind: str, scope_id: str | None, initial_state: dict[str, Any]) -> HTMLResponse:
         return render_template(
             PUBLIC_TEMPLATE_PATH,
+            entry_name="public",
             initial_state_json=json.dumps(initial_state, ensure_ascii=False),
             public_page_json=json.dumps(
                 {
@@ -1487,6 +1577,20 @@ def create_app(
         snapshot = attach_snapshot(snapshot)
         return render_template(
             ADMIN_TEMPLATE_PATH,
+            entry_name="admin",
+            initial_state_json=json.dumps(snapshot, ensure_ascii=False),
+            panel_build_label=build_info["display_label"],
+        )
+
+    @app.get("/admin/{path:path}", response_class=HTMLResponse)
+    def admin_spa_page(path: str, request: Request):
+        if not admin_auth.is_authenticated(request):
+            return RedirectResponse(url=f"/login?next={quote(request.url.path, safe='/')}", status_code=303)
+        snapshot = runtime.store.build_dashboard_snapshot()
+        snapshot = attach_snapshot(snapshot)
+        return render_template(
+            ADMIN_TEMPLATE_PATH,
+            entry_name="admin",
             initial_state_json=json.dumps(snapshot, ensure_ascii=False),
             panel_build_label=build_info["display_label"],
         )

@@ -1,0 +1,212 @@
+name: frp-network-evaluation-staging
+
+x-app-build: &app-build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    MC_NETPROBE_RELEASE_VERSION: "${MC_NETPROBE_RELEASE_VERSION:-1.1.0}"
+    MC_NETPROBE_BUILD_REF: "${MC_NETPROBE_BUILD_REF:-unknown}"
+
+services:
+  panel:
+    build: *app-build
+    container_name: mc-netprobe-panel-staging
+    restart: unless-stopped
+    env_file:
+      - "${STAGING_ENV_FILE:-/root/server/mc-netprobe-panel-staging/env/staging.env}"
+    ports:
+      - "${MC_NETPROBE_STAGING_WEBUI_PORT:-18765}:8765"
+    environment:
+      MC_NETPROBE_WEBUI_HOST: "0.0.0.0"
+      MC_NETPROBE_WEBUI_PORT: "8765"
+      MC_NETPROBE_PANEL_DB_PATH: "data/monitor.db"
+      MC_NETPROBE_ADMIN_USERNAME: "${MC_NETPROBE_ADMIN_USERNAME:-admin}"
+      MC_NETPROBE_ADMIN_PASSWORD: "${MC_NETPROBE_ADMIN_PASSWORD:-change-me}"
+      MC_NETPROBE_ADMIN_PASSWORD_FILE: "data/admin-password.txt"
+      MC_NETPROBE_PANEL_CONTROL_BRIDGE_URL: "http://panel-control-bridge:8877"
+      MC_NETPROBE_PANEL_CONTROL_BRIDGE_TOKEN_FILE: "data/panel-control-bridge-token.txt"
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/data:/app/data"
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/config/agent:/app/config/agent"
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/results:/app/results"
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/logs:/app/logs"
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/env:/app/env"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/v1/public-dashboard', timeout=5).read()"
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  panel-control-bridge:
+    build: *app-build
+    container_name: mc-netprobe-panel-control-bridge-staging
+    restart: unless-stopped
+    env_file:
+      - "${STAGING_ENV_FILE:-/root/server/mc-netprobe-panel-staging/env/staging.env}"
+    command:
+      - python
+      - -m
+      - controller.control_bridge
+      - --mode
+      - panel
+      - --adapter
+      - docker-container
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8877"
+      - --token-file
+      - /app/data/panel-control-bridge-token.txt
+      - --container-name
+      - mc-netprobe-panel-staging
+      - --log-path
+      - docker://mc-netprobe-panel-staging
+      - --bridge-url
+      - http://panel-control-bridge:8877
+    environment:
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/data:/app/data"
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/logs:/app/logs"
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      panel:
+        condition: service_started
+
+  client-sim:
+    build: *app-build
+    container_name: client-sim
+    restart: unless-stopped
+    profiles: ["agents"]
+    env_file:
+      - "${STAGING_ENV_FILE:-/root/server/mc-netprobe-panel-staging/env/staging.env}"
+    command:
+      - python
+      - -m
+      - agents.service
+      - --config
+      - /app/config/agent/client-sim.yaml
+      - --panel-url
+      - http://panel:8765
+      - --pair-code
+      - "${CLIENT_SIM_PAIR_CODE:-}"
+      - --node-name
+      - client-sim
+      - --role
+      - client
+      - --runtime-mode
+      - native-windows
+      - --listen-host
+      - 0.0.0.0
+      - --listen-port
+      - "9870"
+      - --advertise-url
+      - "${CLIENT_SIM_ADVERTISE_URL:-http://client-sim:9870}"
+      - --control-url
+      - "${CLIENT_SIM_CONTROL_URL:-http://client-sim-control-bridge:9871}"
+      - --platform-name
+      - "${CLIENT_SIM_PLATFORM_NAME:-windows}"
+    environment:
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/config/agent:/app/config/agent"
+    depends_on:
+      panel:
+        condition: service_healthy
+
+  relay-sim:
+    build: *app-build
+    container_name: relay-sim
+    restart: unless-stopped
+    profiles: ["agents"]
+    env_file:
+      - "${STAGING_ENV_FILE:-/root/server/mc-netprobe-panel-staging/env/staging.env}"
+    command:
+      - python
+      - -m
+      - agents.service
+      - --config
+      - /app/config/agent/relay-sim.yaml
+      - --panel-url
+      - http://panel:8765
+      - --pair-code
+      - "${RELAY_SIM_PAIR_CODE:-}"
+      - --node-name
+      - relay-sim
+      - --role
+      - relay
+      - --runtime-mode
+      - docker-linux
+      - --listen-host
+      - 0.0.0.0
+      - --listen-port
+      - "9870"
+      - --advertise-url
+      - "${RELAY_SIM_ADVERTISE_URL:-http://relay-sim-advertised:9870}"
+      - --control-url
+      - "${RELAY_SIM_CONTROL_URL:-http://relay-sim-control-bridge:9871}"
+      - --platform-name
+      - "${RELAY_SIM_PLATFORM_NAME:-linux}"
+    environment:
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/config/agent:/app/config/agent"
+    depends_on:
+      panel:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - relay-sim-advertised
+
+  server-sim:
+    build: *app-build
+    container_name: server-sim
+    restart: unless-stopped
+    profiles: ["agents"]
+    env_file:
+      - "${STAGING_ENV_FILE:-/root/server/mc-netprobe-panel-staging/env/staging.env}"
+    command:
+      - python
+      - -m
+      - agents.service
+      - --config
+      - /app/config/agent/server-sim.yaml
+      - --panel-url
+      - http://panel:8765
+      - --pair-code
+      - "${SERVER_SIM_PAIR_CODE:-}"
+      - --node-name
+      - server-sim
+      - --role
+      - server
+      - --runtime-mode
+      - native-macos
+      - --listen-host
+      - 0.0.0.0
+      - --listen-port
+      - "9870"
+      - --advertise-url
+      - "${SERVER_SIM_ADVERTISE_URL:-http://server-sim:9870}"
+      - --control-url
+      - "${SERVER_SIM_CONTROL_URL:-http://server-sim-control-bridge:9871}"
+      - --platform-name
+      - "${SERVER_SIM_PLATFORM_NAME:-macos}"
+    environment:
+      TZ: "${TZ:-UTC}"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "${STAGING_RUNTIME_ROOT:-/root/server/mc-netprobe-panel-staging}/config/agent:/app/config/agent"
+    depends_on:
+      panel:
+        condition: service_healthy

@@ -110,3 +110,51 @@ def test_agent_status_requires_token_and_returns_structured_snapshot(tmp_path: P
         assert payload["endpoint"]["listen_port"] == 39870
         assert payload["capabilities"]["pull_http"] is True
         assert payload["runtime_status"]["paired"] is True
+
+
+def test_agent_platform_override_is_used_in_identity_runtime_and_job_payload(monkeypatch, tmp_path: Path) -> None:
+    seen_payloads: list[dict[str, object]] = []
+
+    async def fake_execute_task(role: str, task: str, payload: dict[str, object]) -> dict[str, object]:
+        seen_payloads.append(dict(payload))
+        return {
+            "name": task,
+            "source": role,
+            "target": "local",
+            "success": True,
+            "metrics": {},
+            "samples": [],
+            "error": None,
+            "started_at": "2026-04-06T00:00:00Z",
+            "duration_ms": 1.0,
+            "metadata": {"role": role},
+        }
+
+    monkeypatch.setattr(agent_service, "execute_task", fake_execute_task)
+
+    app = create_agent_app(
+        config_path=tmp_path / "agent.yaml",
+        overrides={
+            "node_name": "server-sim",
+            "role": "server",
+            "runtime_mode": "native-macos",
+            "platform_name_override": "macos",
+            "node_token": "secret-token",
+        },
+        start_background=False,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/status", headers={"X-Node-Token": "secret-token"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["identity"]["platform_name"] == "macos"
+        assert payload["runtime_status"]["environment"]["platform_name"] == "macos"
+
+        direct_job = client.post(
+            "/api/v1/jobs/run",
+            headers={"X-Node-Token": "secret-token"},
+            json={"job_id": 9, "run_id": "run-override", "task": "system_snapshot", "payload": {}},
+        )
+        assert direct_job.status_code == 200
+        assert seen_payloads[-1]["platform_name"] == "macos"
