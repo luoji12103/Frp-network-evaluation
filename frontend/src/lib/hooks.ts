@@ -74,7 +74,7 @@ export function useSnapshotResource<T extends SnapshotPayload>(
       return;
     }
     void runFetch();
-  }, [enabled, runFetch, ...deps]);
+  }, [enabled, ...deps]);
 
   useEffect(() => {
     if (!enabled || !pollMs) {
@@ -84,7 +84,7 @@ export function useSnapshotResource<T extends SnapshotPayload>(
       void runFetch();
     }, pollMs);
     return () => window.clearInterval(handle);
-  }, [enabled, pollMs, runFetch, ...deps]);
+  }, [enabled, pollMs, ...deps]);
 
   return {
     data,

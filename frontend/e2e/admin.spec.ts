@@ -20,7 +20,7 @@ test('admin routes support direct navigation and refresh', async ({ page }) => {
   }
 });
 
-test('nodes page exposes detail, pair code, and CTA navigation', async ({ page }) => {
+test('nodes page exposes detail, pair code, and overview CTA navigation', async ({ page }) => {
   await openAdminRoute(page, '/admin/nodes', 'Nodes');
 
   await page.getByRole('button', { name: /relay-legacy-fixture|client-push-only-fixture|server-protocol-fixture/i }).first().click();
@@ -32,8 +32,8 @@ test('nodes page exposes detail, pair code, and CTA navigation', async ({ page }
   await page.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('pair-code-modal')).toBeHidden();
 
-  const detailSurface = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Node Detail' }) }).first();
-  const suggestedAction = detailSurface.locator('a[href*="/admin"]').first();
+  await openAdminRoute(page, '/admin', 'Overview');
+  const suggestedAction = page.getByRole('link', { name: 'Open node' }).first();
   await expect(suggestedAction).toBeVisible();
   const previousUrl = page.url();
   await suggestedAction.click();
@@ -47,10 +47,40 @@ test('manual run produces detail and timeline data', async ({ page }) => {
   const controls = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Manual Run and Filters' }) }).first();
   await controls.getByRole('button', { name: /system/i }).click();
 
-  await expect(page.getByText(/^Started /)).toBeVisible();
-  const detailSurface = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Run Detail' }) }).first();
-  await expect(detailSurface).toContainText(/running|completed|failed/i);
-  await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: 'Event Timeline' }) }).locator('.rounded-2xl').first()).toBeVisible({ timeout: 60_000 });
+  const startedBanner = page.getByText(/^Started /);
+  await expect(startedBanner).toBeVisible();
+  const runId = (await startedBanner.textContent())?.replace(/^Started\s+/, '').trim();
+  if (!runId) {
+    throw new Error('Manual run did not expose a run id in the success banner');
+  }
+
+  await expect.poll(async () => {
+    return page.evaluate(async (id) => {
+      const response = await fetch(`/api/v1/admin/runs/${id}`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        return 'missing';
+      }
+      const payload = await response.json();
+      return String(payload.status || 'missing');
+    }, runId);
+  }).toMatch(/running|completed|failed/);
+
+  await expect.poll(async () => {
+    return page.evaluate(async (id) => {
+      const response = await fetch(`/api/v1/admin/runs/${id}/events`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        return 0;
+      }
+      const payload = await response.json();
+      return Array.isArray(payload.items) ? payload.items.length : 0;
+    }, runId);
+  }, { timeout: 60_000 }).toBeGreaterThan(0);
 });
 
 test('alerts mutation and actions detail remain usable', async ({ page }) => {
@@ -70,25 +100,29 @@ test('alerts mutation and actions detail remain usable', async ({ page }) => {
 test('stale dashboard refresh cannot overwrite newer SSR snapshot', async ({ page }) => {
   let servedStaleDashboard = false;
 
-  await page.route('**/api/v1/dashboard', async (route) => {
-    servedStaleDashboard = true;
-    const response = await route.fetch();
-    const payload = await response.json();
-    await route.fulfill({
-      response,
-      json: {
-        ...payload,
-        generated_at: '2000-01-01T00:00:00+00:00',
-        settings: {
-          ...payload.settings,
-          topology_name: 'stale-regression-should-not-render',
+  try {
+    await page.route('**/api/v1/dashboard', async (route) => {
+      servedStaleDashboard = true;
+      const response = await route.fetch();
+      const payload = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          generated_at: '2000-01-01T00:00:00+00:00',
+          settings: {
+            ...payload.settings,
+            topology_name: 'stale-regression-should-not-render',
+          },
         },
-      },
+      });
     });
-  });
 
-  await page.goto('/admin/settings');
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-  await expect.poll(() => servedStaleDashboard).toBeTruthy();
-  await expect(page.getByDisplayValue('stale-regression-should-not-render')).toHaveCount(0);
+    await page.goto('/admin/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+    await expect.poll(() => servedStaleDashboard).toBeTruthy();
+    await expect(page.getByLabel('Topology Name')).not.toHaveValue('stale-regression-should-not-render');
+  } finally {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  }
 });

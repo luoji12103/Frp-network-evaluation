@@ -28,10 +28,10 @@ export async function loginAsAdmin(page: Page, nextPath = '/admin') {
 
 export async function openAdminRoute(page: Page, route: string, heading: string) {
   await page.goto(route);
-  await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+  await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
   await expect(page.getByTestId('build-label')).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+  await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
 }
 
 export async function firstPublicPathId(request: APIRequestContext) {

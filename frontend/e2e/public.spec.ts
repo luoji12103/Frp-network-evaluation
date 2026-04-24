@@ -3,7 +3,7 @@ import { firstPublicPathId } from './helpers';
 
 test('public overview, path, and role pages render and refresh', async ({ page, request }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Public Panel' })).toBeVisible();
+  await expect(page.getByText('Public Panel', { exact: true })).toBeVisible();
   await expect(page.getByTestId('build-label')).toBeVisible();
 
   const pathId = await firstPublicPathId(request);

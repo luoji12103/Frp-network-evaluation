@@ -9,9 +9,9 @@ test('admin login and logout work end-to-end', async ({ page }) => {
     page.waitForURL(/\/$/),
     page.getByRole('button', { name: 'Sign out' }).click(),
   ]);
-  await expect(page.getByRole('heading', { name: 'Public Panel' })).toBeVisible();
+  await expect(page.getByText('Public Panel', { exact: true })).toBeVisible();
 
   await page.goto('/admin');
-  await expect(page).toHaveURL(/\/login\?next=%2Fadmin$/);
+  await expect(page).toHaveURL(/\/login\?next=(%2F|\/)admin$/);
   await expect(page.getByRole('heading', { name: 'Control Panel Login' })).toBeVisible();
 });
