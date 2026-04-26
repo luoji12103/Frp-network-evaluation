@@ -18,3 +18,7 @@ build/
 Thumbs.db
 docker/ssh/*
 !docker/ssh/README.md
+clients/windows/target/
+clients/windows/dist/
+clients/windows/.tauri/
+clients/windows/apps/tray/src-tauri/target/
