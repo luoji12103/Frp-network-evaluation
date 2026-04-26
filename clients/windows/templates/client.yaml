@@ -1,0 +1,14 @@
+panel_url: http://panel-host:8765
+node_name: client-1
+role: client
+runtime_mode: native-windows
+listen_host: 0.0.0.0
+listen_port: 9870
+advertise_url: null
+control_port: 9871
+control_url: http://127.0.0.1:9871
+node_token: null
+pair_code: null
+protocol_version: "1"
+agent_version: "1"
+platform_name_override: null

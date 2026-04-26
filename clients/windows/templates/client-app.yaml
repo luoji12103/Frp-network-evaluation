@@ -1,0 +1,17 @@
+service_name: mc-netprobe-client
+display_name: mc-netprobe Client
+pipe_name: "\\\\.\\pipe\\mc-netprobe-client-service"
+restart_policy:
+  max_restarts: 5
+  window_seconds: 600
+firewall:
+  agent_rule_prefix: mc-netprobe-client-agent
+  control_bridge_rule_prefix: mc-netprobe-client-control-bridge
+control_bridge:
+  host: 127.0.0.1
+  port: 9871
+  expose_remote: false
+paths:
+  runtime_root: "C:\\ProgramData\\mc-netprobe\\client"
+  agent_config: "C:\\ProgramData\\mc-netprobe\\client\\config\\agent\\client.yaml"
+  logs_dir: "C:\\ProgramData\\mc-netprobe\\client\\logs"
