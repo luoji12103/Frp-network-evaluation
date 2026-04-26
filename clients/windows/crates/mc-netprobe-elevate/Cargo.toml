@@ -1,0 +1,11 @@
+[package]
+name = "mc-netprobe-elevate"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mc-netprobe-client-core = { path = "../client-core" }
+serde.workspace = true
+serde_json.workspace = true

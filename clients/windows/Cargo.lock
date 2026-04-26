@@ -71,6 +71,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mc-netprobe-elevate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mc-netprobe-client-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mc-netprobe-service"
 version = "0.1.0"
 dependencies = [
