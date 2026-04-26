@@ -10,12 +10,14 @@ pub enum ChildState {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct RestartLimiter {
     max_restarts: usize,
     window: Duration,
     attempts: VecDeque<Instant>,
 }
 
+#[allow(dead_code)]
 impl RestartLimiter {
     pub fn new(max_restarts: usize, window: Duration) -> Self {
         Self {
