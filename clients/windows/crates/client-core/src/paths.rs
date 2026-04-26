@@ -40,14 +40,9 @@ impl ClientPaths {
 
 pub fn default_runtime_root() -> PathBuf {
     let program_data = std::env::var_os("PROGRAMDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-    if cfg!(windows) {
-        join_runtime_path(&program_data, &["mc-netprobe", "client"])
-    } else {
-        // Keep the Windows suffix as one component so Path::ends_with works on Linux CI.
-        program_data.join(r"mc-netprobe\client")
-    }
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| r"C:\ProgramData".to_string());
+    windows_path_from_root(&program_data, &["mc-netprobe", "client"])
 }
 
 fn join_runtime_path(root: &PathBuf, segments: &[&str]) -> PathBuf {
@@ -64,6 +59,15 @@ fn join_runtime_path(root: &PathBuf, segments: &[&str]) -> PathBuf {
             .iter()
             .fold(PathBuf::from(root.as_ref()), |path, segment| path.join(segment))
     }
+}
+
+fn windows_path_from_root(root: &str, segments: &[&str]) -> PathBuf {
+    let mut path = root.trim_end_matches(['\\', '/']).to_string();
+    for segment in segments {
+        path.push('\\');
+        path.push_str(segment);
+    }
+    PathBuf::from(path)
 }
 
 #[cfg(test)]
@@ -86,6 +90,12 @@ mod tests {
     #[test]
     fn default_runtime_root_is_program_data_client_dir() {
         let root = default_runtime_root();
-        assert!(root.ends_with(r"mc-netprobe\client"));
+        assert!(root.to_string_lossy().ends_with(r"mc-netprobe\client"));
+    }
+
+    #[test]
+    fn windows_path_from_root_uses_backslashes_on_linux() {
+        let root = windows_path_from_root(r"C:\ProgramData", &["mc-netprobe", "client"]);
+        assert_eq!(root, PathBuf::from(r"C:\ProgramData\mc-netprobe\client"));
     }
 }

@@ -20,11 +20,16 @@ impl ServiceInstallPlan {
 }
 
 pub fn service_executable(runtime_root: &Path) -> String {
-    runtime_root
-        .join("app")
-        .join("mc-netprobe-service.exe")
-        .to_string_lossy()
-        .to_string()
+    let root = runtime_root.to_string_lossy();
+    if root.contains('\\') {
+        format!(r"{}\app\mc-netprobe-service.exe", root.trim_end_matches(['\\', '/']))
+    } else {
+        runtime_root
+            .join("app")
+            .join("mc-netprobe-service.exe")
+            .to_string_lossy()
+            .to_string()
+    }
 }
 
 #[cfg(test)]
@@ -42,8 +47,6 @@ mod tests {
         let args = plan.sc_create_args();
         assert!(args.contains(&"mc-netprobe-client".to_string()));
         assert!(args.contains(&"start= auto".to_string()));
-        assert!(args
-            .iter()
-            .any(|arg| arg.contains("mc-netprobe-service.exe")));
+        assert!(args.contains(&r"binPath= C:\ProgramData\mc-netprobe\client\app\mc-netprobe-service.exe".to_string()));
     }
 }
