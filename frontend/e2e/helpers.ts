@@ -23,15 +23,25 @@ export async function loginAsAdmin(page: Page, nextPath = '/admin') {
     page.waitForURL(/\/admin(?:[/?#].*)?$/),
     page.getByRole('button', { name: 'Sign In' }).click(),
   ]);
-  await expect(page.getByText('Admin Panel')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+}
+
+export function visibleBuildLabel(page: Page) {
+  return page.locator('[data-testid="build-label"], [data-testid="mobile-build-label"]').filter({ visible: true }).first();
 }
 
 export async function openAdminRoute(page: Page, route: string, heading: string) {
   await page.goto(route);
   await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
-  await expect(page.getByTestId('build-label')).toBeVisible();
+  await expect(visibleBuildLabel(page)).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+}
+
+export async function expectNoHorizontalOverflow(page: Page) {
+  await expect.poll(async () => {
+    return page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth + 1);
+  }).toBeTruthy();
 }
 
 export async function firstPublicPathId(request: APIRequestContext) {

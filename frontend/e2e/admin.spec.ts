@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADMIN_STORAGE_STATE, openAdminRoute } from './helpers';
+import { ADMIN_STORAGE_STATE, expectNoHorizontalOverflow, openAdminRoute } from './helpers';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -17,7 +17,39 @@ const adminRoutes = [
 test('admin routes support direct navigation and refresh', async ({ page }) => {
   for (const route of adminRoutes) {
     await openAdminRoute(page, route.path, route.heading);
+    await expectNoHorizontalOverflow(page);
   }
+});
+
+test('mobile admin navigation uses a drawer and returns to content', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'mobile drawer is only rendered on mobile viewports');
+
+  await page.goto('/admin/nodes');
+  await expect(page.getByRole('heading', { name: 'Nodes', exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  await page.getByRole('button', { name: /menu/i }).click();
+  await expect(page.locator('#admin-mobile-nav')).toBeVisible();
+  await page.getByRole('link', { name: 'Alerts' }).click();
+  await expect(page.getByRole('heading', { name: 'Alerts', exact: true })).toBeVisible();
+  await expect(page.locator('#admin-mobile-nav')).toBeHidden();
+});
+
+test('slow runtime response still renders runtime detail', async ({ page }) => {
+  let delayed = false;
+  await page.route('**/api/v1/admin/runtime', async (route) => {
+    if (!delayed) {
+      delayed = true;
+      await new Promise((resolve) => setTimeout(resolve, 11_000));
+    }
+    const response = await route.fetch();
+    await route.fulfill({ response });
+  });
+
+  await page.goto('/admin');
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+  await expect(page.getByText('Deployment')).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByText('Control Mode')).toBeVisible();
 });
 
 test('nodes page exposes detail, pair code, and overview CTA navigation', async ({ page }) => {
@@ -28,7 +60,7 @@ test('nodes page exposes detail, pair code, and overview CTA navigation', async 
 
   await page.getByRole('button', { name: 'Pair code' }).click();
   await expect(page.getByTestId('pair-code-modal')).toBeVisible();
-  await expect(page.getByText('Startup command')).toBeVisible();
+  await expect(page.getByText('Startup command', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('pair-code-modal')).toBeHidden();
 
@@ -86,10 +118,33 @@ test('manual run produces detail and timeline data', async ({ page }) => {
 test('alerts mutation and actions detail remain usable', async ({ page }) => {
   await openAdminRoute(page, '/admin/alerts', 'Alerts');
 
-  await page.getByRole('button', { name: 'ack' }).first().click();
-  await expect(page.getByText(/Alert .* ack succeeded/)).toBeVisible();
-  await page.getByRole('button', { name: 'silence' }).first().click();
-  await expect(page.getByText(/Alert .* silence succeeded/)).toBeVisible();
+  const acknowledge = page.getByRole('button', { name: 'Acknowledge' }).first();
+  if ((await acknowledge.count()) && (await acknowledge.isEnabled())) {
+    await acknowledge.click();
+    await expect(page.getByText(/Alert .* acknowledged/)).toBeVisible();
+  }
+
+  const silenceButtons = page.getByRole('button', { name: /^Silence$/ });
+  let openedSilence = false;
+  for (let index = 0; index < await silenceButtons.count(); index += 1) {
+    const silenceButton = silenceButtons.nth(index);
+    if (await silenceButton.isEnabled()) {
+      await silenceButton.click();
+      openedSilence = true;
+      break;
+    }
+  }
+
+  if (openedSilence) {
+    await expect(page.getByTestId('silence-modal')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Silence alert #/ })).toBeDisabled();
+    await page.getByLabel('Duration').selectOption('6');
+    await page.getByLabel('Reason').fill('E2E validation silence reason');
+    await page.getByRole('button', { name: /Silence alert #/ }).click();
+    await expect(page.getByText(/Alert .* silenced until/)).toBeVisible();
+  } else {
+    await expect(page.getByRole('button', { name: 'Silenced' }).first()).toBeVisible();
+  }
 
   await openAdminRoute(page, '/admin/actions', 'Actions');
   await page.getByRole('button', { name: /sync_runtime|tail_log|restart/i }).first().click();

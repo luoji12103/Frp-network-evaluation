@@ -25,8 +25,18 @@ export default defineConfig({
     },
     {
       name: 'chromium',
+      testIgnore: /auth\.setup\.ts/,
       use: {
         ...devices['Desktop Chrome'],
+        storageState: 'e2e/.auth/admin.json',
+      },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'mobile-chromium',
+      testIgnore: /auth\.setup\.ts/,
+      use: {
+        ...devices['Pixel 5'],
         storageState: 'e2e/.auth/admin.json',
       },
       dependencies: ['setup'],

@@ -6,6 +6,7 @@ import {
   Bell,
   Calendar,
   LayoutDashboard,
+  Menu,
   Play,
   Radar,
   RefreshCw,
@@ -13,6 +14,7 @@ import {
   Settings,
   Workflow,
   Wrench,
+  X,
 } from 'lucide-react';
 import {
   BrowserRouter,
@@ -25,7 +27,7 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import '../../index.css';
-import { ErrorBanner, EmptyState, InlineCode, JsonBlock, KeyValueGrid, LoadingState, PageHeader, SmallButton, StatCard, Surface, SurfaceBody, SurfaceTitle, ToneBadge } from '../../components/PanelUi';
+import { ErrorBanner, EmptyState, FilterField, InlineCode, JsonBlock, KeyValueGrid, LoadingState, PageHeader, SmallButton, StatCard, Surface, SurfaceBody, SurfaceTitle, ToneBadge, fieldControlClass } from '../../components/PanelUi';
 import { TimeSeriesChart } from '../../components/TimeSeriesChart';
 import { apiErrorDetail, apiGet, apiPost, conflictDetail } from '../../lib/api';
 import { staleSummary, alertHeadline, buildLabel, formatDateTime, formatMetric, formatNumber, formatRelative, metricUnit, resolveNodeTitle, statusLabel, suggestedActionHref, suggestedActionLabel } from '../../lib/format';
@@ -90,53 +92,139 @@ function useShell() {
 
 function AdminLayout() {
   const topBadge = buildLabel(initialDashboard.build);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!drawerOpen) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDrawerOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [drawerOpen]);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.08),_transparent_28%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_100%)] text-slate-900">
-      <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col lg:flex-row">
-        <aside className="border-b border-slate-200 bg-white/80 px-4 py-5 backdrop-blur lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r">
-          <div className="flex items-center justify-between gap-3 lg:block">
-            <div>
-              <div className="text-xs uppercase tracking-[0.24em] text-slate-500">mc-netprobe</div>
-              <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Admin Panel</div>
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-[0.24em] text-slate-500">mc-netprobe</div>
+            <div className="truncate text-xl font-semibold tracking-tight text-slate-950">Admin Panel</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div data-testid="mobile-build-label">
+              <ToneBadge value="info" label={topBadge} />
             </div>
-            <div className="flex items-center gap-2">
-              <div data-testid="build-label">
-                <ToneBadge value="info" label={topBadge} />
+            <button
+              type="button"
+              aria-controls="admin-mobile-nav"
+              aria-expanded={drawerOpen}
+              onClick={() => setDrawerOpen(true)}
+              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-950 px-3 text-sm font-medium text-white"
+            >
+              <Menu className="mr-2 h-4 w-4" />
+              Menu
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {drawerOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            className="absolute inset-0 bg-slate-950/40"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <aside id="admin-mobile-nav" className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] flex-col overflow-y-auto bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.24em] text-slate-500">mc-netprobe</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Admin Panel</div>
               </div>
-              <form method="post" action="/logout">
-                <SmallButton type="submit" variant="secondary">Sign out</SmallButton>
-              </form>
-            </div>
-          </div>
-          <nav className="mt-6 grid gap-1">
-            {navigation.map((item) => (
-              <NavLink
-                key={item.href}
-                to={item.href}
-                end={item.href === '/admin'}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition',
-                    isActive ? 'bg-slate-950 text-white shadow-lg shadow-slate-300' : 'text-slate-700 hover:bg-slate-100',
-                  )
-                }
+              <button
+                type="button"
+                aria-label="Close navigation menu"
+                onClick={() => setDrawerOpen(false)}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl px-3 text-slate-700 ring-1 ring-slate-200"
               >
-                <item.icon className="h-4 w-4" />
-                <span>{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-          <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <div className="font-medium text-slate-900">{initialDashboard.settings.topology_name}</div>
-            <div className="mt-2">Topology ID: <InlineCode value={String(initialDashboard.topology_id)} /></div>
-            <div className="mt-2">Boot snapshot: {staleSummary(initialDashboard.generated_at)}</div>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <AdminNavigation onNavigate={() => setDrawerOpen(false)} />
+            <TopologySummary />
+            <form className="mt-4" method="post" action="/logout">
+              <SmallButton type="submit" variant="secondary">Sign out</SmallButton>
+            </form>
+          </aside>
+        </div>
+      ) : null}
+
+      <div className="mx-auto flex min-h-screen max-w-[1600px] lg:flex-row">
+        <aside className="hidden border-r border-slate-200 bg-white/80 px-4 py-5 backdrop-blur lg:block lg:min-h-screen lg:w-72">
+          <div>
+            <div className="text-xs uppercase tracking-[0.24em] text-slate-500">mc-netprobe</div>
+            <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Admin Panel</div>
           </div>
+          <div className="mt-3 flex items-center gap-2">
+            <div data-testid="build-label">
+              <ToneBadge value="info" label={topBadge} />
+            </div>
+            <form method="post" action="/logout">
+              <SmallButton type="submit" variant="secondary">Sign out</SmallButton>
+            </form>
+          </div>
+          <AdminNavigation />
+          <TopologySummary />
         </aside>
-        <main className="flex-1 px-4 py-6 lg:px-8">
+        <main className="min-w-0 flex-1 px-4 py-5 lg:px-8 lg:py-6">
           <Outlet context={{ seed: initialDashboard }} />
         </main>
       </div>
+    </div>
+  );
+}
+
+function AdminNavigation({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <nav className="mt-6 grid gap-1">
+      {navigation.map((item) => (
+        <NavLink
+          key={item.href}
+          to={item.href}
+          end={item.href === '/admin'}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            cn(
+              'flex min-h-11 items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition',
+              isActive ? 'bg-slate-950 text-white shadow-[0_6px_16px_rgba(15,23,42,0.18)]' : 'text-slate-700 hover:bg-slate-100',
+            )
+          }
+        >
+          <item.icon className="h-4 w-4" />
+          <span>{item.label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+function TopologySummary() {
+  return (
+    <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+      <div className="font-medium text-slate-900">{initialDashboard.settings.topology_name}</div>
+      <div className="mt-2">Topology ID: <InlineCode value={String(initialDashboard.topology_id)} /></div>
+      <div className="mt-2">Boot snapshot: {staleSummary(initialDashboard.generated_at)}</div>
     </div>
   );
 }
@@ -169,7 +257,7 @@ function SuggestedActionLink({ action }: { action?: SuggestedAction | null }) {
     return null;
   }
   return (
-    <Link className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={href}>
+    <Link className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={href}>
       <span>{suggestedActionLabel(action)}</span>
       <ArrowUpRight className="h-3.5 w-3.5" />
     </Link>
@@ -179,7 +267,7 @@ function SuggestedActionLink({ action }: { action?: SuggestedAction | null }) {
 function DashboardPage() {
   const { seed } = useShell();
   const dashboard = useSnapshotResource(() => apiGet<DashboardSnapshot>('/api/v1/dashboard'), seed, [], { pollMs: 30000 });
-  const runtime = useSnapshotResource(() => apiGet<AdminRuntimePayload>('/api/v1/admin/runtime'), null, [], { pollMs: 10000 });
+  const runtime = useSnapshotResource(() => apiGet<AdminRuntimePayload>('/api/v1/admin/runtime'), null, [], { pollMs: 20000 });
   const overview = useSnapshotResource(() => apiGet<AdminOverviewPayload>('/api/v1/admin/overview?time_range=24h'), null, [], { pollMs: 15000 });
   const releaseValidation = useSnapshotResource(() => apiGet<ReleaseValidationSnapshot>('/api/v1/admin/release-validation'), null, [], { pollMs: 8000 });
   const [panelActionMessage, setPanelActionMessage] = useState<string | null>(null);
@@ -382,7 +470,7 @@ function DashboardPage() {
                       <ToneBadge value={run.status} label={statusLabel(run.status)} />
                     </div>
                     <div className="mt-2">
-                      <Link className="text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/admin/runs?runId=${encodeURIComponent(run.run_id)}`}>
+                      <Link className="inline-flex min-h-11 items-center text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/admin/runs?runId=${encodeURIComponent(run.run_id)}`}>
                         Open run detail
                       </Link>
                     </div>
@@ -399,7 +487,7 @@ function DashboardPage() {
 
 function NodesPage() {
   const { seed } = useShell();
-  const runtime = useSnapshotResource(() => apiGet<AdminRuntimePayload>('/api/v1/admin/runtime'), null, [], { pollMs: 10000 });
+  const runtime = useSnapshotResource(() => apiGet<AdminRuntimePayload>('/api/v1/admin/runtime'), null, [], { pollMs: 20000 });
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedNodeId = Number(searchParams.get('node') || 0) || null;
   const [pairCode, setPairCode] = useState<PairCodeResponse | null>(null);
@@ -489,8 +577,8 @@ function NodesPage() {
       />
       {detailError ? <ErrorBanner message={detailError} /> : null}
       {detailMessage ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{detailMessage}</div> : null}
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.9fr]">
-        <div className="space-y-4">
+      <div className="grid min-w-0 gap-6 2xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="min-w-0 space-y-4">
           <Surface>
             <SurfaceBody className="space-y-4">
               <SurfaceTitle title="Registered Nodes" meta={`${nodes.length} rows`} />
@@ -502,13 +590,13 @@ function NodesPage() {
                     type="button"
                     onClick={() => setSearchParams({ node: String(node.id) })}
                     className={cn(
-                      'rounded-3xl border px-4 py-4 text-left transition',
-                      selectedNodeId === node.id ? 'border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-300' : 'border-slate-200 bg-white hover:border-slate-300',
+                      'min-w-0 rounded-2xl border px-4 py-3 text-left transition',
+                      selectedNodeId === node.id ? 'border-slate-950 bg-slate-950 text-white shadow-[0_6px_16px_rgba(15,23,42,0.18)]' : 'border-slate-200 bg-white hover:border-slate-300',
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium">{resolveNodeTitle(node)}</div>
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="break-words font-medium">{resolveNodeTitle(node)}</div>
                         <div className={cn('mt-1 text-sm', selectedNodeId === node.id ? 'text-slate-300' : 'text-slate-500')}>
                           {node.connectivity.summary}
                         </div>
@@ -532,11 +620,11 @@ function NodesPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="space-y-1 text-sm">
                   <span className="text-slate-600">Node Name</span>
-                  <input className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.node_name} onChange={(event) => setForm((current) => ({ ...current, node_name: event.target.value }))} />
+                  <input className={fieldControlClass} value={form.node_name} onChange={(event) => setForm((current) => ({ ...current, node_name: event.target.value }))} />
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="text-slate-600">Role</span>
-                  <select className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value, runtime_mode: event.target.value === 'relay' ? 'docker-linux' : event.target.value === 'server' ? 'native-macos' : 'native-windows' }))}>
+                  <select className={fieldControlClass} value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value, runtime_mode: event.target.value === 'relay' ? 'docker-linux' : event.target.value === 'server' ? 'native-macos' : 'native-windows' }))}>
                     <option value="client">client</option>
                     <option value="relay">relay</option>
                     <option value="server">server</option>
@@ -544,7 +632,7 @@ function NodesPage() {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="text-slate-600">Runtime Mode</span>
-                  <select className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.runtime_mode} onChange={(event) => setForm((current) => ({ ...current, runtime_mode: event.target.value }))}>
+                  <select className={fieldControlClass} value={form.runtime_mode} onChange={(event) => setForm((current) => ({ ...current, runtime_mode: event.target.value }))}>
                     <option value="native-windows">native-windows</option>
                     <option value="docker-linux">docker-linux</option>
                     <option value="native-macos">native-macos</option>
@@ -552,13 +640,13 @@ function NodesPage() {
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="text-slate-600">Configured Pull URL</span>
-                  <input className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.configured_pull_url} onChange={(event) => setForm((current) => ({ ...current, configured_pull_url: event.target.value }))} />
+                  <input className={fieldControlClass} value={form.configured_pull_url} onChange={(event) => setForm((current) => ({ ...current, configured_pull_url: event.target.value }))} />
                 </label>
               </div>
               <div className="flex items-center gap-3">
                 <SmallButton onClick={() => void registerNode()}>Save node</SmallButton>
                 <label className="flex items-center gap-2 text-sm text-slate-600">
-                  <input checked={form.enabled} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} />
+                  <input className="h-11 w-11 rounded border-slate-300" checked={form.enabled} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} />
                   enabled
                 </label>
               </div>
@@ -566,7 +654,7 @@ function NodesPage() {
           </Surface>
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Surface>
             <SurfaceBody className="space-y-4">
               <SurfaceTitle title={selectedNode ? 'Node Detail' : 'Select a node'} meta={selectedNode ? formatDateTime(selectedNode.updated_at) : undefined} />
@@ -590,15 +678,15 @@ function NodesPage() {
                     ]}
                   />
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <div className="min-w-0 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
                       <div className="font-medium text-slate-900">Push</div>
-                      <div className="mt-1">{statusLabel(selectedNode.connectivity.push.state)}</div>
-                      {selectedNode.connectivity.push.error ? <div className="mt-1">{selectedNode.connectivity.push.error}</div> : null}
+                      <div className="mt-1 break-words">{statusLabel(selectedNode.connectivity.push.state)}</div>
+                      {selectedNode.connectivity.push.error ? <div className="mt-1 break-words">{selectedNode.connectivity.push.error}</div> : null}
                     </div>
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <div className="min-w-0 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
                       <div className="font-medium text-slate-900">Pull</div>
-                      <div className="mt-1">{statusLabel(selectedNode.connectivity.pull.state)}</div>
-                      {selectedNode.connectivity.pull.error ? <div className="mt-1">{selectedNode.connectivity.pull.error}</div> : null}
+                      <div className="mt-1 break-words">{statusLabel(selectedNode.connectivity.pull.state)}</div>
+                      {selectedNode.connectivity.pull.error ? <div className="mt-1 break-words">{selectedNode.connectivity.pull.error}</div> : null}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -618,7 +706,7 @@ function NodesPage() {
             <Surface>
               <SurfaceBody className="space-y-3">
                 <SurfaceTitle title="Raw Runtime Snapshot" />
-                <JsonBlock value={{ runtime: selectedNode.runtime, supervisor: selectedNode.supervisor, endpoint_report: selectedNode.endpoint_report, runtime_status: selectedNode.runtime_status }} />
+                <JsonBlock label="runtime JSON" value={{ runtime: selectedNode.runtime, supervisor: selectedNode.supervisor, endpoint_report: selectedNode.endpoint_report, runtime_status: selectedNode.runtime_status }} />
               </SurfaceBody>
             </Surface>
           ) : null}
@@ -627,7 +715,7 @@ function NodesPage() {
 
       {pairCode ? (
         <div data-testid="pair-code-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Pair Code</div>
@@ -642,12 +730,12 @@ function NodesPage() {
             <div className="mt-6 space-y-4">
               <div>
                 <div className="mb-2 text-sm font-medium text-slate-900">Startup command</div>
-                <JsonBlock value={pairCode.startup_command} />
+                <JsonBlock label="startup command JSON" value={pairCode.startup_command} />
               </div>
               {pairCode.fallback_command ? (
                 <div>
                   <div className="mb-2 text-sm font-medium text-slate-900">Fallback command</div>
-                  <JsonBlock value={pairCode.fallback_command} />
+                  <JsonBlock label="fallback command JSON" value={pairCode.fallback_command} />
                 </div>
               ) : null}
             </div>
@@ -701,24 +789,34 @@ function PathsPage() {
         <SurfaceBody className="space-y-4">
           <SurfaceTitle title="Filters" />
           <div className="grid gap-3 md:grid-cols-5">
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
-              {(filters.data?.time_ranges ?? ['1h', '6h', '24h', '7d', '30d']).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(event) => setRole(event.target.value)}>
-              <option value="">all roles</option>
-              {(filters.data?.roles ?? []).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={node} onChange={(event) => setNode(event.target.value)}>
-              <option value="">all nodes</option>
-              {(filters.data?.nodes ?? []).map((value) => <option key={value.node_name} value={value.node_name}>{value.node_name}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={pathLabel} onChange={(event) => setPathLabel(event.target.value)}>
-              <option value="">all paths</option>
-              {(filters.data?.paths ?? []).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={metricName} onChange={(event) => setMetricName(event.target.value)}>
-              {(filters.data?.metrics ?? ['connect_avg_ms']).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
+            <FilterField label="Time range">
+              <select className={fieldControlClass} value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
+                {(filters.data?.time_ranges ?? ['1h', '6h', '24h', '7d', '30d']).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Role">
+              <select className={fieldControlClass} value={role} onChange={(event) => setRole(event.target.value)}>
+                <option value="">all roles</option>
+                {(filters.data?.roles ?? []).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Node">
+              <select className={fieldControlClass} value={node} onChange={(event) => setNode(event.target.value)}>
+                <option value="">all nodes</option>
+                {(filters.data?.nodes ?? []).map((value) => <option key={value.node_name} value={value.node_name}>{value.node_name}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Path">
+              <select className={fieldControlClass} value={pathLabel} onChange={(event) => setPathLabel(event.target.value)}>
+                <option value="">all paths</option>
+                {(filters.data?.paths ?? []).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Metric">
+              <select className={fieldControlClass} value={metricName} onChange={(event) => setMetricName(event.target.value)}>
+                {(filters.data?.metrics ?? ['connect_avg_ms']).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
           </div>
         </SurfaceBody>
       </Surface>
@@ -740,8 +838,8 @@ function PathsPage() {
                   </div>
                   <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
                     {Object.entries(path.latest).slice(0, 4).map(([metric, value]) => (
-                      <div key={metric} className="flex items-center justify-between rounded-xl bg-white px-3 py-2">
-                        <span>{metric}</span>
+                      <div key={metric} className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-white px-3 py-2">
+                        <span className="min-w-0 break-words">{metric}</span>
                         <span className="font-medium">{formatMetric(value, metric)}</span>
                       </div>
                     ))}
@@ -846,33 +944,41 @@ function RunsPage() {
             ))}
           </div>
           <div className="grid gap-3 md:grid-cols-4">
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
-              {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={runKind} onChange={(event) => setRunKind(event.target.value)}>
-              <option value="">all kinds</option>
-              {['system', 'baseline', 'capacity', 'full'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="">all statuses</option>
-              {['running', 'completed', 'failed'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <input className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" placeholder="path_label" value={pathLabel} onChange={(event) => setPathLabel(event.target.value)} />
+            <FilterField label="Time range">
+              <select className={fieldControlClass} value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
+                {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Run kind">
+              <select className={fieldControlClass} value={runKind} onChange={(event) => setRunKind(event.target.value)}>
+                <option value="">all kinds</option>
+                {['system', 'baseline', 'capacity', 'full'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Status">
+              <select className={fieldControlClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="">all statuses</option>
+                {['running', 'completed', 'failed'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Path label">
+              <input className={fieldControlClass} placeholder="path_label" value={pathLabel} onChange={(event) => setPathLabel(event.target.value)} />
+            </FilterField>
           </div>
         </SurfaceBody>
       </Surface>
 
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <Surface>
           <SurfaceBody className="space-y-4">
             <SurfaceTitle title="Run List" meta={`${runs.data?.items.length ?? 0} items`} />
             {!runs.data?.items.length ? <EmptyState title="No runs in range" description="Start a manual run or expand the time range." /> : null}
             <div className="space-y-3">
               {(runs.data?.items ?? []).map((run) => (
-                <button key={run.run_id} type="button" onClick={() => setSearchParams({ runId: run.run_id })} className={cn('w-full rounded-3xl border px-4 py-4 text-left transition', selectedRunId === run.run_id ? 'border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-300' : 'border-slate-200 bg-white hover:border-slate-300')}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-medium">{run.run_kind}</div>
+                <button key={run.run_id} type="button" onClick={() => setSearchParams({ runId: run.run_id })} className={cn('w-full min-w-0 rounded-2xl border px-4 py-3 text-left transition', selectedRunId === run.run_id ? 'border-slate-950 bg-slate-950 text-white shadow-[0_6px_16px_rgba(15,23,42,0.18)]' : 'border-slate-200 bg-white hover:border-slate-300')}>
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="break-words font-medium">{run.run_kind}</div>
                       <div className={cn('mt-1 text-sm', selectedRunId === run.run_id ? 'text-slate-300' : 'text-slate-500')}>{formatDateTime(run.started_at)}</div>
                     </div>
                     <ToneBadge value={run.status} label={statusLabel(run.status)} />
@@ -886,7 +992,7 @@ function RunsPage() {
           </SurfaceBody>
         </Surface>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Surface>
             <SurfaceBody className="space-y-4">
               <SurfaceTitle title="Run Detail" meta={selectedRunId ? <InlineCode value={selectedRunId} /> : undefined} />
@@ -973,6 +1079,10 @@ function AlertsPage() {
   const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [silenceTarget, setSilenceTarget] = useState<AlertRecord | null>(null);
+  const [silenceHours, setSilenceHours] = useState('12');
+  const [silenceReason, setSilenceReason] = useState('');
+  const [silenceSubmitting, setSilenceSubmitting] = useState(false);
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ time_range: timeRange });
@@ -997,25 +1107,49 @@ function AlertsPage() {
     { enabled: Boolean(selectedAlert?.metric_name) },
   );
 
-  const mutateAlert = async (alertId: number, mode: 'ack' | 'silence') => {
+  const acknowledgeAlert = async (alertId: number) => {
     try {
-      if (mode === 'ack') {
-        await apiPost<AlertMutationResponse>(`/api/v1/admin/alerts/${alertId}/ack`, { actor: 'admin-webui' });
-      } else {
-        const hours = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-        await apiPost<AlertMutationResponse>(`/api/v1/admin/alerts/${alertId}/silence`, {
-          actor: 'admin-webui',
-          silenced_until: hours,
-          reason: 'staging ui silence',
-        });
-      }
+      await apiPost<AlertMutationResponse>(`/api/v1/admin/alerts/${alertId}/ack`, { actor: 'admin-webui' });
       setError(null);
-      setMessage(`Alert ${alertId} ${mode} succeeded`);
+      setMessage(`Alert ${alertId} acknowledged`);
       await alerts.refresh();
       await timeseries.refresh();
     } catch (mutationError) {
       setMessage(null);
       setError(apiErrorDetail(mutationError));
+    }
+  };
+
+  const openSilenceModal = (alert: AlertRecord) => {
+    setSilenceTarget(alert);
+    setSilenceHours('12');
+    setSilenceReason('');
+    setError(null);
+    setMessage(null);
+  };
+
+  const submitSilence = async () => {
+    if (!silenceTarget || !silenceReason.trim()) {
+      return;
+    }
+    setSilenceSubmitting(true);
+    try {
+      const silencedUntil = new Date(Date.now() + Number(silenceHours) * 60 * 60 * 1000).toISOString();
+      await apiPost<AlertMutationResponse>(`/api/v1/admin/alerts/${silenceTarget.id}/silence`, {
+        actor: 'admin-webui',
+        silenced_until: silencedUntil,
+        reason: silenceReason.trim(),
+      });
+      setError(null);
+      setMessage(`Alert ${silenceTarget.id} silenced until ${formatDateTime(silencedUntil)}`);
+      setSilenceTarget(null);
+      await alerts.refresh();
+      await timeseries.refresh();
+    } catch (mutationError) {
+      setMessage(null);
+      setError(apiErrorDetail(mutationError));
+    } finally {
+      setSilenceSubmitting(false);
     }
   };
 
@@ -1030,45 +1164,59 @@ function AlertsPage() {
       {message ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</div> : null}
       <Surface>
         <SurfaceBody className="grid gap-3 md:grid-cols-5">
-          <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
-            {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="">all status</option>
-            {['open', 'acknowledged', 'resolved'].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={severity} onChange={(event) => setSeverity(event.target.value)}>
-            <option value="">all severity</option>
-            {['info', 'warning', 'error'].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="">all kind</option>
-            {['threshold', 'anomaly', 'node_status'].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <input className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" placeholder="path_label" value={pathLabel} onChange={(event) => setPathLabel(event.target.value)} />
+          <FilterField label="Time range">
+            <select className={fieldControlClass} value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
+              {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Status">
+            <select className={fieldControlClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="">all status</option>
+              {['open', 'acknowledged', 'resolved'].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Severity">
+            <select className={fieldControlClass} value={severity} onChange={(event) => setSeverity(event.target.value)}>
+              <option value="">all severity</option>
+              {['info', 'warning', 'error'].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Kind">
+            <select className={fieldControlClass} value={kind} onChange={(event) => setKind(event.target.value)}>
+              <option value="">all kind</option>
+              {['threshold', 'anomaly', 'node_status'].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Path label">
+            <input className={fieldControlClass} placeholder="path_label" value={pathLabel} onChange={(event) => setPathLabel(event.target.value)} />
+          </FilterField>
         </SurfaceBody>
       </Surface>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[1fr_1fr]">
         <Surface>
           <SurfaceBody className="space-y-4">
             <SurfaceTitle title="Alert List" meta={`${alerts.data?.items.length ?? 0} items`} />
             {!alerts.data?.items.length ? <EmptyState title="No alerts match the filter" /> : null}
             <div className="space-y-3">
               {(alerts.data?.items ?? []).map((alert) => (
-                <div key={alert.id} className={cn('rounded-3xl border px-4 py-4 transition', selectedAlertId === alert.id ? 'border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-300' : 'border-slate-200 bg-white')}>
+                <div key={alert.id} className={cn('min-w-0 rounded-2xl border px-4 py-3 transition', selectedAlertId === alert.id ? 'border-slate-950 bg-slate-950 text-white shadow-[0_6px_16px_rgba(15,23,42,0.18)]' : 'border-slate-200 bg-white')}>
                   <button type="button" onClick={() => setSelectedAlertId(alert.id)} className="w-full text-left">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-medium">{alertHeadline(alert)}</div>
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="break-words font-medium">{alertHeadline(alert)}</div>
                         <div className={cn('mt-1 text-sm', selectedAlertId === alert.id ? 'text-slate-300' : 'text-slate-500')}>{formatDateTime(alert.created_at)}</div>
                       </div>
                       <ToneBadge value={alert.severity} label={statusLabel(alert.status)} />
                     </div>
                   </button>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <SmallButton variant="secondary" onClick={() => void mutateAlert(alert.id, 'ack')}>ack</SmallButton>
-                    <SmallButton variant="secondary" onClick={() => void mutateAlert(alert.id, 'silence')}>silence</SmallButton>
+                    <SmallButton variant="secondary" disabled={Boolean(alert.acknowledged)} onClick={() => void acknowledgeAlert(alert.id)}>
+                      {alert.acknowledged ? 'Acknowledged' : 'Acknowledge'}
+                    </SmallButton>
+                    <SmallButton variant="secondary" disabled={Boolean(alert.is_silenced)} onClick={() => openSilenceModal(alert)}>
+                      {alert.is_silenced ? 'Silenced' : 'Silence'}
+                    </SmallButton>
                   </div>
                 </div>
               ))}
@@ -1076,7 +1224,7 @@ function AlertsPage() {
           </SurfaceBody>
         </Surface>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Surface>
             <SurfaceBody className="space-y-4">
               <SurfaceTitle title="Selected Alert" meta={selectedAlert ? <InlineCode value={String(selectedAlert.id)} /> : undefined} />
@@ -1104,6 +1252,57 @@ function AlertsPage() {
           </Surface>
         </div>
       </div>
+      {silenceTarget ? (
+        <div data-testid="silence-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <form
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitSilence();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Confirm silence</div>
+                <h2 className="mt-1 break-words text-xl font-semibold text-slate-950">Alert #{silenceTarget.id}</h2>
+              </div>
+              <SmallButton variant="secondary" onClick={() => setSilenceTarget(null)}>Cancel</SmallButton>
+            </div>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl bg-slate-50 px-4 py-3">
+                <div className="break-words text-sm font-medium text-slate-950">{alertHeadline(silenceTarget)}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <ToneBadge value={silenceTarget.severity} label={statusLabel(silenceTarget.severity)} />
+                  <ToneBadge value={silenceTarget.status} label={statusLabel(silenceTarget.status)} />
+                </div>
+              </div>
+              <FilterField label="Duration">
+                <select className={fieldControlClass} value={silenceHours} onChange={(event) => setSilenceHours(event.target.value)}>
+                  <option value="1">1 hour</option>
+                  <option value="6">6 hours</option>
+                  <option value="12">12 hours</option>
+                  <option value="24">24 hours</option>
+                </select>
+              </FilterField>
+              <FilterField label="Reason">
+                <textarea
+                  className={cn(fieldControlClass, 'min-h-24 resize-y')}
+                  value={silenceReason}
+                  onChange={(event) => setSilenceReason(event.target.value)}
+                  placeholder="Why is this alert safe to silence?"
+                  required
+                />
+              </FilterField>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <SmallButton variant="secondary" onClick={() => setSilenceTarget(null)}>Cancel</SmallButton>
+              <SmallButton type="submit" variant="danger" disabled={!silenceReason.trim() || silenceSubmitting}>
+                Silence alert #{silenceTarget.id}
+              </SmallButton>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1132,28 +1331,28 @@ function ActionsPage() {
         description="Lifecycle action list, action detail, and target snapshot from the existing admin actions endpoints."
         actions={<SnapshotMeta generatedAt={list.data?.generated_at} refreshing={list.loading || detail.loading} onRefresh={() => { void list.refresh(); void detail.refresh(); }} />}
       />
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <Surface>
           <SurfaceBody className="space-y-4">
             <SurfaceTitle title="Action List" meta={`${list.data?.items.length ?? 0} items`} />
             {!list.data?.items.length ? <EmptyState title="No actions yet" description="Queued, running, completed, and failed lifecycle actions will appear here." /> : null}
             <div className="space-y-3">
               {(list.data?.items ?? []).map((action) => (
-                <button key={action.id} type="button" onClick={() => setSearchParams({ actionId: String(action.id) })} className={cn('w-full rounded-3xl border px-4 py-4 text-left transition', actionId === action.id ? 'border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-300' : 'border-slate-200 bg-white')}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-medium">{action.target_name || action.target_kind} · {action.action}</div>
+                <button key={action.id} type="button" onClick={() => setSearchParams({ actionId: String(action.id) })} className={cn('w-full min-w-0 rounded-2xl border px-4 py-3 text-left transition', actionId === action.id ? 'border-slate-950 bg-slate-950 text-white shadow-[0_6px_16px_rgba(15,23,42,0.18)]' : 'border-slate-200 bg-white')}>
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="break-words font-medium">{action.target_name || action.target_kind} · {action.action}</div>
                       <div className={cn('mt-1 text-sm', actionId === action.id ? 'text-slate-300' : 'text-slate-500')}>{formatDateTime(action.requested_at)}</div>
                     </div>
                     <ToneBadge value={action.status} label={statusLabel(action.status)} />
                   </div>
-                  <div className={cn('mt-2 text-sm', actionId === action.id ? 'text-slate-300' : 'text-slate-600')}>{action.summary || action.result_summary || 'No summary yet'}</div>
+                  <div className={cn('mt-2 break-words text-sm', actionId === action.id ? 'text-slate-300' : 'text-slate-600')}>{action.summary || action.result_summary || 'No summary yet'}</div>
                 </button>
               ))}
             </div>
           </SurfaceBody>
         </Surface>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Surface>
             <SurfaceBody className="space-y-4">
               <SurfaceTitle title="Action Detail" meta={detail.data ? <InlineCode value={String(detail.data.id)} /> : undefined} />
@@ -1179,7 +1378,7 @@ function ActionsPage() {
             <Surface>
               <SurfaceBody className="space-y-3">
                 <SurfaceTitle title="Target Snapshot" />
-                <JsonBlock value={detail.data.target_snapshot || detail.data.runtime_snapshot || detail.data.response || {}} />
+                <JsonBlock label="target snapshot JSON" value={detail.data.target_snapshot || detail.data.runtime_snapshot || detail.data.response || {}} />
               </SurfaceBody>
             </Surface>
           ) : null}
@@ -1237,16 +1436,22 @@ function SettingsPage() {
   const { seed } = useShell();
   const dashboard = useSnapshotResource(() => apiGet<DashboardSnapshot>('/api/v1/dashboard'), seed, [], {});
   const settings = dashboard.data?.settings ?? seed.settings;
-  const [topologyName, setTopologyName] = useState(settings.topology_name);
+  const [topologyDraft, setTopologyDraft] = useState(() => ({
+    source: settings.topology_name,
+    value: settings.topology_name,
+  }));
   const [servicesText, setServicesText, parseServices] = useJsonEditor(settings.services);
   const [thresholdsText, setThresholdsText, parseThresholds] = useJsonEditor(settings.thresholds);
   const [scenariosText, setScenariosText, parseScenarios] = useJsonEditor(settings.scenarios);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setTopologyName(settings.topology_name);
-  }, [settings.topology_name]);
+  const topologyName = topologyDraft.source === settings.topology_name ? topologyDraft.value : settings.topology_name;
+  const setTopologyName = (value: string) => {
+    setTopologyDraft({
+      source: settings.topology_name,
+      value,
+    });
+  };
 
   const saveSettings = async () => {
     const services = parseServices(settings.services);
@@ -1287,7 +1492,7 @@ function SettingsPage() {
           <SurfaceTitle title="Panel Settings" meta={buildLabel(dashboard.data?.build)} />
           <label className="space-y-1 text-sm">
             <span className="text-slate-600">Topology Name</span>
-            <input className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={topologyName} onChange={(event) => setTopologyName(event.target.value)} />
+            <input className={fieldControlClass} value={topologyName} onChange={(event) => setTopologyName(event.target.value)} />
           </label>
           <SettingsEditor title="Services" value={servicesText} onChange={setServicesText} />
           <SettingsEditor title="Thresholds" value={thresholdsText} onChange={setThresholdsText} />
@@ -1311,7 +1516,7 @@ function SettingsEditor({
   return (
     <div className="space-y-2">
       <div className="text-sm font-medium text-slate-900">{title}</div>
-      <textarea className="min-h-[240px] w-full rounded-3xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm text-slate-100" value={value} onChange={(event) => onChange(event.target.value)} />
+      <textarea className="min-h-[240px] w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-950 p-4 font-mono text-sm text-slate-100" value={value} onChange={(event) => onChange(event.target.value)} />
     </div>
   );
 }
@@ -1331,7 +1536,7 @@ function PlaceholderRoute({
       <PageHeader title={title} description={description} />
       <Surface>
         <SurfaceBody>
-          <div className="flex items-center gap-3 rounded-3xl bg-slate-50 px-5 py-12 text-slate-600">
+          <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-5 py-8 text-slate-600">
             <Icon className="h-6 w-6 text-slate-400" />
             <div>This route is intentionally unused.</div>
           </div>

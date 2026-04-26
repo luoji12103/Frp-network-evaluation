@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { ArrowUpRight, Globe2, Shield } from 'lucide-react';
 import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router-dom';
 import '../../index.css';
-import { EmptyState, KeyValueGrid, PageHeader, SmallButton, StatCard, Surface, SurfaceBody, SurfaceTitle, ToneBadge } from '../../components/PanelUi';
+import { EmptyState, FilterField, KeyValueGrid, PageHeader, SmallButton, StatCard, Surface, SurfaceBody, SurfaceTitle, ToneBadge, fieldControlClass } from '../../components/PanelUi';
 import { TimeSeriesChart } from '../../components/TimeSeriesChart';
 import { apiGet } from '../../lib/api';
 import { alertHeadline, buildLabel, formatDateTime, formatMetric, formatNumber, formatRelative, staleSummary, statusLabel } from '../../lib/format';
@@ -16,7 +16,7 @@ function PublicLayout() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(20,184,166,0.12),_transparent_24%),linear-gradient(180deg,#f8fafc_0%,#ecfeff_100%)] text-slate-900">
       <div className="mx-auto max-w-7xl px-4 py-6 lg:px-8">
-        <header className="rounded-3xl border border-white/60 bg-white/80 px-5 py-5 shadow-sm shadow-slate-200/70 backdrop-blur">
+        <header className="rounded-2xl border border-white/60 bg-white/80 px-5 py-5 shadow-sm shadow-slate-200/70 backdrop-blur">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-xs uppercase tracking-[0.24em] text-slate-500">mc-netprobe</div>
@@ -27,11 +27,11 @@ function PublicLayout() {
               <div data-testid="build-label">
                 <ToneBadge value="info" label={buildLabel((initialState as PublicDashboardSnapshot | undefined)?.build)} />
               </div>
-              <Link className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white" to="/">
+              <Link className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white" to="/">
                 <Globe2 className="h-4 w-4" />
                 Dashboard
               </Link>
-              <a className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200" href="/login">
+              <a className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200" href="/login">
                 <Shield className="h-4 w-4" />
                 Admin Login
               </a>
@@ -85,6 +85,9 @@ function PublicOverviewPage() {
   };
   const dashboard = useSnapshotResource(() => apiGet<PublicDashboardSnapshot>('/api/v1/public-dashboard'), seed, [], { pollMs: 15000 });
   const payload = dashboard.data ?? seed;
+  const trendEntries = Object.entries(payload.history.trend_groups ?? {});
+  const visibleTrendEntries = trendEntries.filter(([, group]) => (group.series ?? []).length > 0).slice(0, 4);
+  const emptyTrendCount = trendEntries.length - visibleTrendEntries.length;
 
   return (
     <div className="space-y-6">
@@ -107,24 +110,24 @@ function PublicOverviewPage() {
             {!payload.paths.length ? <EmptyState title="No public paths yet" /> : null}
             <div className="space-y-3">
               {payload.paths.map((path: PathSummary) => (
-                <div key={path.path_id || path.path_label} className="rounded-3xl border border-slate-200 bg-white px-4 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-medium text-slate-900">{path.path_id || path.path_label}</div>
+                <div key={path.path_id || path.path_label} className="min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="break-words font-medium text-slate-900">{path.path_id || path.path_label}</div>
                       <div className="mt-1 text-sm text-slate-500">Last capture {formatRelative(path.last_captured_at)}</div>
                     </div>
                     <ToneBadge value={path.status} label={statusLabel(path.status)} />
                   </div>
                   <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
                     {Object.entries(path.latest).slice(0, 4).map(([metric, value]) => (
-                      <div key={metric} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2">
-                        <span>{metric}</span>
+                      <div key={metric} className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
+                        <span className="min-w-0 break-words">{metric}</span>
                         <span className="font-medium">{formatMetric(value, metric)}</span>
                       </div>
                     ))}
                   </div>
                   <div className="mt-3">
-                    <Link className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/public/path/${path.path_id || path.path_label}`}>
+                    <Link className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/public/path/${path.path_id || path.path_label}`}>
                       <span>Open path</span>
                       <ArrowUpRight className="h-3.5 w-3.5" />
                     </Link>
@@ -168,20 +171,29 @@ function PublicOverviewPage() {
         </Surface>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        {Object.entries(payload.history.trend_groups ?? {}).slice(0, 4).map(([groupName, group]) => (
-          <Surface key={groupName}>
-            <SurfaceBody className="space-y-4">
-              <SurfaceTitle title={groupName} meta={`${(group.series ?? []).length} series`} />
-              {(group.series ?? []).length ? (
+      {visibleTrendEntries.length ? (
+        <div className="grid gap-6 xl:grid-cols-2">
+          {visibleTrendEntries.map(([groupName, group]) => (
+            <Surface key={groupName}>
+              <SurfaceBody className="space-y-4">
+                <SurfaceTitle title={groupName} meta={`${(group.series ?? []).length} series`} />
                 <TimeSeriesChart title={groupName} series={(group.series ?? []) as MetricSeries[]} />
-              ) : (
-                <EmptyState title={`No ${groupName} series`} />
-              )}
-            </SurfaceBody>
-          </Surface>
-        ))}
-      </div>
+              </SurfaceBody>
+            </Surface>
+          ))}
+        </div>
+      ) : trendEntries.length ? (
+        <Surface>
+          <SurfaceBody>
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+              No public metric series are available for the current window across {trendEntries.length} exposed groups.
+            </div>
+          </SurfaceBody>
+        </Surface>
+      ) : null}
+      {visibleTrendEntries.length && emptyTrendCount > 0 ? (
+        <div className="text-sm text-slate-500">{emptyTrendCount} public metric groups have no series in the current window.</div>
+      ) : null}
     </div>
   );
 }
@@ -245,13 +257,17 @@ function PublicPathPage() {
 
       <Surface>
         <SurfaceBody className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
-              {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={metricGroup} onChange={(event) => setMetricGroup(event.target.value)}>
-              {(path.metric_groups ?? ['latency']).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FilterField label="Time range">
+              <select className={fieldControlClass} value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
+                {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Metric group">
+              <select className={fieldControlClass} value={metricGroup} onChange={(event) => setMetricGroup(event.target.value)}>
+                {(path.metric_groups ?? ['latency']).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
           </div>
           {series.data?.series.length ? (
             <TimeSeriesChart title={metricGroup} series={series.data.series} />
@@ -325,7 +341,7 @@ function PublicRolePage() {
     <div className="space-y-6">
       <PageHeader
         title={`${role} role`}
-        description="Role-scoped detail is bootstrapped from the SSR snapshot, and timeseries revalidate through the public timeseries endpoint because the backend does not expose a separate role-detail JSON route."
+        description="Role-scoped health, related paths, alerts, runs, and public metric groups available for this role."
         actions={<SnapshotMeta generatedAt={seed.generated_at || series.data?.generated_at} refreshing={series.loading} onRefresh={() => { void series.refresh(); }} />}
       />
       <Surface>
@@ -345,20 +361,24 @@ function PublicRolePage() {
             ]}
           />
           <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-            Role detail itself is currently served as the initial HTML snapshot. Refreshing timeseries below does not mutate the descriptive header fields because there is no dedicated `public role detail` JSON API in the backend contract.
+            The role summary reflects the latest public snapshot loaded with this page. Use the controls below to refresh the visible metric window.
           </div>
         </SurfaceBody>
       </Surface>
 
       <Surface>
         <SurfaceBody className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
-              {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            <select className="rounded-2xl border border-slate-200 px-3 py-2 text-sm" value={metricGroup} onChange={(event) => setMetricGroup(event.target.value)}>
-              {(seed.metric_groups ?? ['system']).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FilterField label="Time range">
+              <select className={fieldControlClass} value={timeRange} onChange={(event) => setTimeRange(event.target.value)}>
+                {['1h', '6h', '24h', '7d', '30d'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Metric group">
+              <select className={fieldControlClass} value={metricGroup} onChange={(event) => setMetricGroup(event.target.value)}>
+                {(seed.metric_groups ?? ['system']).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </FilterField>
           </div>
           {series.data?.series.length ? (
             <TimeSeriesChart title={metricGroup} series={series.data.series} />
@@ -383,7 +403,7 @@ function PublicRolePage() {
                   <ToneBadge value={path.status} label={statusLabel(path.status)} />
                 </div>
                 <div className="mt-2">
-                  <Link className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/public/path/${path.path_id || path.path_label}`}>
+                  <Link className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-sky-700 underline decoration-sky-300 underline-offset-4" to={`/public/path/${path.path_id || path.path_label}`}>
                     <span>Open path</span>
                     <ArrowUpRight className="h-3.5 w-3.5" />
                   </Link>

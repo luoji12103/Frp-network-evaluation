@@ -5,6 +5,10 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 test('admin login and logout work end-to-end', async ({ page }) => {
   await loginAsAdmin(page);
+  const signOut = page.getByRole('button', { name: 'Sign out' });
+  if (!(await signOut.count())) {
+    await page.getByRole('button', { name: /menu/i }).click();
+  }
   await Promise.all([
     page.waitForURL(/\/$/),
     page.getByRole('button', { name: 'Sign out' }).click(),
