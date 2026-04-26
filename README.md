@@ -346,6 +346,16 @@ bash bin/start_agent_tmux.sh \
 
 ## Client Agent On Windows
 
+### New Windows tray/service client
+
+The new Windows client work is tracked in:
+
+- Design: `docs/superpowers/specs/2026-04-26-windows-client-design.md`
+- Plan: `docs/superpowers/plans/2026-04-26-windows-client-tray-service-plan.md`
+- Windows client README: `clients/windows/README-WINDOWS.md`
+
+The first version targets Windows 10/11 x64 and installs its runtime to `C:\ProgramData\mc-netprobe\client`.
+
 Recommended default:
 
 ```powershell
