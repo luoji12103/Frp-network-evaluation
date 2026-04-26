@@ -126,12 +126,7 @@ Create `clients/windows/Cargo.toml`:
 
 ```toml
 [workspace]
-members = [
-  "crates/client-core",
-  "crates/mc-netprobe-service",
-  "crates/mc-netprobe-elevate",
-  "apps/tray/src-tauri",
-]
+members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
@@ -1404,6 +1399,7 @@ git commit -m "feat(windows): add elevated install helper shell"
 ### Task 8: Scaffold Tauri Tray App and Initialization UI
 
 **Files:**
+- Modify: `clients/windows/Cargo.toml`
 - Create: `clients/windows/apps/tray/src-tauri/Cargo.toml`
 - Create: `clients/windows/apps/tray/src-tauri/tauri.conf.json`
 - Create: `clients/windows/apps/tray/src-tauri/src/main.rs`
@@ -1467,7 +1463,22 @@ Create `clients/windows/apps/tray/src-tauri/tauri.conf.json`:
 }
 ```
 
-- [ ] **Step 3: Add tray Rust entrypoint**
+- [ ] **Step 3: Add tray crate to the workspace**
+
+Modify `clients/windows/Cargo.toml`:
+
+```toml
+[workspace]
+members = [
+  "crates/*",
+  "apps/tray/src-tauri",
+]
+resolver = "2"
+```
+
+Keep the existing `[workspace.package]` and `[workspace.dependencies]` sections unchanged.
+
+- [ ] **Step 4: Add tray Rust entrypoint**
 
 Create `clients/windows/apps/tray/src-tauri/src/main.rs`:
 
@@ -1499,7 +1510,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 4: Add initialization UI**
+- [ ] **Step 5: Add initialization UI**
 
 Create `clients/windows/apps/tray/ui/index.html`:
 
@@ -1552,7 +1563,7 @@ document.getElementById('initialize').addEventListener('click', () => {
 });
 ```
 
-- [ ] **Step 5: Run cargo checks**
+- [ ] **Step 6: Run cargo checks**
 
 Run:
 
@@ -1563,10 +1574,10 @@ cargo check --manifest-path clients/windows/Cargo.toml -p mc-netprobe-tray
 
 Expected: crate checks. If Linux lacks WebKit/Tauri system dependencies, record the missing package message and run `cargo check -p mc-netprobe-client-core -p mc-netprobe-service -p mc-netprobe-elevate` before committing.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add clients/windows/apps/tray
+git add clients/windows/Cargo.toml clients/windows/apps/tray
 git commit -m "feat(windows): scaffold tauri tray setup ui"
 ```
 
