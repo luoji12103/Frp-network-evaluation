@@ -238,6 +238,83 @@ class WindowsTaskAdapter(ControlAdapter):
         return completed
 
 
+class WindowsServiceSupervisorAdapter(ControlAdapter):
+    """Manage the Rust Windows Service supervisor through its local control CLI."""
+
+    def __init__(self, control_exe: str | Path, log_path: str | Path) -> None:
+        self.control_exe = str(Path(control_exe).expanduser())
+        self.log_path = str(Path(log_path).expanduser())
+
+    def runtime(self) -> BridgeActionResponse:
+        payload = self._control("status")
+        status = payload.get("status") or {}
+        state = str(status.get("state") or "unknown").lower()
+        process_state = "running" if state == "running" else "stopped"
+        checked_at = now_iso()
+        return BridgeActionResponse(
+            state=process_state,
+            human_summary=f"Windows service supervisor is {state}",
+            runtime=RuntimeSummary(state=process_state, checked_at=checked_at, details=status),
+            supervisor=SupervisorSummary(
+                control_available=True,
+                supervisor_state=state,
+                process_state=process_state,
+                log_location=self.log_path,
+                checked_at=checked_at,
+            ),
+            log_location=self.log_path,
+            raw_runtime=payload,
+        )
+
+    def start(self) -> BridgeActionResponse:
+        self._control("start")
+        return self.runtime()
+
+    def stop(self) -> BridgeActionResponse:
+        self._control("stop")
+        return self.runtime()
+
+    def restart(self) -> BridgeActionResponse:
+        self._control("restart")
+        return self.runtime()
+
+    def tail_log(self, tail_lines: int) -> BridgeActionResponse:
+        lines = _tail_file(self.log_path, tail_lines)
+        return BridgeActionResponse(
+            state="ok",
+            human_summary=f"Read {len(lines)} log lines from {self.log_path}",
+            runtime=RuntimeSummary(state="running", checked_at=now_iso()),
+            supervisor=SupervisorSummary(control_available=True, log_location=self.log_path, checked_at=now_iso()),
+            log_location=self.log_path,
+            log_excerpt=lines,
+        )
+
+    def _control(self, command: str) -> dict[str, Any]:
+        completed = subprocess.run(
+            [self.control_exe, "control", command],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise BridgeActionError(
+                "windows_supervisor_control_failed",
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or "Supervisor control command failed",
+            )
+        try:
+            payload = json.loads(completed.stdout.strip() or "{}")
+        except json.JSONDecodeError as exc:
+            raise BridgeActionError("windows_supervisor_control_parse_failed", str(exc)) from exc
+        if not bool(payload.get("ok", True)):
+            raise BridgeActionError(
+                "windows_supervisor_control_rejected",
+                str(payload.get("error") or "Supervisor rejected command"),
+            )
+        return payload
+
+
 class DockerContainerAdapter(ControlAdapter):
     """Manage a Docker container through the Engine HTTP API over a Unix socket."""
 
@@ -465,13 +542,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PANEL_CONTROL_BRIDGE_PORT)
     parser.add_argument("--mode", choices=["node", "panel"], required=True)
-    parser.add_argument("--adapter", choices=["launchd", "windows-task", "docker-container"], required=True)
+    parser.add_argument(
+        "--adapter",
+        choices=["launchd", "windows-task", "windows-service-supervisor", "docker-container"],
+        required=True,
+    )
     parser.add_argument("--bridge-url", default=None)
     parser.add_argument("--token-file", default="data/panel-control-bridge-token.txt")
     parser.add_argument("--agent-config", default="config/agent/server.yaml")
     parser.add_argument("--label", default=None)
     parser.add_argument("--plist-path", default=None)
     parser.add_argument("--task-name", default=None)
+    parser.add_argument("--control-exe", default=None)
     parser.add_argument("--container-name", default=None)
     parser.add_argument("--log-path", default="logs/control-bridge.log")
     parser.add_argument("--docker-socket", default="/var/run/docker.sock")
@@ -487,6 +569,9 @@ def build_adapter(args: argparse.Namespace) -> ControlAdapter:
     if args.adapter == "windows-task":
         task_name = args.task_name or "mc-netprobe-client-agent"
         return WindowsTaskAdapter(task_name=task_name, log_path=args.log_path)
+    if args.adapter == "windows-service-supervisor":
+        control_exe = args.control_exe or str(Path("app") / "mc-netprobe-service.exe")
+        return WindowsServiceSupervisorAdapter(control_exe=control_exe, log_path=args.log_path)
     container_name = args.container_name or (DEFAULT_PANEL_CONTAINER if args.mode == "panel" else DEFAULT_RELAY_CONTAINER)
     return DockerContainerAdapter(container_name=container_name, log_location=args.log_path, socket_path=args.docker_socket)
 
