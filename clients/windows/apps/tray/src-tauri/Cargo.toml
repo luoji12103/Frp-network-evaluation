@@ -1,0 +1,16 @@
+[package]
+name = "mc-netprobe-tray"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+mc-netprobe-client-core = { path = "../../../crates/client-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
