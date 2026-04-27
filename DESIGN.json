@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-26T05:43:03Z",
+  "title": "Design System: mc-netprobe",
+  "extensions": {
+    "colorMeta": {
+      "panel-ink": {
+        "role": "primary",
+        "displayName": "Panel Ink",
+        "canonical": "#020617",
+        "tonalRamp": ["#f8fafc", "#0f172a", "#020617"]
+      },
+      "accent-sky": {
+        "role": "accent",
+        "displayName": "Signal Sky",
+        "canonical": "#0ea5e9",
+        "tonalRamp": ["#f0f9ff", "#0ea5e9", "#0369a1"]
+      },
+      "accent-teal": {
+        "role": "accent",
+        "displayName": "Status Teal",
+        "canonical": "#14b8a6",
+        "tonalRamp": ["#f0fdfa", "#14b8a6", "#0f766e"]
+      },
+      "danger-soft": {
+        "role": "danger",
+        "displayName": "Escalation Rose",
+        "canonical": "#fff1f2",
+        "tonalRamp": ["#fff1f2", "#be123c", "#881337"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Primary page titles and shell identity."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Operational copy, summaries, and supporting detail."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase metadata framing for stats and system labels."
+      }
+    },
+    "motion": {
+      "defaultTransition": "150ms ease",
+      "selectionLift": "stateful shadow change only, no layout shift",
+      "loading": "icon spin only for refresh and loading affordances",
+      "reducedMotion": "all state transitions should remain understandable with animation removed"
+    },
+    "breakpoints": {
+      "sm": "640px",
+      "md": "768px",
+      "lg": "1024px",
+      "xl": "1280px",
+      "2xl": "1536px"
+    },
+    "rules": {
+      "northStar": "The Calm Operations Console",
+      "dos": [
+        "Use tinted neutrals as the default background language.",
+        "Escalate contrast before escalating saturation.",
+        "Keep build, freshness, and topology metadata visible near the shell.",
+        "Use pill or large-radius actions for consistency across admin and public surfaces."
+      ],
+      "donts": [
+        "Do not introduce neon observability tropes.",
+        "Do not use purple gradients or decorative glassmorphism as a default.",
+        "Do not blur the distinction between observation and mutation.",
+        "Do not rely on color alone to communicate severity or status."
+      ]
+    }
+  }
+}

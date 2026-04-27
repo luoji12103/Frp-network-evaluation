@@ -1,3 +1,10 @@
+FROM node:22-slim AS frontend-build
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -27,6 +34,7 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
 COPY . .
+COPY --from=frontend-build /controller/assets/dist /app/controller/assets/dist
 
 RUN mkdir -p /app/config/agent /app/results /app/logs /app/data \
     && chown -R app:app /app

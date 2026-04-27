@@ -9,3 +9,5 @@ results
 logs
 config/webui
 docker/ssh
+frontend/node_modules
+controller/assets/dist

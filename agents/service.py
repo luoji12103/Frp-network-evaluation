@@ -67,6 +67,7 @@ class AgentConfig(BaseModel):
     pair_code: str | None = None
     protocol_version: str = SUPPORTED_AGENT_PROTOCOL_VERSION
     agent_version: str = "1"
+    platform_name_override: str | None = None
 
 
 class AgentRuntime:
@@ -94,7 +95,7 @@ class AgentRuntime:
             role=self.config.role,  # type: ignore[arg-type]
             runtime_mode=self.config.runtime_mode,  # type: ignore[arg-type]
             protocol_version=self.config.protocol_version,
-            platform_name=detect_platform_name(),
+            platform_name=self._platform_name(),
             hostname=socket.gethostname(),
             agent_version=self.config.agent_version,
         )
@@ -117,7 +118,7 @@ class AgentRuntime:
             started_at=self._started_at,
             last_heartbeat_at=self._last_heartbeat_at,
             last_error=self._last_error,
-            environment=current_environment() | {"platform_name": detect_platform_name(), "hostname": socket.gethostname()},
+            environment=current_environment() | {"platform_name": self._platform_name(), "hostname": socket.gethostname()},
         )
 
     def status_snapshot(self) -> AgentStatusResponse:
@@ -244,10 +245,13 @@ class AgentRuntime:
             return f"http://{self.config.listen_host}:{self.config.control_port}"
         return None
 
+    def _platform_name(self) -> str:
+        return str(self.config.platform_name_override or detect_platform_name())
+
     def _execute_task(self, task: str, payload: dict[str, Any]) -> dict[str, Any]:
         merged_payload = dict(payload)
         merged_payload.setdefault("source", self.config.role)
-        merged_payload.setdefault("platform_name", detect_platform_name())
+        merged_payload.setdefault("platform_name", self._platform_name())
         return asyncio.run(execute_task(role=self.config.role, task=task, payload=merged_payload))
 
     def _execute_leased_jobs(self, jobs: list[AgentTaskDispatch]) -> list[AgentTaskCompletion]:
@@ -406,6 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-port", dest="control_port", type=int)
     parser.add_argument("--control-url", dest="control_url")
     parser.add_argument("--node-token", dest="node_token")
+    parser.add_argument("--platform-name", dest="platform_name_override")
     return parser
 
 
