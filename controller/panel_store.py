@@ -140,6 +140,7 @@ class PanelStore:
         self.db_path = Path(db_path)
         self.secret_path = Path(secret_path)
         self._lock = threading.Lock()
+        self._local = threading.local()
         self._panel_secret = self._load_or_create_panel_secret()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
@@ -928,8 +929,26 @@ class PanelStore:
         self.record_run_event(run_id=run_id, event_kind="run_created", message=f"{run_kind} run created", payload={"source": source})
         return run_id
 
+    def create_run_if_idle(self, run_kind: str, source: str) -> str | None:
+        """Atomically check for active run and create one if none exists. Returns run_id or None."""
+        run_id = f"run-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{secrets.token_hex(3)}"
+        with self._lock, self._connect() as conn:
+            active = conn.execute("SELECT 1 FROM run WHERE status = 'running' LIMIT 1").fetchone()
+            if active is not None:
+                return None
+            conn.execute(
+                """
+                INSERT INTO run (id, topology_id, run_kind, status, source, started_at)
+                VALUES (?, ?, ?, 'running', ?, ?)
+                """,
+                (run_id, self.get_topology_id(), run_kind, source, now_iso()),
+            )
+            conn.commit()
+        self.record_run_event(run_id=run_id, event_kind="run_created", message=f"{run_kind} run created", payload={"source": source})
+        return run_id
+
     def has_active_run(self) -> bool:
-        with self._connect() as conn:
+        with self._lock, self._connect() as conn:
             row = conn.execute("SELECT 1 FROM run WHERE status = 'running' LIMIT 1").fetchone()
         return row is not None
 
@@ -2815,8 +2834,11 @@ class PanelStore:
                 conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        conn = getattr(self._local, "connection", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            self._local.connection = conn
         return conn
 
     def _load_or_create_panel_secret(self) -> bytes:
@@ -3391,29 +3413,46 @@ class PanelStore:
             );
             """
         )
+        legacy_columns = {row[1] for row in conn.execute("PRAGMA table_info(node_legacy_role_unique)").fetchall()}
+        new_columns = [
+            "id", "topology_id", "node_name", "role", "runtime_mode", "agent_url",
+            "configured_pull_url", "advertised_pull_url", "enabled", "paired", "created_at", "updated_at",
+            "last_seen_at", "last_heartbeat_at", "last_pull_checked_at", "last_status",
+            "last_push_ok", "last_pull_ok", "last_push_error", "last_pull_error",
+            "status_payload_json", "endpoint_report_json", "identity_json", "capabilities_json",
+            "runtime_status_json", "runtime_summary_json", "supervisor_summary_json",
+            "push_state", "push_checked_at", "push_error_code", "push_error",
+            "pull_state", "pull_checked_at", "pull_error_code", "pull_error",
+        ]
+        defaults = {
+            "enabled": 1,
+            "paired": 0,
+            "last_push_ok": 0,
+            "last_pull_ok": 0,
+            "status_payload_json": "'{}'",
+            "endpoint_report_json": "'{}'",
+            "identity_json": "'{}'",
+            "capabilities_json": "'{}'",
+            "runtime_status_json": "'{}'",
+            "runtime_summary_json": "'{}'",
+            "supervisor_summary_json": "'{}'",
+            "push_state": "'unknown'",
+            "pull_state": "'unknown'",
+        }
+        select_parts = []
+        insert_parts = []
+        for col in new_columns:
+            if col in legacy_columns:
+                select_parts.append(col)
+            elif col in defaults:
+                select_parts.append(f"{defaults[col]} AS {col}")
+            else:
+                select_parts.append(f"NULL AS {col}")
+            insert_parts.append(col)
+        insert_cols = ", ".join(insert_parts)
+        select_cols = ", ".join(select_parts)
         conn.execute(
-            """
-            INSERT INTO node (
-                id, topology_id, node_name, role, runtime_mode, agent_url,
-                configured_pull_url, advertised_pull_url, enabled, paired, created_at, updated_at,
-                last_seen_at, last_heartbeat_at, last_pull_checked_at, last_status,
-                last_push_ok, last_pull_ok, last_push_error, last_pull_error,
-                status_payload_json, endpoint_report_json, identity_json, capabilities_json,
-                runtime_status_json, runtime_summary_json, supervisor_summary_json,
-                push_state, push_checked_at, push_error_code, push_error,
-                pull_state, pull_checked_at, pull_error_code, pull_error
-            )
-            SELECT
-                id, topology_id, node_name, role, runtime_mode, agent_url,
-                configured_pull_url, advertised_pull_url, enabled, paired, created_at, updated_at,
-                last_seen_at, last_heartbeat_at, last_pull_checked_at, last_status,
-                last_push_ok, last_pull_ok, last_push_error, last_pull_error,
-                status_payload_json, endpoint_report_json, identity_json, capabilities_json,
-                runtime_status_json, runtime_summary_json, supervisor_summary_json,
-                push_state, push_checked_at, push_error_code, push_error,
-                pull_state, pull_checked_at, pull_error_code, pull_error
-            FROM node_legacy_role_unique
-            """
+            f"INSERT INTO node ({insert_cols}) SELECT {select_cols} FROM node_legacy_role_unique"
         )
         conn.execute("DROP TABLE node_legacy_role_unique")
         conn.commit()

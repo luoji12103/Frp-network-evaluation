@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
@@ -54,6 +55,9 @@ from controller.panel_models import (
 from controller.panel_orchestrator import PanelOrchestrator
 from controller.panel_store import PanelStore
 from probes.common import now_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 RESULTS_DIR = Path("results")
@@ -1353,6 +1357,8 @@ class AdminAuth:
         password_path: str | Path = "data/admin-password.txt",
         secret_path: str | Path = "data/admin-session-secret.txt",
         session_ttl_sec: int = 12 * 60 * 60,
+        max_login_attempts: int = 10,
+        lockout_duration_sec: int = 300,
     ) -> None:
         self.username = username or os.getenv("MC_NETPROBE_ADMIN_USERNAME", "admin")
         password_file = os.getenv("MC_NETPROBE_ADMIN_PASSWORD_FILE")
@@ -1362,6 +1368,22 @@ class AdminAuth:
         self.session_ttl_sec = int(os.getenv("MC_NETPROBE_ADMIN_SESSION_TTL_SEC", str(session_ttl_sec)))
         self.password = password or os.getenv("MC_NETPROBE_ADMIN_PASSWORD") or self._load_or_create_password()
         self.secret = self._load_or_create_secret()
+        self._max_login_attempts = max_login_attempts
+        self._lockout_duration_sec = lockout_duration_sec
+        self._failed_attempts: dict[str, list[float]] = {}
+        self._rate_limit_lock = threading.Lock()
+
+    def check_rate_limit(self, client_ip: str) -> bool:
+        with self._rate_limit_lock:
+            now = time.time()
+            attempts = self._failed_attempts.get(client_ip, [])
+            attempts = [t for t in attempts if now - t < self._lockout_duration_sec]
+            self._failed_attempts[client_ip] = attempts
+            return len(attempts) < self._max_login_attempts
+
+    def record_failed_attempt(self, client_ip: str) -> None:
+        with self._rate_limit_lock:
+            self._failed_attempts.setdefault(client_ip, []).append(time.time())
 
     def verify_credentials(self, username: str, password: str) -> bool:
         return hmac.compare_digest(username, self.username) and hmac.compare_digest(password, self.password)
@@ -1462,6 +1484,7 @@ def create_app(
     start_background: bool = True,
     admin_username: str | None = None,
     admin_password: str | None = None,
+    enable_csrf: bool = True,
 ) -> FastAPI:
     runtime = PanelRuntime(db_path=db_path, start_background=start_background)
     admin_auth = AdminAuth(username=admin_username, password=admin_password)
@@ -1480,6 +1503,38 @@ def create_app(
     if ASSETS_DIR.exists():
         app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
+    CSRF_COOKIE_NAME = "mc_netprobe_csrf"
+    CSRF_HEADER_NAME = "x-csrf-token"
+    AGENT_PATH_PREFIXES = ("/api/v1/agents/",)
+
+    def _generate_csrf_token() -> str:
+        return secrets.token_hex(32)
+
+    def _is_agent_request(path: str) -> bool:
+        return any(path.startswith(prefix) for prefix in AGENT_PATH_PREFIXES)
+
+    @app.middleware("http")
+    async def csrf_protection(request: Request, call_next):
+        if enable_csrf and request.method in ("POST", "PUT", "DELETE", "PATCH") and not _is_agent_request(request.url.path):
+            cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+            header_token = request.headers.get(CSRF_HEADER_NAME)
+            if not cookie_token or not header_token or not hmac.compare_digest(cookie_token, header_token):
+                return JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
+        response = await call_next(request)
+        if enable_csrf and request.method == "GET" and request.cookies.get(CSRF_COOKIE_NAME) is None:
+            csrf_token = _generate_csrf_token()
+            secure = request.url.scheme == "https"
+            cookie_parts = [
+                f"{CSRF_COOKIE_NAME}={csrf_token}",
+                "Path=/",
+                "SameSite=Lax",
+                "Max-Age=86400",
+            ]
+            if secure:
+                cookie_parts.append("Secure")
+            response.headers["Set-Cookie"] = "; ".join(cookie_parts)
+        return response
+
     @app.middleware("http")
     async def attach_build_headers(request: Request, call_next):
         response = await call_next(request)
@@ -1487,6 +1542,10 @@ def create_app(
         response.headers["X-MC-Netprobe-Build"] = str(build_info["header_label"])
         if build_info.get("build_ref"):
             response.headers["X-MC-Netprobe-Build-Ref"] = str(build_info["build_ref"])
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
         return response
 
     def build_payload() -> dict[str, str | None]:
@@ -1604,11 +1663,15 @@ def create_app(
 
     @app.post("/login")
     async def login_action(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        if not admin_auth.check_rate_limit(client_ip):
+            return render_login_page(next_path="/admin", error_key="tooManyAttempts", status_code=429)
         form = await _parse_form_body(request)
         username = form.get("username", "").strip()
         password = form.get("password", "")
         next_path = _normalize_next_path(form.get("next", "/admin"))
         if not admin_auth.verify_credentials(username=username, password=password):
+            admin_auth.record_failed_attempt(client_ip)
             return render_login_page(next_path=next_path, error_key="invalidCredentials", status_code=401)
         response = RedirectResponse(url=next_path, status_code=303)
         admin_auth.apply_login(response, secure=request.url.scheme == "https")
@@ -2062,7 +2125,8 @@ def create_app(
                         "job": runtime.store.get_job_snapshot(int(job["id"])),
                     },
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to record run event for job %s: %s", job.get("id"), exc)
                 continue
         jobs = [
             AgentTaskDispatch(

@@ -36,15 +36,24 @@ export function conflictDetail(error: unknown): ConflictDetail | null {
   return typeof error.detail === 'object' && error.detail !== null ? (error.detail as ConflictDetail) : null;
 }
 
+function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)mc_netprobe_csrf=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   return requestJson<T>(path, { method: 'GET' });
 }
 
 export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
+  const csrfToken = getCsrfToken();
   return requestJson<T>(path, {
     method: 'POST',
     body: payload === undefined ? undefined : JSON.stringify(payload),
-    headers: payload === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: {
+      ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+    },
   });
 }
 

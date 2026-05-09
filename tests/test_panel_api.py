@@ -25,6 +25,7 @@ def build_client(tmp_path: Path) -> TestClient:
         start_background=False,
         admin_username="admin",
         admin_password="secret-pass",
+        enable_csrf=False,
     )
     return TestClient(app)
 

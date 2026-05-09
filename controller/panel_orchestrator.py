@@ -38,9 +38,7 @@ class PanelOrchestrator:
         return run_id
 
     def run_scheduled_due(self, run_kind: str) -> str | None:
-        if self.store.has_active_run():
-            return None
-        return self.start_run_in_background(run_kind=run_kind, source="schedule")
+        return self.store.create_run_if_idle(run_kind=run_kind, source="schedule")
 
     def _run_and_persist(self, run_id: str, run_kind: str, source: str) -> None:
         try:

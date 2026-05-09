@@ -19,6 +19,8 @@ function LoginApp() {
   if (loginErrorKey) {
     if (loginErrorKey.includes('invalidCredentials')) {
       errorMessage = 'Invalid username or password.';
+    } else if (loginErrorKey.includes('tooManyAttempts')) {
+      errorMessage = 'Too many failed login attempts. Please try again later.';
     } else {
       errorMessage = 'An error occurred during login.';
     }
